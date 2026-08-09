@@ -745,10 +745,18 @@ pub(super) fn prepare_replayed_lineage_v0(
 /// spill before starting the next component. Route-local partition leases load
 /// at most four components from that spill and never reread provider bodies.
 /// Terminal leaves receive an empty completed state without a body pass.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct CodexGenerationLineageScanMetricsV0 {
+    pub(super) source_scans: u64,
+    pub(super) source_bytes: u64,
+    pub(super) body_bytes_read: u64,
+    pub(super) mcp_terminal_preflight_bytes_read: u64,
+}
+
 pub(super) fn prepare_generation_lineage_v0(
     sources: &[(CodexCatalogSource, SourceKey, String)],
     outcome_lineage: &mut CodexOutcomeLineageAuthorityV0,
-) -> CodexSourceBackedResultV0<u64> {
+) -> CodexSourceBackedResultV0<CodexGenerationLineageScanMetricsV0> {
     let mut ordered = sources.iter().collect::<Vec<_>>();
     ordered.sort_by(|left, right| {
         outcome_lineage
@@ -763,7 +771,7 @@ pub(super) fn prepare_generation_lineage_v0(
             .then_with(|| left.0.source_path.cmp(&right.0.source_path))
     });
     let mut active_component = None;
-    let mut source_scans = 0_u64;
+    let mut metrics = CodexGenerationLineageScanMetricsV0::default();
     for (source, _, native_session_id) in ordered {
         if !outcome_lineage.generation_participates(native_session_id)? {
             continue;
@@ -785,30 +793,33 @@ pub(super) fn prepare_generation_lineage_v0(
             outcome_lineage.register(native_session_id, facts)?;
             continue;
         }
-        let mut scanner =
-            CodexNativeScanner::new_source_backed_with_lineage_v0(source.clone(), None, facts)
-                .map_err(map_lineage_capture_error)?;
-        while scanner
-            .next_page()
-            .map_err(map_lineage_capture_error)?
-            .is_some()
-        {
-            scanner.release_transient_record_buffer();
-        }
-        let mut scan = scanner.finish().map_err(map_lineage_capture_error)?;
-        let facts = scan
-            .lineage_facts
-            .take()
-            .ok_or(CodexSourceBackedErrorV0::LineageWorkingSetUnavailable)?;
-        outcome_lineage.register(native_session_id, facts)?;
-        source_scans = source_scans
+        let scan = crate::provider::codex::nativepath::reader::scan_codex_lineage_source_v0(
+            source.clone(),
+            facts,
+        )
+        .map_err(map_lineage_capture_error)?;
+        outcome_lineage.register(native_session_id, scan.facts)?;
+        metrics.source_scans = metrics
+            .source_scans
             .checked_add(1)
+            .ok_or(CodexSourceBackedErrorV0::CountOverflow)?;
+        metrics.source_bytes = metrics
+            .source_bytes
+            .checked_add(source.catalog_observation.len)
+            .ok_or(CodexSourceBackedErrorV0::CountOverflow)?;
+        metrics.body_bytes_read = metrics
+            .body_bytes_read
+            .checked_add(scan.body_bytes_read)
+            .ok_or(CodexSourceBackedErrorV0::CountOverflow)?;
+        metrics.mcp_terminal_preflight_bytes_read = metrics
+            .mcp_terminal_preflight_bytes_read
+            .checked_add(scan.mcp_terminal_preflight_bytes_read)
             .ok_or(CodexSourceBackedErrorV0::CountOverflow)?;
     }
     if let Some(component) = active_component {
         outcome_lineage.spill_generation_component(component)?;
     }
-    Ok(source_scans)
+    Ok(metrics)
 }
 
 #[cfg(test)]

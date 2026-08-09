@@ -32,42 +32,15 @@ impl CodexNativeScanner {
 
         self.counters.structural_json_parses =
             self.counters.structural_json_parses.saturating_add(1);
-        let (probe, lineage_already_recorded) = match classify_codex_record(record) {
-            Ok(probe) if !probe.lineage_malformed() => (probe, false),
-            Ok(probe) => {
-                if let Some(lineage_facts) = self.lineage_facts.as_mut() {
-                    lineage_facts
-                        .record_at(codex_lineage_record_evidence(&probe), self.raw_ordinal)?;
-                }
-                let Some(recovered) = classify_mcp_terminal_after_selector_ambiguity(record) else {
-                    self.reject(false);
-                    return Ok(CodexRecordProjection::default());
-                };
-                (recovered, true)
-            }
-            Err(_) => {
-                let malformed_evidence = malformed_codex_lineage_record_evidence(record);
-                let lineage_recorded = !matches!(
-                    malformed_evidence,
-                    CodexMalformedLineageRecordEvidence::None
-                );
-                if let Some(lineage_facts) = self.lineage_facts.as_mut() {
-                    lineage_facts
-                        .record_at(malformed_evidence.as_record_evidence(), self.raw_ordinal)?;
-                }
-                let Some(recovered) = classify_mcp_terminal_after_selector_ambiguity(record) else {
-                    self.reject(false);
-                    return Ok(CodexRecordProjection::default());
-                };
-                (recovered, lineage_recorded)
-            }
+        let Some(probe) = classify_and_record_codex_lineage(
+            record,
+            self.raw_ordinal,
+            self.lineage_facts.as_mut(),
+        )?
+        else {
+            self.reject(false);
+            return Ok(CodexRecordProjection::default());
         };
-        if !lineage_already_recorded {
-            let lineage_evidence = codex_lineage_record_evidence(&probe);
-            if let Some(lineage_facts) = self.lineage_facts.as_mut() {
-                lineage_facts.record_at(lineage_evidence, self.raw_ordinal)?;
-            }
-        }
         if probe.lineage_malformed() {
             self.reject(false);
             return Ok(CodexRecordProjection::default());
@@ -630,6 +603,50 @@ impl CodexNativeScanner {
         }
         self.counters.rejected_complete_records =
             self.counters.rejected_complete_records.saturating_add(1);
+    }
+}
+
+/// Applies the one authoritative malformed-selector recovery policy while
+/// recording lineage evidence. Publication and generation-only lineage scans
+/// share this path so an ambiguous record cannot authorize copying in one path
+/// while being rejected by the other.
+pub(super) fn classify_and_record_codex_lineage<'a>(
+    record: &'a [u8],
+    raw_ordinal: u64,
+    mut lineage_facts: Option<&mut CodexLineageFactsV0>,
+) -> Result<Option<CodexRecordProbe<'a>>> {
+    match classify_codex_record(record) {
+        Ok(probe) if !probe.lineage_malformed() => {
+            if let Some(facts) = lineage_facts.as_deref_mut() {
+                facts.record_at(codex_lineage_record_evidence(&probe), raw_ordinal)?;
+            }
+            Ok(Some(probe))
+        }
+        Ok(probe) => {
+            if let Some(facts) = lineage_facts.as_deref_mut() {
+                facts.record_at(codex_lineage_record_evidence(&probe), raw_ordinal)?;
+            }
+            Ok(classify_mcp_terminal_after_selector_ambiguity(record))
+        }
+        Err(_) => {
+            let malformed_evidence = malformed_codex_lineage_record_evidence(record);
+            let lineage_recorded = !matches!(
+                malformed_evidence,
+                CodexMalformedLineageRecordEvidence::None
+            );
+            if let Some(facts) = lineage_facts.as_deref_mut() {
+                facts.record_at(malformed_evidence.as_record_evidence(), raw_ordinal)?;
+            }
+            let Some(recovered) = classify_mcp_terminal_after_selector_ambiguity(record) else {
+                return Ok(None);
+            };
+            if !lineage_recorded {
+                if let Some(facts) = lineage_facts {
+                    facts.record_at(codex_lineage_record_evidence(&recovered), raw_ordinal)?;
+                }
+            }
+            Ok(Some(recovered))
+        }
     }
 }
 
