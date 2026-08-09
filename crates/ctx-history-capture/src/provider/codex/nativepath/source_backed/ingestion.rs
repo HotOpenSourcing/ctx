@@ -37,6 +37,7 @@ pub(super) fn scan_codex_jsonl_family_leaf_v0(
     context: &mut CodexJsonlFamilyLeafContextV0<'_>,
     mut emit: impl FnMut(
         CodexJsonlFamilyPublicationV0,
+        u64,
         Vec<CoreRecord>,
     ) -> CodexSourceBackedResultV0<()>,
 ) -> CodexSourceBackedResultV0<CodexJsonlFamilyLeafOutcomeV0> {
@@ -134,6 +135,11 @@ pub(super) fn scan_codex_jsonl_family_leaf_v0(
         if !page.core_rows.is_empty() {
             return Err(CodexSourceBackedErrorV0::UnexpectedLegacyRow);
         }
+        let completed_bytes = page
+            .next_safe_frontier
+            .complete_prefix_end
+            .checked_sub(page.expected_frontier.complete_prefix_end)
+            .ok_or(CodexSourceBackedErrorV0::InvalidCheckpoint)?;
         let mut records = Vec::with_capacity(page.source_backed_rows.len());
         if !page.source_backed_rows.is_empty() {
             let owner = page
@@ -157,9 +163,7 @@ pub(super) fn scan_codex_jsonl_family_leaf_v0(
             }
         }
         scanner.release_transient_record_buffer();
-        if !records.is_empty() {
-            emit(publication, records)?;
-        }
+        emit(publication, completed_bytes, records)?;
     }
     let mut scan = scanner.finish().map_err(map_lineage_capture_error)?;
     match scan.lineage_facts.take() {
