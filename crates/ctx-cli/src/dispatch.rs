@@ -843,6 +843,26 @@ mod tests {
     }
 
     #[test]
+    fn query_authority_error_json_is_scoped_to_machine_search_show_and_locate() {
+        for (args, expected) in [
+            (&["search", "authority", "--format=json"][..], true),
+            (&["show", "event", "bad", "--format=json"][..], true),
+            (&["locate", "event", "bad", "--format=json"][..], true),
+            (&["search", "authority"][..], false),
+            (&["status", "--format=json"][..], false),
+        ] {
+            let cli = Cli::try_parse_from(std::iter::once("ctx").chain(args.iter().copied()))
+                .unwrap_or_else(|error| panic!("failed to parse {args:?}: {error}"));
+            let json_output = command_json_output(&cli.command);
+            assert_eq!(
+                command_uses_query_authority_error_json(&cli.command, json_output),
+                expected,
+                "{args:?}"
+            );
+        }
+    }
+
+    #[test]
     fn analytics_debug_quiet_scope_tracks_blame_machine_output() {
         for (args, expected_machine_output) in [
             (&["blame", "file", "src/main.rs", "--format=json"][..], true),
