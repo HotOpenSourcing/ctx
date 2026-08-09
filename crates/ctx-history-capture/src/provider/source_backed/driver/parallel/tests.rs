@@ -8,11 +8,12 @@ use std::{
 };
 
 use crate::provider::source_backed::{
-    CoreRecordEmission, SourceBackedCoordinatorError, SourceBackedCoordinatorResult,
-    SourceBackedLogicalSourceFailures, SourceBackedRecordProgressDelta,
-    SourceBackedRecordRejectionClass, SourceBackedRecordRejectionDraft,
-    SourceBackedRecordRejectionDrafts, SourceBackedRecordRejections, SourceBackedRouteError,
-    SourceBackedRouteErrorKind, SourceBackedRouteResourceKind, SourceBackedRouteResources,
+    CoreRecordEmission, CoreRecordEmissionBatchBuilder, SourceBackedCoordinatorError,
+    SourceBackedCoordinatorResult, SourceBackedLogicalSourceFailures,
+    SourceBackedRecordProgressDelta, SourceBackedRecordRejectionClass,
+    SourceBackedRecordRejectionDraft, SourceBackedRecordRejectionDrafts,
+    SourceBackedRecordRejections, SourceBackedRouteError, SourceBackedRouteErrorKind,
+    SourceBackedRouteResourceKind, SourceBackedRouteResources,
     SOURCE_BACKED_CORE_RECORD_BATCH_MAX_RECORDS,
 };
 use ctx_history_core::{
@@ -1304,9 +1305,10 @@ fn single_core_record_transport_uses_one_bounded_zero_capacity_batch_rendezvous(
         };
         assert_eq!(worker_index, 0);
         assert_eq!(job_index, 0);
-        let ParallelLeafProtocolMessage::CoreRecordBatch(batch) = *message else {
+        let ParallelLeafProtocolMessage::CoreRecordBatch { batch, .. } = *message else {
             panic!("expected one Core-record batch");
         };
+        let batch = batch.unwrap();
         assert_eq!(batch.len(), 1);
         finished_receiver.recv().unwrap();
     });
@@ -1352,9 +1354,10 @@ fn core_record_batch_transport_is_one_bounded_zero_capacity_rendezvous() {
         let ParallelLeafWorkerEvent::Protocol { message, .. } = event else {
             panic!("expected a protocol event");
         };
-        let ParallelLeafProtocolMessage::CoreRecordBatch(batch) = *message else {
+        let ParallelLeafProtocolMessage::CoreRecordBatch { batch, .. } = *message else {
             panic!("expected one Core-record batch");
         };
+        let batch = batch.unwrap();
         assert_eq!(batch.len(), 3);
         finished_receiver.recv().unwrap();
         assert!(matches!(
@@ -1476,9 +1479,10 @@ fn batch_emitter_streams_records_that_fit_individually_but_not_together() {
             let ParallelLeafWorkerEvent::Protocol { message, .. } = receiver.recv().unwrap() else {
                 panic!("expected a protocol event");
             };
-            let ParallelLeafProtocolMessage::CoreRecordBatch(batch) = *message else {
+            let ParallelLeafProtocolMessage::CoreRecordBatch { batch, .. } = *message else {
                 panic!("expected a Core-record batch");
             };
+            let batch = batch.unwrap();
             assert_eq!(batch.len(), 1);
         }
         finished_receiver.recv().unwrap().unwrap();
@@ -1550,7 +1554,7 @@ fn batch_emitter_backpressures_multiple_workers_at_the_shared_byte_limit() {
             };
             assert!(matches!(
                 *message,
-                ParallelLeafProtocolMessage::CoreRecordBatch(_)
+                ParallelLeafProtocolMessage::CoreRecordBatch { .. }
             ));
         }
     });
@@ -1591,9 +1595,10 @@ fn batch_emitter_chunks_projector_fanout_at_the_protocol_bound() {
             let ParallelLeafWorkerEvent::Protocol { message, .. } = receiver.recv().unwrap() else {
                 panic!("expected a protocol event");
             };
-            let ParallelLeafProtocolMessage::CoreRecordBatch(batch) = *message else {
+            let ParallelLeafProtocolMessage::CoreRecordBatch { batch, .. } = *message else {
                 panic!("expected a Core-record batch");
             };
+            let batch = batch.unwrap();
             batch_lengths.push(batch.len());
         }
         assert_eq!(
@@ -1642,7 +1647,12 @@ fn batch_application_preserves_order_accounts_progress_and_releases_reservations
             &mut report_progress,
             move |job, emitter| {
                 emitter.begin(ParallelLeafScanBegin::replace(job.source().clone()))?;
-                emitter.emit_core_records(emitted_records.clone())?;
+                let mut emissions = CoreRecordEmissionBatchBuilder::default();
+                emitter.emit_core_records_with_completed_bytes(
+                    &mut emissions,
+                    emitted_records.clone(),
+                    512,
+                )?;
                 emitter.complete(ParallelLeafScanComplete::replace(
                     test_certificate(&job_source, 34, 3, false),
                     (),
@@ -1656,7 +1666,7 @@ fn batch_application_preserves_order_accounts_progress_and_releases_reservations
         progress,
         vec![SourceBackedRecordProgressDelta {
             accepted_records: 3,
-            completed_bytes: 0,
+            completed_bytes: 512,
         }]
     );
     assert_eq!(
