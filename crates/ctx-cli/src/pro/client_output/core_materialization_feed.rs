@@ -19,17 +19,18 @@ use ctx_history_index::{
 use ctx_pro_host_protocol::{
     core_record_digests_from_encoded, ApplyCoreEventDeltaPagesRequest,
     ApplyCoreSourceDeltaPageRequest, BeginCoreMaterializationRequest, Capability,
-    ContinueCoreMaterializationRequest, CoreEventDelta, CoreEventDeltaPage, CoreEventReplacement,
-    CoreEventState, CoreEventStatePage, CoreEventStatePageRequest, CoreEventTombstone,
-    CoreGenerationHead, CoreMaterializationBegan, CoreMaterializationFinalizationPending,
-    CoreMaterializationFinished, CoreMaterializationReceipt, CoreMaterializationReceiptIdentity,
-    CoreProjectionCurrentness, CoreSourceDelta, CoreSourceDeltaPage, CoreSourceDeltaPageApplied,
-    CoreSourceReconciliation, CoreSourceState, ErrorClass, FinishCoreMaterializationRequest,
-    HelperMessage, HostMessage, StatusRequest, MAX_CORE_EVENT_DELTA_PAGES,
-    MAX_CORE_EVENT_DELTA_PAGES_REQUEST_WIRE_BYTES, MAX_CORE_EVENT_DELTA_PAGE_CONTENT_BYTES,
-    MAX_CORE_EVENT_DELTA_PAGE_ITEMS, MAX_CORE_EVENT_DELTA_PAGE_WIRE_BYTES,
-    MAX_CORE_EVENT_STATE_PAGE_ITEMS, MAX_CORE_SOURCE_DELTA_PAGE_ITEMS,
-    MAX_CORE_SOURCE_DELTA_PAGE_WIRE_BYTES, MAX_CORE_SOURCE_STATES,
+    ContinueCoreMaterializationRequest, CoreEventDelta, CoreEventDeltaPage,
+    CoreEventDeltaPagesApplied, CoreEventReplacement, CoreEventState, CoreEventStatePage,
+    CoreEventStatePageRequest, CoreEventTombstone, CoreGenerationHead, CoreMaterializationBegan,
+    CoreMaterializationFinalizationPending, CoreMaterializationFinished,
+    CoreMaterializationReceipt, CoreMaterializationReceiptIdentity, CoreProjectionCurrentness,
+    CoreSourceDelta, CoreSourceDeltaPage, CoreSourceDeltaPageApplied, CoreSourceReconciliation,
+    CoreSourceState, ErrorClass, FinishCoreMaterializationRequest, HelperMessage, HostMessage,
+    StatusRequest, MAX_CORE_EVENT_DELTA_PAGES, MAX_CORE_EVENT_DELTA_PAGES_REQUEST_WIRE_BYTES,
+    MAX_CORE_EVENT_DELTA_PAGE_CONTENT_BYTES, MAX_CORE_EVENT_DELTA_PAGE_ITEMS,
+    MAX_CORE_EVENT_DELTA_PAGE_WIRE_BYTES, MAX_CORE_EVENT_STATE_PAGE_ITEMS,
+    MAX_CORE_SOURCE_DELTA_PAGE_ITEMS, MAX_CORE_SOURCE_DELTA_PAGE_WIRE_BYTES,
+    MAX_CORE_SOURCE_STATES,
 };
 #[cfg(test)]
 use ctx_pro_host_protocol::{
@@ -139,12 +140,15 @@ trait CoreMaterializationConsumer {
 
     fn event_states(&mut self, request: CoreEventStatePageRequest) -> Result<CoreEventStatePage>;
 
-    fn apply_event_delta_pages(&mut self, pages: Vec<CoreEventDeltaPage>) -> Result<()>;
+    fn apply_event_delta_pages(
+        &mut self,
+        pages: Vec<CoreEventDeltaPage>,
+    ) -> Result<EventDeltaApplyOutcome>;
 
     fn apply_prepared_event_delta_pages(
         &mut self,
         request: PreparedEventDeltaPagesRequest,
-    ) -> Result<()> {
+    ) -> Result<EventDeltaApplyOutcome> {
         self.apply_event_delta_pages(request.into_typed_pages())
     }
 
@@ -249,7 +253,10 @@ impl CoreMaterializationConsumer for ProtocolCoreMaterializationConsumer {
         }
     }
 
-    fn apply_event_delta_pages(&mut self, pages: Vec<CoreEventDeltaPage>) -> Result<()> {
+    fn apply_event_delta_pages(
+        &mut self,
+        pages: Vec<CoreEventDeltaPage>,
+    ) -> Result<EventDeltaApplyOutcome> {
         apply_batched_event_delta_pages_with(pages, &mut |message, remaining| {
             self.client.exchange_borrowed(message, remaining)
         })
@@ -258,7 +265,7 @@ impl CoreMaterializationConsumer for ProtocolCoreMaterializationConsumer {
     fn apply_prepared_event_delta_pages(
         &mut self,
         request: PreparedEventDeltaPagesRequest,
-    ) -> Result<()> {
+    ) -> Result<EventDeltaApplyOutcome> {
         apply_prepared_batched_event_delta_pages_with(request, &mut |request, remaining| {
             self.client
                 .exchange_prepared_core_event_delta_pages(request, remaining)
@@ -694,7 +701,7 @@ fn sync_core_feed_attempt_with_launch<C: CoreMaterializationConsumer>(
             OrderedReconciliationOptions {
                 prefetch_parallelism: options.prefetch_parallelism,
                 exchange_mode: if feed_mode == CoreFeedMode::PartialResume {
-                    EventDeltaExchangeMode::OnePagePerExchange
+                    EventDeltaExchangeMode::ProbeReplayFrontier
                 } else {
                     EventDeltaExchangeMode::Normal
                 },
@@ -1222,7 +1229,7 @@ fn reconcile_source_events<C: CoreMaterializationConsumer>(
     current_pages: &mut CurrentPageStream<'_>,
     consumer: &mut C,
     pending_batch: &mut EventDeltaPageBatchBuilder,
-    event_delta_exchange_mode: EventDeltaExchangeMode,
+    event_delta_exchange_mode: &mut EventDeltaExchangeMode,
 ) -> Result<EventReconciliationReport> {
     let mut state_after = None;
     let mut state_page_index = 0_u32;
