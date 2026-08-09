@@ -246,6 +246,22 @@ fn plural_acknowledgement_order_and_session_message_kind_fail_closed() {
         .unwrap_err();
     assert!(order_error.to_string().starts_with("invalid_response:"));
 
+    let mixed_error =
+        apply_batched_event_delta_pages_with(pages.clone(), &mut |message, _remaining| {
+            let HelperMessage::CoreEventDeltaPagesApplied(mut response) =
+                successful_plural_response(message)
+            else {
+                unreachable!()
+            };
+            response.pages[1].replayed = true;
+            Ok(HelperMessage::CoreEventDeltaPagesApplied(response))
+        })
+        .unwrap_err();
+    assert_eq!(
+        mixed_error.to_string(),
+        "invalid_response: Core event delta acknowledgement mixes replayed and new pages"
+    );
+
     let mode_error = apply_batched_event_delta_pages_with(pages, &mut |message, _remaining| {
         let HostMessage::ApplyCoreEventDeltaPages(request) = message else {
             unreachable!()
@@ -258,6 +274,36 @@ fn plural_acknowledgement_order_and_session_message_kind_fail_closed() {
     assert_eq!(
         mode_error.to_string(),
         "invalid_response: helper returned a non-Core-event-delta-batch response"
+    );
+}
+
+#[test]
+fn resumed_suffix_rejects_replay_reappearing_after_the_frontier() {
+    let source = source("resume-frontier-regression.jsonl");
+    let page = single_delta_event_pages(&source, 1, 1).remove(0);
+    let mut consumer = Consumer::new();
+    consumer.source_feed_terminal = true;
+    assert_eq!(
+        consumer
+            .apply_event_delta_pages(vec![page.clone()])
+            .unwrap(),
+        EventDeltaApplyOutcome::Applied
+    );
+
+    let mut pending = EventDeltaPageBatchBuilder::new().unwrap();
+    pending
+        .push_empty_overflow(prepared_event_delta_page_from_typed(page).unwrap())
+        .unwrap();
+    let error = flush_event_delta_pages(
+        &mut consumer,
+        &mut pending,
+        EventDeltaExchangeMode::ResumedSuffix,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "invalid_response: Core event delta replay reappeared after the resume frontier"
     );
 }
 
@@ -811,8 +857,8 @@ fn lost_finish_response_resumes_as_current_without_replaying_pages() {
 }
 
 #[test]
-fn partial_mixed_committed_prefix_and_new_suffix_is_singleton_bounded() {
-    let event_count = MAX_CORE_EVENT_DELTA_PAGE_ITEMS * MAX_CORE_EVENT_DELTA_PAGES + 1;
+fn partial_mixed_committed_prefix_probes_then_batches_the_new_suffix() {
+    let event_count = MAX_CORE_EVENT_DELTA_PAGE_ITEMS * MAX_CORE_EVENT_DELTA_PAGES * 2 + 1;
     let (_temp, index) = single_source_index(
         "partial-mixed-prefix-suffix.jsonl",
         (0..event_count)
@@ -853,16 +899,21 @@ fn partial_mixed_committed_prefix_and_new_suffix_is_singleton_bounded() {
     )
     .unwrap();
 
-    let expected_pages = MAX_CORE_EVENT_DELTA_PAGES + 1;
+    let expected_pages = MAX_CORE_EVENT_DELTA_PAGES * 2 + 1;
     assert_eq!(
         usize::try_from(report.event_delta_pages).unwrap(),
         expected_pages
     );
     assert_eq!(report.event_mutations, u64::try_from(event_count).unwrap());
-    assert_eq!(consumer.event_exchange_page_ids[1..].len(), expected_pages);
-    assert!(consumer.event_exchange_page_ids[1..]
-        .iter()
-        .all(|exchange| exchange.len() == 1));
+    let resumed_exchanges = &consumer.event_exchange_page_ids[1..];
+    assert_eq!(
+        resumed_exchanges.iter().map(Vec::len).collect::<Vec<_>>(),
+        [
+            vec![1; MAX_CORE_EVENT_DELTA_PAGES + 1],
+            vec![MAX_CORE_EVENT_DELTA_PAGES]
+        ]
+        .concat()
+    );
     assert!(report.prefetch.encoded_credit_high_water_bytes <= CORE_PREFETCH_ENCODED_BYTE_BUDGET);
     assert_eq!(report.prefetch.encoded_credit_final_bytes, 0);
 }

@@ -5,7 +5,42 @@ pub(super) const MAX_CORE_EVENT_DELTA_BATCH_EXCHANGES: usize = MAX_CORE_EVENT_DE
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum EventDeltaExchangeMode {
     Normal,
-    OnePagePerExchange,
+    // A resumed materialization may have durably committed only an ordered
+    // prefix before losing its response. Probe that prefix with singleton
+    // exchanges because Pro rejects mixed replayed/new batches.
+    ProbeReplayFrontier,
+    // The first newly applied singleton proves the deterministic ordered feed
+    // crossed that prefix. Batch the remaining suffix, and fail closed if a
+    // later response claims replay again.
+    ResumedSuffix,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EventDeltaApplyOutcome {
+    Applied,
+    Replayed,
+}
+
+fn validate_event_delta_pages_applied(
+    response: CoreEventDeltaPagesApplied,
+    identity: &ctx_pro_host_protocol::CoreEventDeltaPagesAcknowledgementIdentity,
+) -> Result<EventDeltaApplyOutcome> {
+    response
+        .validate_for_identity(identity)
+        .map_err(|error| anyhow!("invalid_response: {}", error.message))?;
+    let replayed = response
+        .pages
+        .first()
+        .ok_or_else(|| anyhow!("invalid_response: Core event delta acknowledgement is empty"))?
+        .replayed;
+    if response.pages.iter().any(|page| page.replayed != replayed) {
+        bail!("invalid_response: Core event delta acknowledgement mixes replayed and new pages");
+    }
+    Ok(if replayed {
+        EventDeltaApplyOutcome::Replayed
+    } else {
+        EventDeltaApplyOutcome::Applied
+    })
 }
 
 struct EventDeltaBatchOperationBudget<N, C> {
@@ -44,7 +79,7 @@ where
 pub(super) fn apply_batched_event_delta_pages_with<F>(
     pages: Vec<CoreEventDeltaPage>,
     exchange: &mut F,
-) -> Result<()>
+) -> Result<EventDeltaApplyOutcome>
 where
     F: FnMut(&HostMessage, Duration) -> Result<HelperMessage>,
 {
@@ -61,7 +96,7 @@ pub(super) fn apply_batched_event_delta_pages_with_budget<F, N, C>(
     deadline: Instant,
     now: N,
     is_cancelled: C,
-) -> Result<()>
+) -> Result<EventDeltaApplyOutcome>
 where
     F: FnMut(&HostMessage, Duration) -> Result<HelperMessage>,
     N: FnMut() -> Instant,
@@ -80,7 +115,7 @@ fn apply_batched_event_delta_pages_recursive<F, N, C>(
     pages: Vec<CoreEventDeltaPage>,
     exchange: &mut F,
     budget: &mut EventDeltaBatchOperationBudget<N, C>,
-) -> Result<()>
+) -> Result<EventDeltaApplyOutcome>
 where
     F: FnMut(&HostMessage, Duration) -> Result<HelperMessage>,
     N: FnMut() -> Instant,
@@ -93,9 +128,9 @@ where
     let message = HostMessage::ApplyCoreEventDeltaPages(request);
     let remaining = budget.remaining_for_exchange()?;
     match exchange(&message, remaining)? {
-        HelperMessage::CoreEventDeltaPagesApplied(response) => response
-            .validate_for_identity(&acknowledgement_identity)
-            .map_err(|error| anyhow!("invalid_response: {}", error.message)),
+        HelperMessage::CoreEventDeltaPagesApplied(response) => {
+            validate_event_delta_pages_applied(response, &acknowledgement_identity)
+        }
         HelperMessage::Error(error) if error.class == ErrorClass::Bounds => {
             let HostMessage::ApplyCoreEventDeltaPages(request) = message else {
                 unreachable!("constructed plural Core event delta request")
@@ -105,8 +140,12 @@ where
             }
             let mut left = request.pages;
             let right = left.split_off(left.len() / 2);
-            apply_batched_event_delta_pages_recursive(left, exchange, budget)?;
-            apply_batched_event_delta_pages_recursive(right, exchange, budget)
+            let left = apply_batched_event_delta_pages_recursive(left, exchange, budget)?;
+            let right = apply_batched_event_delta_pages_recursive(right, exchange, budget)?;
+            if left != right {
+                bail!("invalid_response: split Core event delta acknowledgement mixes replayed and new pages");
+            }
+            Ok(left)
         }
         HelperMessage::Error(error) => Err(protocol_error(error)),
         _ => bail!("invalid_response: helper returned a non-Core-event-delta-batch response"),
@@ -116,7 +155,7 @@ where
 pub(super) fn apply_prepared_batched_event_delta_pages_with<F>(
     request: PreparedEventDeltaPagesRequest,
     exchange: &mut F,
-) -> Result<()>
+) -> Result<EventDeltaApplyOutcome>
 where
     F: FnMut(&PreparedEventDeltaPagesRequest, Duration) -> Result<HelperMessage>,
 {
@@ -137,7 +176,7 @@ fn apply_prepared_batched_event_delta_pages_recursive<F, N, C>(
     mut request: PreparedEventDeltaPagesRequest,
     exchange: &mut F,
     budget: &mut EventDeltaBatchOperationBudget<N, C>,
-) -> Result<()>
+) -> Result<EventDeltaApplyOutcome>
 where
     F: FnMut(&PreparedEventDeltaPagesRequest, Duration) -> Result<HelperMessage>,
     N: FnMut() -> Instant,
@@ -146,16 +185,22 @@ where
     let identity = request.acknowledgement_identity()?;
     let remaining = budget.remaining_for_exchange()?;
     match exchange(&request, remaining)? {
-        HelperMessage::CoreEventDeltaPagesApplied(response) => response
-            .validate_for_identity(&identity)
-            .map_err(|error| anyhow!("invalid_response: {}", error.message)),
+        HelperMessage::CoreEventDeltaPagesApplied(response) => {
+            validate_event_delta_pages_applied(response, &identity)
+        }
         HelperMessage::Error(error) if error.class == ErrorClass::Bounds => {
             if request.page_count() == 1 {
                 return Err(protocol_error(error));
             }
             let right = request.split_off(request.page_count() / 2)?;
-            apply_prepared_batched_event_delta_pages_recursive(request, exchange, budget)?;
-            apply_prepared_batched_event_delta_pages_recursive(right, exchange, budget)
+            let left =
+                apply_prepared_batched_event_delta_pages_recursive(request, exchange, budget)?;
+            let right =
+                apply_prepared_batched_event_delta_pages_recursive(right, exchange, budget)?;
+            if left != right {
+                bail!("invalid_response: split Core event delta acknowledgement mixes replayed and new pages");
+            }
+            Ok(left)
         }
         HelperMessage::Error(error) => Err(protocol_error(error)),
         _ => bail!("invalid_response: helper returned a non-Core-event-delta-batch response"),
@@ -810,7 +855,7 @@ pub(super) fn send_event_delta_page<C: CoreMaterializationConsumer>(
     terminal: bool,
     deltas: Vec<PreparedEventDelta>,
     wire_bytes: usize,
-    exchange_mode: EventDeltaExchangeMode,
+    exchange_mode: &mut EventDeltaExchangeMode,
 ) -> Result<()> {
     let page = prepared_event_delta_page(
         materialization_id,
@@ -821,19 +866,29 @@ pub(super) fn send_event_delta_page<C: CoreMaterializationConsumer>(
         deltas,
         wire_bytes,
     )?;
-    if exchange_mode == EventDeltaExchangeMode::OnePagePerExchange {
+    if *exchange_mode == EventDeltaExchangeMode::ProbeReplayFrontier {
         if !pending_batch.is_empty() {
             bail!("internal: partial Core replay retained a pending event delta batch");
         }
         let mut one = EventDeltaPageBatchBuilder::new()?;
         one.push_empty_overflow(page)?;
-        return consumer.apply_prepared_event_delta_pages(one.take_request()?);
+        if consumer.apply_prepared_event_delta_pages(one.take_request()?)?
+            == EventDeltaApplyOutcome::Applied
+        {
+            *exchange_mode = EventDeltaExchangeMode::ResumedSuffix;
+        }
+        return Ok(());
     }
     if let Some(overflow) = pending_batch.try_push(page)? {
         if pending_batch.is_empty() {
             bail!("invalid_request: one Core event delta page exceeds its batch bound");
         }
-        consumer.apply_prepared_event_delta_pages(pending_batch.take_request()?)?;
+        let outcome = consumer.apply_prepared_event_delta_pages(pending_batch.take_request()?)?;
+        if *exchange_mode == EventDeltaExchangeMode::ResumedSuffix
+            && outcome != EventDeltaApplyOutcome::Applied
+        {
+            bail!("invalid_response: Core event delta replay reappeared after the resume frontier");
+        }
         pending_batch.push_empty_overflow(overflow)?;
     }
     Ok(())
@@ -842,9 +897,16 @@ pub(super) fn send_event_delta_page<C: CoreMaterializationConsumer>(
 pub(super) fn flush_event_delta_pages<C: CoreMaterializationConsumer>(
     consumer: &mut C,
     pending_batch: &mut EventDeltaPageBatchBuilder,
+    exchange_mode: EventDeltaExchangeMode,
 ) -> Result<()> {
     if pending_batch.is_empty() {
         return Ok(());
     }
-    consumer.apply_prepared_event_delta_pages(pending_batch.take_request()?)
+    let outcome = consumer.apply_prepared_event_delta_pages(pending_batch.take_request()?)?;
+    if exchange_mode == EventDeltaExchangeMode::ResumedSuffix
+        && outcome != EventDeltaApplyOutcome::Applied
+    {
+        bail!("invalid_response: Core event delta replay reappeared after the resume frontier");
+    }
+    Ok(())
 }

@@ -631,7 +631,10 @@ impl CoreMaterializationConsumer for Consumer {
         Ok(response)
     }
 
-    fn apply_event_delta_pages(&mut self, pages: Vec<CoreEventDeltaPage>) -> Result<()> {
+    fn apply_event_delta_pages(
+        &mut self,
+        pages: Vec<CoreEventDeltaPage>,
+    ) -> Result<EventDeltaApplyOutcome> {
         if !self.source_feed_terminal {
             bail!("event delta applied before terminal source acknowledgement");
         }
@@ -689,9 +692,15 @@ impl CoreMaterializationConsumer for Consumer {
         if self.event_response_loss_after == Some(self.event_exchanges) {
             bail!("synthetic_event_response_lost: committed Core event delta exchange");
         }
-        CoreEventDeltaPagesApplied { pages: responses }
+        let response = CoreEventDeltaPagesApplied { pages: responses };
+        response
             .validate_for_identity(&identity)
-            .map_err(|error| anyhow!("invalid_response: {}", error.message))
+            .map_err(|error| anyhow!("invalid_response: {}", error.message))?;
+        Ok(if response.pages.iter().all(|page| page.replayed) {
+            EventDeltaApplyOutcome::Replayed
+        } else {
+            EventDeltaApplyOutcome::Applied
+        })
     }
 
     fn finish(

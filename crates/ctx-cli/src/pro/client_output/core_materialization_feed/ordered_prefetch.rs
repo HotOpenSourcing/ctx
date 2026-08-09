@@ -766,6 +766,7 @@ pub(super) fn reconcile_ordered_source_events<C: CoreMaterializationConsumer>(
             mutations: 0,
         };
         let mut pending_batch = EventDeltaPageBatchBuilder::new()?;
+        let mut exchange_mode = options.exchange_mode;
         for reconciliation in reconciliations {
             let current_source = match &reconciliation.delta {
                 CoreSourceDelta::Present(source) => Some(source.clone()),
@@ -791,7 +792,7 @@ pub(super) fn reconcile_ordered_source_events<C: CoreMaterializationConsumer>(
                 &mut current_pages,
                 consumer,
                 &mut pending_batch,
-                options.exchange_mode,
+                &mut exchange_mode,
             )?;
             aggregate.pages = aggregate
                 .pages
@@ -802,7 +803,7 @@ pub(super) fn reconcile_ordered_source_events<C: CoreMaterializationConsumer>(
                 .checked_add(report.mutations)
                 .ok_or_else(|| anyhow!("invalid_response: Core event mutation count overflowed"))?;
         }
-        flush_event_delta_pages(consumer, &mut pending_batch)?;
+        flush_event_delta_pages(consumer, &mut pending_batch, exchange_mode)?;
         return Ok(aggregate);
     }
 
@@ -881,6 +882,7 @@ pub(super) fn reconcile_ordered_source_events<C: CoreMaterializationConsumer>(
                 mutations: 0,
             };
             let mut pending_batch = EventDeltaPageBatchBuilder::new()?;
+            let mut exchange_mode = options.exchange_mode;
             for (source_ordinal, reconciliation) in reconciliations.into_iter().enumerate() {
                 let mut current_pages = match lanes.get_mut(source_ordinal).and_then(Option::take) {
                     Some(lane) => CurrentPageStream::Prefetched {
@@ -897,7 +899,7 @@ pub(super) fn reconcile_ordered_source_events<C: CoreMaterializationConsumer>(
                     &mut current_pages,
                     consumer,
                     &mut pending_batch,
-                    options.exchange_mode,
+                    &mut exchange_mode,
                 )?;
                 aggregate.pages = aggregate
                     .pages
@@ -910,7 +912,7 @@ pub(super) fn reconcile_ordered_source_events<C: CoreMaterializationConsumer>(
                         anyhow!("invalid_response: Core event mutation count overflowed")
                     })?;
             }
-            flush_event_delta_pages(consumer, &mut pending_batch)?;
+            flush_event_delta_pages(consumer, &mut pending_batch, exchange_mode)?;
             Ok(aggregate)
         })();
         if result.is_err() {
