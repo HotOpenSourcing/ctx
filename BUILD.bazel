@@ -980,7 +980,13 @@ non_rust_gate(
 non_rust_gate(name = "installer_path_smoke", mode = "installer_path_smoke", data = NON_RUST_GATE_DATA)
 non_rust_gate(name = "buildkite_pipeline_check", mode = "buildkite_pipeline_check", data = NON_RUST_GATE_DATA)
 non_rust_gate(name = "release_binary_compat_tests", mode = "release_binary_compat_tests", data = NON_RUST_GATE_DATA)
-non_rust_gate(name = "native_candidate_smoke_tests", mode = "native_candidate_smoke_tests", data = NON_RUST_GATE_DATA)
+non_rust_gate(
+    name = "native_candidate_smoke_tests",
+    mode = "native_candidate_smoke_tests",
+    data = NON_RUST_GATE_DATA + [
+        "//crates/ctx-pro-host-protocol:src/lib.rs",
+    ],
+)
 non_rust_gate(name = "linux_release_construction_tests", mode = "linux_release_construction_tests", data = NON_RUST_GATE_DATA)
 non_rust_gate(name = "macos_release_signing_tests", mode = "macos_release_signing_tests", data = NON_RUST_GATE_DATA)
 non_rust_gate(
