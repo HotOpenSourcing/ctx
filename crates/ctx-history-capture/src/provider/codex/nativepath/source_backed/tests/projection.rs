@@ -358,6 +358,63 @@ fn cold_oversized_terminal_makes_an_earlier_ctx_result_searchable() {
 }
 
 #[test]
+fn incomplete_oversized_tail_does_not_poison_prior_unique_ctx_result() {
+    let temp = tempfile::tempdir().unwrap();
+    let sessions = temp.path().join("sessions");
+    let index = temp.path().join("global-index");
+    fs::create_dir_all(&sessions).unwrap();
+    let native_session_id = "019fa000-0000-7000-8000-00000000009d";
+    let call_id = "ctx-retrieval-incomplete-oversized-tail";
+    let output = concat!(
+        "Chunk ID: 9abc0d\n",
+        "Wall time: 0.125 seconds\n",
+        "Process exited with code 0\n",
+        "Final output:\n",
+        "prior uniquely attributable payload"
+    );
+    write_session(
+        &sessions,
+        native_session_id,
+        &[
+            exec_call(call_id, "ctx search incomplete-tail", temp.path()),
+            exact_exec_result(call_id, output),
+        ],
+    );
+
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(session_path(&sessions, native_session_id))
+        .unwrap();
+    write!(
+        file,
+        r#"{{"timestamp":"2026-07-28T12:00:03Z","type":"response_item","payload":{{"type":"function_call_output","call_id":"{call_id}","output":""#
+    )
+    .unwrap();
+    write!(file, "{}", "x".repeat(MAX_CODEX_RECORD_BYTES)).unwrap();
+    drop(file);
+
+    ingest_codex_source_backed_v0(&sessions, &index).unwrap();
+    let source = codex_source_key(native_session_id).unwrap();
+    let session_id = codex_session_identity(&source, native_session_id).unwrap();
+    let verified = VerifiedIndex::open(&index).unwrap();
+    let invocation = outcome_for_sequence(&verified, session_id, 1);
+    let retained_result = outcome_for_sequence(&verified, session_id, 2);
+
+    assert_eq!(
+        invocation.content.discovery_exclusion,
+        Some(ctx_history_core::CoreDiscoveryExclusion::CtxRetrievalDerived)
+    );
+    assert_eq!(
+        retained_result.content.discovery_exclusion,
+        Some(ctx_history_core::CoreDiscoveryExclusion::CtxRetrievalDerived)
+    );
+    assert_eq!(
+        retained_result.content.normalized_body.as_deref(),
+        Some(output)
+    );
+}
+
+#[test]
 fn appended_oversized_terminal_retracts_prior_ctx_result_exclusion() {
     let temp = tempfile::tempdir().unwrap();
     let sessions = temp.path().join("sessions");
