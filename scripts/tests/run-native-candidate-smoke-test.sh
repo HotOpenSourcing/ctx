@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 smoke="${repo_root}/scripts/run-native-candidate-smoke.sh"
 pro_status_fixtures="${repo_root}/scripts/tests/fixtures/native-candidate-pro-status"
+protocol_authority="${repo_root}/crates/ctx-pro-host-protocol/src/lib.rs"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/ctx-native-smoke-test.XXXXXX")"
 
 cleanup_survivor_fixture() {
@@ -260,6 +261,24 @@ JSON
 esac
 EOF
 printf '%s\n' '{"record_type":"manifest","schema_version":"ctx-history-jsonl-v1"}' > "${tmp}/fixture.jsonl"
+
+protocol_version="$(
+  sed -n 's/^pub const PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);$/\1/p' \
+    "${protocol_authority}"
+)"
+[[ "${protocol_version}" =~ ^[1-9][0-9]*$ ]] || {
+  printf 'native candidate smoke could not resolve the canonical Pro protocol version\n' >&2
+  exit 1
+}
+for fixture in "${pro_status_fixtures}"/*.json; do
+  grep -Eq \
+    '"protocol_version"[[:space:]]*:[[:space:]]*'"${protocol_version}"'([[:space:]]*,)?$' \
+    "${fixture}" || {
+      printf 'native candidate Pro status fixture has a stale protocol version: %s\n' \
+        "${fixture}" >&2
+      exit 1
+    }
+done
 
 expected='{"schema_version":1,"kind":"ctx-native-candidate-smoke","status":"passed","steps":{"version":"passed","setup":"passed","import":"passed","search":"passed","read_only":"passed","released_defaults":"passed","explicit_opt_outs":"passed","pro_helper_override_ignored":"passed","semantic_offline_fail_closed":"passed"}}'
 for access_case in absent-helper-trial absent-helper-locked absent-helper-unavailable; do
