@@ -47,6 +47,7 @@ const MAX_TRIAL_CHALLENGE_LIFETIME_SECONDS: i64 = 10 * 60;
 pub const COMMERCIAL_ACCEPT: &str = "application/json, application/problem+json";
 const STAGING_ACCESS_ORIGIN: &str = "https://pro-staging.ctx.rs/";
 const MAX_ACCESS_HEADER_BYTES: usize = 4096;
+const MAX_COMMERCIAL_REQUEST_BYTES: usize = 16 * 1024;
 const CLOUDFLARE_ACCESS_CLIENT_ID_HEADER: &str = "CF-Access-Client-Id";
 const CLOUDFLARE_ACCESS_CLIENT_SECRET_HEADER: &str = "CF-Access-Client-Secret";
 
@@ -662,12 +663,7 @@ impl CommercialApiClient {
         body: &B,
     ) -> Result<T> {
         let url = self.endpoint(path)?;
-        let mut body =
-            serde_json::to_vec(body).context("invalid_request: encode commercial request")?;
-        if body.len() > 16 * 1024 {
-            body.zeroize();
-            bail!("invalid_request: commercial request is too large");
-        }
+        let body = encode_commercial_request(body)?;
         let mut request = self.config.apply_transport_credentials(
             self.agent
                 .post(url.as_str())
@@ -684,7 +680,7 @@ impl CommercialApiClient {
             request = request.set("authorization", authorization);
         }
         let response = request.send_bytes(&body);
-        body.zeroize();
+        drop(body);
         drop(authorization);
         self.finish(response, "commercial API request")
     }
@@ -711,6 +707,16 @@ impl CommercialApiClient {
             .join(path)
             .context("invalid_request: invalid commercial API route")
     }
+}
+
+fn encode_commercial_request<B: Serialize>(body: &B) -> Result<Zeroizing<Vec<u8>>> {
+    let body = Zeroizing::new(
+        serde_json::to_vec(body).context("invalid_request: encode commercial request")?,
+    );
+    if body.len() > MAX_COMMERCIAL_REQUEST_BYTES {
+        bail!("invalid_request: commercial request is too large");
+    }
+    Ok(body)
 }
 
 impl TrialChallenge {

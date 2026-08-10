@@ -1,7 +1,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::{
     encode_entitlement, invalid_secret, BoundedSignedEntitlement, CredentialRecordIds,
@@ -66,13 +66,18 @@ impl AnonymousTrialMaterial {
         access_token: String,
         refreshed_referral_claim_token: Option<String>,
     ) -> Result<Self, CredentialVaultError> {
+        let mut access_token = Zeroizing::new(access_token);
+        let mut refreshed_referral_claim_token = Zeroizing::new(refreshed_referral_claim_token);
         if self.referral_claim_token.is_none() && refreshed_referral_claim_token.is_some() {
             return Err(CredentialVaultError::Corrupt);
         }
-        self.access_token = access_token;
+        zeroize_before_replace(&mut self.access_token, std::mem::take(&mut *access_token));
         self.refresh_not_before_unix = None;
         if refreshed_referral_claim_token.is_some() {
-            self.referral_claim_token = refreshed_referral_claim_token;
+            zeroize_before_replace(
+                &mut self.referral_claim_token,
+                std::mem::take(&mut *refreshed_referral_claim_token),
+            );
         }
         self.validate().map(|()| self)
     }
@@ -110,7 +115,8 @@ impl AnonymousTrialMaterial {
         mut self,
         value: Option<String>,
     ) -> Result<Self, CredentialVaultError> {
-        self.referral_claim_token = value;
+        let mut value = Zeroizing::new(value);
+        zeroize_before_replace(&mut self.referral_claim_token, std::mem::take(&mut *value));
         self.validate().map(|()| self)
     }
 
@@ -135,6 +141,11 @@ impl AnonymousTrialMaterial {
         }
         Ok(())
     }
+}
+
+fn zeroize_before_replace<T: Zeroize>(target: &mut T, replacement: T) {
+    let mut displaced = std::mem::replace(target, replacement);
+    displaced.zeroize();
 }
 
 impl fmt::Debug for AnonymousTrialMaterial {
@@ -199,7 +210,9 @@ fn invalid_referral_claim_token(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::BTreeSet;
+    use std::rc::Rc;
     use std::sync::Mutex;
 
     use ctx_pro_host_protocol::{
@@ -270,6 +283,26 @@ mod tests {
             nonreferred.apply_server_refresh("b".repeat(32), Some("claim.late_123456".to_owned()),),
             Err(CredentialVaultError::Corrupt)
         ));
+    }
+
+    struct ZeroizeProbe(Rc<Cell<bool>>);
+
+    impl Zeroize for ZeroizeProbe {
+        fn zeroize(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    #[test]
+    fn secret_replacement_zeroizes_the_displaced_value_immediately() {
+        let displaced_zeroized = Rc::new(Cell::new(false));
+        let replacement_zeroized = Rc::new(Cell::new(false));
+        let mut target = ZeroizeProbe(Rc::clone(&displaced_zeroized));
+
+        zeroize_before_replace(&mut target, ZeroizeProbe(Rc::clone(&replacement_zeroized)));
+
+        assert!(displaced_zeroized.get());
+        assert!(!replacement_zeroized.get());
     }
 
     #[derive(Default)]

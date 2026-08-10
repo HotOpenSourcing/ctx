@@ -14,6 +14,14 @@ fn test_client() -> CommercialApiClient {
     .unwrap()
 }
 
+struct FailingCommercialClock;
+
+impl CommercialClock for FailingCommercialClock {
+    fn unix_time(&self) -> Result<i64> {
+        bail!("test clock failure")
+    }
+}
+
 #[test]
 fn staging_access_pair_is_attached_only_to_the_exact_fixed_staging_origin() {
     let client_id = "access-client-id-123";
@@ -286,6 +294,44 @@ fn commercial_request_bodies_cannot_carry_history_content() {
             "referral_claim_token": "claim.opaque_123456",
         })
     );
+}
+
+#[test]
+fn checkout_referral_body_is_raii_guarded_on_pre_send_clock_failure() {
+    fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>(_: &T) {}
+
+    let referral_claim_token = "claim.opaque_123456";
+    let encoded = encode_commercial_request(&CheckoutRequest {
+        referral_claim_token: Some(referral_claim_token),
+    })
+    .unwrap();
+    assert_zeroize_on_drop(&encoded);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&encoded).unwrap(),
+        serde_json::json!({"referral_claim_token": referral_claim_token})
+    );
+    drop(encoded);
+
+    let client = CommercialApiClient::new(
+        CommercialApiConfig::new(Url::parse("https://pro.ctx.test/").unwrap(), None).unwrap(),
+        std::sync::Arc::new(FailingCommercialClock),
+    )
+    .unwrap();
+    let trial: AnonymousTrialMaterial = serde_json::from_value(serde_json::json!({
+        "schema_version": 1,
+        "access_token": "trial.access_token_123456",
+        "trial_deadline_unix": 2_000_000_000_i64,
+        "refresh_not_before_unix": null,
+        "referral_claim_token": referral_claim_token,
+    }))
+    .unwrap();
+    let error = client
+        .checkout(
+            &WorkOsAccessToken::new("workos.access_token_123456".to_owned()),
+            Some(&trial),
+        )
+        .unwrap_err();
+    assert_eq!(error.to_string(), "test clock failure");
 }
 
 #[test]

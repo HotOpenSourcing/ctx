@@ -634,7 +634,7 @@ fn unix_time() -> Result<i64> {
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(response: ureq::Response, label: &str) -> Result<T> {
-    let mut bytes = Vec::new();
+    let mut bytes = Zeroizing::new(Vec::new());
     response
         .into_reader()
         .take(MAX_RESPONSE_BYTES + 1)
@@ -670,6 +670,15 @@ fn safe_http_error(error: ureq::Error, operation: &str) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn json_response(body: &str) -> ureq::Response {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .parse()
+        .unwrap()
+    }
 
     fn token_response() -> Value {
         serde_json::json!({
@@ -709,6 +718,18 @@ mod tests {
         assert_eq!(tokens.organization_id.as_deref(), Some("org_123"));
         assert_eq!(tokens.user.id, "user_123");
         assert_eq!(tokens.ignored_fields(), 11);
+    }
+
+    #[test]
+    fn response_reader_preserves_success_and_parse_error_behavior() {
+        let parsed: Value = read_json(json_response(r#"{"ok":true}"#), "test response").unwrap();
+        assert_eq!(parsed, serde_json::json!({"ok": true}));
+
+        let error = read_json::<Value>(json_response(r#"{"secret":"truncated"#), "test response")
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .starts_with("invalid_response: parse test response"));
     }
 
     #[test]
