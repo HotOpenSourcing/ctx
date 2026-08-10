@@ -1376,6 +1376,174 @@ fn claude_ctx_retrieval_pending_classification_survives_append_checkpoint() {
 }
 
 #[test]
+fn thinking_only_split_records_are_certified_as_ignored() {
+    const PRIVATE_THINKING: &str = "private-thinking-must-not-enter-core";
+    const PRIVATE_SIGNATURE: &str = "private-signature-must-not-enter-core";
+
+    let temp = tempfile::tempdir().unwrap();
+    let projects = temp.path().join("projects");
+    let native_session_id = "thinking-split-session";
+    let transcript = projects
+        .join("project")
+        .join(format!("{native_session_id}.jsonl"));
+    let assistant_message = |message_id: &str, content: serde_json::Value| {
+        serde_json::json!({
+            "id": message_id,
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-fixture",
+            "content": content,
+            "stop_reason": null,
+            "stop_sequence": null,
+            "usage": {},
+        })
+    };
+    write_claude_transcript(
+        &transcript,
+        &[
+            serde_json::json!({
+                "type": "assistant",
+                "uuid": "thinking-record-before-text",
+                "parentUuid": "prior-user-before-text",
+                "sessionId": native_session_id,
+                "requestId": "request-with-text",
+                "timestamp": "2026-08-09T12:00:00Z",
+                "cwd": "/fixture/project",
+                "gitBranch": "main",
+                "version": "fixture",
+                "isSidechain": false,
+                "userType": "external",
+                "message": assistant_message("message-with-text", serde_json::json!([{
+                    "type": "thinking",
+                    "thinking": PRIVATE_THINKING,
+                    "signature": PRIVATE_SIGNATURE,
+                }])),
+            }),
+            serde_json::json!({
+                "type": "assistant",
+                "uuid": "text-after-thinking",
+                "parentUuid": "thinking-record-before-text",
+                "sessionId": native_session_id,
+                "requestId": "request-with-text",
+                "timestamp": "2026-08-09T12:00:01Z",
+                "cwd": "/fixture/project",
+                "gitBranch": "main",
+                "version": "fixture",
+                "isSidechain": false,
+                "userType": "external",
+                "message": assistant_message("message-with-text", serde_json::json!([{
+                    "type": "text",
+                    "text": "visible split response",
+                }])),
+            }),
+            serde_json::json!({
+                "type": "assistant",
+                "uuid": "thinking-record-before-tool",
+                "parentUuid": "prior-user-before-tool",
+                "sessionId": native_session_id,
+                "requestId": "request-with-tool",
+                "timestamp": "2026-08-09T12:00:02Z",
+                "cwd": "/fixture/project",
+                "gitBranch": "main",
+                "version": "fixture",
+                "isSidechain": false,
+                "userType": "external",
+                "message": assistant_message("message-with-tool", serde_json::json!([{
+                    "type": "thinking",
+                    "thinking": PRIVATE_THINKING,
+                    "signature": PRIVATE_SIGNATURE,
+                }])),
+            }),
+            serde_json::json!({
+                "type": "assistant",
+                "uuid": "tool-after-thinking",
+                "parentUuid": "thinking-record-before-tool",
+                "sessionId": native_session_id,
+                "requestId": "request-with-tool",
+                "timestamp": "2026-08-09T12:00:03Z",
+                "cwd": "/fixture/project",
+                "gitBranch": "main",
+                "version": "fixture",
+                "isSidechain": false,
+                "userType": "external",
+                "message": assistant_message("message-with-tool", serde_json::json!([{
+                    "type": "tool_use",
+                    "id": "split-tool-call",
+                    "name": "Read",
+                    "input": {"file_path": "src/lib.rs"},
+                }])),
+            }),
+        ],
+    );
+    let registry = claude_test_registry(&projects);
+    let index = temp.path().join("index");
+
+    let receipt =
+        refresh_source_backed_generation(&index, &registry, claude_test_writer_options()).unwrap();
+
+    assert_eq!(receipt.sources.len(), 1);
+    let counts = receipt.sources[0].counts();
+    assert_eq!(counts.complete_records, 4);
+    assert_eq!(counts.ignored_records, 2);
+    assert_eq!(counts.rejected_records, 0);
+    assert_eq!(counts.retained_records, 2);
+    assert_eq!(counts.indexed_documents, 2);
+    assert_eq!(receipt.commit.indexed_documents, 2);
+
+    let records = indexed_claude_records(&index, native_session_id);
+    assert_eq!(records.len(), 2);
+    assert!(records.iter().any(|record| {
+        record.content.normalized_body.as_deref() == Some("visible split response")
+    }));
+    assert!(records
+        .iter()
+        .any(|record| record.event_type == "tool_call"));
+    let retained_core = serde_json::to_string(&records).unwrap();
+    assert!(!retained_core.contains(PRIVATE_THINKING));
+    assert!(!retained_core.contains(PRIVATE_SIGNATURE));
+}
+
+#[test]
+fn thinking_mixed_with_text_and_tool_use_preserves_public_content_only() {
+    const PRIVATE_THINKING: &str = "mixed-private-thinking-must-not-enter-core";
+    const PRIVATE_SIGNATURE: &str = "mixed-private-signature-must-not-enter-core";
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "type": "assistant",
+        "uuid": "mixed-thinking-record",
+        "sessionId": "test-session",
+        "message": {"role": "assistant", "content": [
+            {
+                "type": "thinking",
+                "thinking": PRIVATE_THINKING,
+                "signature": PRIVATE_SIGNATURE,
+            },
+            {"type": "text", "text": "visible mixed response"},
+            {
+                "type": "tool_use",
+                "id": "mixed-tool-call",
+                "name": "Read",
+                "input": {"file_path": "src/lib.rs"},
+            },
+        ]},
+    }))
+    .unwrap();
+    let mut projector = test_projector();
+    let records = project_claude_records(&mut projector, &[bytes]);
+
+    assert_eq!(projector.rejected_records(), 0);
+    assert_eq!(records.len(), 2);
+    assert!(records.iter().any(|record| {
+        record.content.normalized_body.as_deref() == Some("visible mixed response")
+    }));
+    assert!(records
+        .iter()
+        .any(|record| record.event_type == "tool_call"));
+    let retained_core = serde_json::to_string(&records).unwrap();
+    assert!(!retained_core.contains(PRIVATE_THINKING));
+    assert!(!retained_core.contains(PRIVATE_SIGNATURE));
+}
+
+#[test]
 fn sixty_five_small_result_blocks_are_all_emitted() {
     let content = (0..65)
         .map(|index| {

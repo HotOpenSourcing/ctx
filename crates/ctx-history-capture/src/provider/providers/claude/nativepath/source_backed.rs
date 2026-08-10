@@ -58,7 +58,7 @@ const FALLBACK_EVENT_ID_DOMAIN: &[u8] = b"ctx-claude-fallback-event-id-v1\0";
 const LOGICAL_SESSION_KIND: &str = "claude-session";
 const LOGICAL_EVENT_KIND: &str = "claude-event";
 const SOURCE_SCHEMA_VARIANT: &str = "claude-nativepath-jsonl-v6";
-const PARSER_REVISION: &str = "claude-shared-jsonl-v9-exact-retrieval-json-authority";
+const PARSER_REVISION: &str = "claude-shared-jsonl-v10-private-thinking-ignore";
 const MAX_PENDING_CALLS: usize = 4096;
 const MAX_RESULT_METADATA_BYTES: usize = 64 * 1024;
 const RESULT_TERMINAL_CALL_ID_DOMAIN: &[u8] = b"ctx/claude-nativepath/result-terminal-call-id/v1\0";
@@ -523,7 +523,7 @@ impl JsonlFamilyProjector for ClaudeProjector {
             .as_deref()
             .filter(|session| !session.trim().is_empty())
             .is_some_and(|session| session != self.binding.key.root_session_id)
-            || parsed.rows.is_empty()
+            || (parsed.rows.is_empty() && !parsed.ignored_private_thinking)
             || parsed.rows.len() > CLAUDE_MAX_RECORD_ROWS
         {
             return self.reject_record();
@@ -534,6 +534,9 @@ impl JsonlFamilyProjector for ClaudeProjector {
             parsed.version.as_deref(),
             parsed.git_branch.as_deref(),
         );
+        if parsed.rows.is_empty() {
+            return Ok(());
+        }
         for row in parsed.rows {
             let event_sequence = row_event_sequence(&row)?;
             let normalized_body = lexical_body(&row);

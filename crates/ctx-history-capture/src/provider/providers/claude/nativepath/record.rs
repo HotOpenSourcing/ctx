@@ -92,6 +92,8 @@ struct SafeMessage {
 struct SafeContent {
     body: Option<String>,
     calls: Vec<ToolCallRequest>,
+    saw_private_thinking: bool,
+    saw_other_block: bool,
 }
 
 impl<'de> Deserialize<'de> for SafeContent {
@@ -137,6 +139,7 @@ impl<'de> Visitor<'de> for SafeContentVisitor {
         Ok(SafeContent {
             body: (!value.trim().is_empty()).then(|| value.to_owned()),
             calls: Vec::new(),
+            ..SafeContent::default()
         })
     }
 
@@ -152,6 +155,7 @@ impl<'de> Visitor<'de> for SafeContentVisitor {
         Ok(SafeContent {
             body: (!value.trim().is_empty()).then_some(value),
             calls: Vec::new(),
+            ..SafeContent::default()
         })
     }
 
@@ -204,6 +208,11 @@ struct SafeBlock {
 
 impl SafeContent {
     fn push_block(&mut self, block: SafeBlock) -> Result<(), &'static str> {
+        if block.kind.as_deref() == Some("thinking") {
+            self.saw_private_thinking = true;
+        } else {
+            self.saw_other_block = true;
+        }
         match block.kind.as_deref() {
             Some("tool_use") | Some("server_tool_use") => {
                 let represented_rows = self.calls.len() + usize::from(self.body.is_some());
@@ -267,16 +276,25 @@ impl SafeContent {
         Ok(())
     }
 
-    fn into_parts(self) -> (Option<String>, Vec<ToolCallRequest>) {
-        (self.body, self.calls)
+    fn into_parts(self) -> (Option<String>, Vec<ToolCallRequest>, bool) {
+        (
+            self.body,
+            self.calls,
+            self.saw_private_thinking && !self.saw_other_block,
+        )
     }
+}
+
+struct SafeRecordProjection {
+    rows: Vec<ClaudeRetainedRow>,
+    ignored_private_thinking: bool,
 }
 
 fn retain_safe_record(
     mut record: SafeRecord,
     raw_ordinal: u64,
     locator: &ClaudePhysicalLocator,
-) -> Vec<ClaudeRetainedRow> {
+) -> SafeRecordProjection {
     let entry_type = record
         .entry_type
         .take()
@@ -293,7 +311,9 @@ fn retain_safe_record(
     let content = message
         .map(|value| value.content)
         .unwrap_or_else(|| std::mem::take(&mut record.content));
-    let (body, calls) = content.into_parts();
+    let (body, calls, private_thinking_only) = content.into_parts();
+    let private_thinking_only =
+        private_thinking_only && entry_type == "assistant" && role.as_deref() == Some("assistant");
     let mut rows = Vec::new();
 
     let kind = match entry_type.as_str() {
@@ -342,7 +362,10 @@ fn retain_safe_record(
         });
     }
 
-    rows
+    SafeRecordProjection {
+        ignored_private_thinking: rows.is_empty() && private_thinking_only,
+        rows,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -522,6 +545,7 @@ pub(super) struct ParsedClaudeRecord {
     pub(super) cwd: Option<String>,
     pub(super) version: Option<String>,
     pub(super) git_branch: Option<String>,
+    pub(super) ignored_private_thinking: bool,
     pub(super) rows: Vec<ClaudeRetainedRow>,
 }
 
@@ -593,6 +617,7 @@ fn parse_native_record_inner(
             cwd: metadata.cwd,
             version: metadata.version,
             git_branch: metadata.git_branch,
+            ignored_private_thinking: false,
             rows,
         });
     }
@@ -603,7 +628,8 @@ fn parse_native_record_inner(
     let cwd = record.cwd.clone();
     let version = record.version.clone();
     let git_branch = record.git_branch.clone();
-    let mut rows = retain_safe_record(record, raw_ordinal, locator);
+    let projection = retain_safe_record(record, raw_ordinal, locator);
+    let mut rows = projection.rows;
     if rows.iter().any(|row| row.tool_call.is_some())
         && !crate::common::json::raw_object_keys_are_unique(bytes)
     {
@@ -618,6 +644,7 @@ fn parse_native_record_inner(
         cwd,
         version,
         git_branch,
+        ignored_private_thinking: projection.ignored_private_thinking,
         rows,
     })
 }
