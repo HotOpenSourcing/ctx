@@ -23,7 +23,7 @@ use ctx_pro_host::{
         inspect_pair_at, installation_artifacts_present, load_pair_at, read_candidate,
         setup_repair_required, validate_pair_bytes, PairIdentity, PairInspection, ValidatedPair,
     },
-    VerifiedHelperExecutable,
+    LifecycleValidatedHelper, VerifiedHelperExecutable,
 };
 use lifecycle_manifest::{
     parse_release_version, validate_manifest_release_trust, verified_manifest,
@@ -176,22 +176,17 @@ pub(super) fn validated_installed_helper(data_root: &Path) -> Result<VerifiedHel
             .ok_or_else(|| anyhow!("pro_not_installed: signed Pro helper is not installed"))?;
     validate_manifest_release_trust(&pair.manifest, trust)?;
     let marker_path = install_marker_path(&target)?;
-    let mut helper = VerifiedHelperExecutable::open(
+    let helper = VerifiedHelperExecutable::open(
         data_root,
         &target,
         &marker_path,
-        pair.identity.artifact_sha256.clone(),
+        &pair.artifact,
+        LifecycleValidatedHelper::new(
+            pair.identity.artifact_sha256.clone(),
+            pair.manifest.protocol_fingerprint.clone(),
+        ),
+        lifecycle_lock,
     )?;
-    let locked_pair = validate_pair_bytes(
-        helper.read_helper(MAX_ARTIFACT_BYTES)?,
-        helper.read_marker(&marker_path, MAX_INSTALL_MARKER_BYTES)?,
-        trust.public_key_pem,
-    )?;
-    validate_manifest_release_trust(&locked_pair.manifest, trust)?;
-    if locked_pair.identity != pair.identity {
-        bail!("invalid_response: installed Pro helper changed during validation");
-    }
-    helper.retain_installation_guard(lifecycle_lock);
     Ok(helper)
 }
 

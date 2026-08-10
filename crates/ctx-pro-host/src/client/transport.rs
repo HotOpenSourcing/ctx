@@ -68,8 +68,7 @@ impl ProClient {
     ) -> Result<Self> {
         let protocol_fingerprint = execution_guard
             .as_ref()
-            .map(|executable| protocol_session(host, executable, data_root))
-            .transpose()?
+            .map(|executable| executable.protocol_fingerprint().to_owned())
             .unwrap_or_else(|| PROTOCOL_FINGERPRINT.to_owned());
         validate_protocol_session(required, &protocol_fingerprint)?;
         Self::connect_to_path_with_protocol_session(
@@ -378,30 +377,6 @@ pub(super) fn validate_hello_identity(
         bail!("protocol_mismatch: helper does not implement the exact Protocol V3 inventory");
     }
     Ok(())
-}
-
-fn protocol_session(
-    host: &(impl InstalledProHost + ?Sized),
-    executable: &VerifiedHelperExecutable,
-    data_root: &Path,
-) -> Result<String> {
-    let layout = ctx_pro_host_protocol::ProFilesystemLayout::new(data_root);
-    let fingerprint = if executable.path() == layout.helper_path() {
-        let marker_bytes = executable.read_marker(
-            &layout.helper_marker_path(),
-            crate::lifecycle_manifest::MAX_INSTALL_MARKER_BYTES,
-        )?;
-        let marker: crate::lifecycle_manifest::ProInstallMarker =
-            serde_json::from_slice(&marker_bytes)
-                .context("invalid_response: parse installed Pro marker")?;
-        let trust = host.release_trust()?;
-        let manifest = marker.signed_manifest(trust.public_key_pem)?;
-        crate::lifecycle_manifest::validate_manifest_release_trust(&manifest, trust)?;
-        manifest.protocol_fingerprint
-    } else {
-        PROTOCOL_FINGERPRINT.to_owned()
-    };
-    Ok(fingerprint)
 }
 
 pub(super) fn requires_git_preflight(required: &BTreeSet<Capability>) -> bool {

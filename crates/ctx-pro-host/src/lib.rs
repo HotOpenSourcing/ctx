@@ -1,10 +1,11 @@
 //! Low-level host runtime for an installed ctx Pro helper.
 //!
 //! Product policy, data-root selection, daemon/refresh orchestration,
-//! observability, presentation, and lifecycle mutation remain in the `ctx`
-//! binary. This crate receives those decisions through explicit values and a
-//! borrowed host port while it owns executable verification, authenticated
-//! transport, protocol operations, and the generation-pinned Core feed.
+//! observability, presentation, lifecycle mutation, release trust, and signed
+//! manifest interpretation remain in the `ctx` binary. This crate receives
+//! those decisions through narrow validated values and a borrowed host port
+//! while it owns executable/process verification, authenticated transport,
+//! protocol operations, and the generation-pinned Core feed.
 
 mod client;
 mod core_worker_budget;
@@ -34,7 +35,7 @@ pub use host_port::{
     AuthorizationMode, AuthorizationReceipt, CoreGenerationHost, CoreGenerationPin,
     InstalledProHost,
 };
-pub use verified_executable::VerifiedHelperExecutable;
+pub use verified_executable::{LifecycleValidatedHelper, VerifiedHelperExecutable};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use client::status_with_helper_resolver;

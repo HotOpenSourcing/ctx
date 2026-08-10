@@ -30,10 +30,6 @@ impl crate::InstalledProHost for ProcessTestHost {
         bail!("pro_not_installed: process test uses an explicit helper")
     }
 
-    fn release_trust(&self) -> Result<crate::lifecycle_manifest::ReleaseTrust> {
-        crate::lifecycle_manifest::release_trust(crate::lifecycle_manifest::ReleaseChannel::Stable)
-    }
-
     fn authorization_for_challenge(
         &self,
         _data_root: &Path,

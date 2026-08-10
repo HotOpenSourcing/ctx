@@ -147,15 +147,28 @@ if [[ -e "${host_root}/build.rs" ]]; then
   echo 'ctx-pro-host unexpectedly gained a build-script cfg authority' >&2
   exit 1
 fi
+if grep -En \
+  'release_trust|ProInstallMarker|signed_manifest|validate_manifest_release_trust|read_marker' \
+  "${host_root}/src/host_port.rs" "${host_root}/src/client/transport.rs"; then
+  echo 'signed lifecycle manifest authority leaked into the host port or protocol transport' >&2
+  exit 1
+fi
 
 cli_manifest="${repo_root}/crates/ctx-cli/Cargo.toml"
 cli_build="${repo_root}/crates/ctx-cli/BUILD.bazel"
+cli_lifecycle="${repo_root}/crates/ctx-cli/src/pro/lifecycle.rs"
 grep -F 'ctx-pro-host = { path = "../ctx-pro-host" }' "${cli_manifest}" >/dev/null
 grep -F 'ctx-pro-host = { path = "../ctx-pro-host", features = ["test-support"] }' \
   "${cli_manifest}" >/dev/null
 for target in lib test_support_lib qualification_lib qualification_test_support_lib; do
   grep -F "\"//crates/ctx-pro-host:${target}\"" "${cli_build}" >/dev/null
 done
+grep -F 'LifecycleValidatedHelper::new(' "${cli_lifecycle}" >/dev/null
+grep -F '&pair.artifact,' "${cli_lifecycle}" >/dev/null
+if grep -En 'helper\.(read_helper|read_marker)|retain_installation_guard' "${cli_lifecycle}"; then
+  echo 'CLI lifecycle duplicates host artifact reads or post-validation guard binding' >&2
+  exit 1
+fi
 
 for stale in \
   client/materialization.rs \

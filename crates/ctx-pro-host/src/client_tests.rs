@@ -44,10 +44,6 @@ impl InstalledProHost for MissingPinHost {
         bail!("pro_not_installed: helper fixture is absent")
     }
 
-    fn release_trust(&self) -> Result<crate::lifecycle_manifest::ReleaseTrust> {
-        crate::lifecycle_manifest::release_trust(crate::lifecycle_manifest::ReleaseChannel::Stable)
-    }
-
     fn authorization_for_challenge(
         &self,
         _data_root: &Path,
@@ -112,10 +108,6 @@ impl InstalledProHost for PinLifetimeHost {
 
     fn validated_installed_helper(&self, _data_root: &Path) -> Result<VerifiedHelperExecutable> {
         unreachable!("the test host always selects its developer helper")
-    }
-
-    fn release_trust(&self) -> Result<crate::lifecycle_manifest::ReleaseTrust> {
-        crate::lifecycle_manifest::release_trust(crate::lifecycle_manifest::ReleaseChannel::Stable)
     }
 
     fn authorization_for_challenge(

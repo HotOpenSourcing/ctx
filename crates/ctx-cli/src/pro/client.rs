@@ -13,10 +13,7 @@ use crate::analytics::{
     ProMaterializationTelemetryV1,
 };
 
-use super::{
-    authorization::StoredAuthorizationProvider, commercial_config::CommercialConfig,
-    commercial_lifecycle, lifecycle,
-};
+use super::{authorization::StoredAuthorizationProvider, commercial_lifecycle, lifecycle};
 
 pub(super) use ctx_pro_host::typed_blame_diagnostic;
 pub(crate) use ctx_pro_host::{
@@ -62,10 +59,6 @@ impl InstalledProHost for CtxInstalledProHost {
         data_root: &Path,
     ) -> Result<ctx_pro_host::VerifiedHelperExecutable> {
         lifecycle::validated_installed_helper(data_root)
-    }
-
-    fn release_trust(&self) -> Result<ctx_pro_host::lifecycle_manifest::ReleaseTrust> {
-        Ok(CommercialConfig::production()?.release_trust)
     }
 
     fn authorization_for_challenge(
