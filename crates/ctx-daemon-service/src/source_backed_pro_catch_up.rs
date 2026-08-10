@@ -30,10 +30,10 @@ pub(super) use status::{
 const SOURCE_BACKED_PRO_CATCH_UP_WAKE_TIMEOUT: Duration = Duration::from_millis(500);
 const SOURCE_BACKED_PRO_CATCH_UP_WAKE_RESPONSE_MAX_BYTES: u64 = 64 * 1024;
 
-pub(super) struct SourceBackedProCatchUpRun {
-    pub(super) status: Value,
-    pub(super) did_work: bool,
-    pub(super) continuation_pending: bool,
+pub struct SourceBackedProCatchUpRun {
+    pub status: Value,
+    pub did_work: bool,
+    pub continuation_pending: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -62,5 +62,62 @@ impl<'a> SourceBackedProCoreAuthority<'a> {
             Self::Retained(_) => "retained Core generation pin",
             Self::Durable(_) => "durable active Core generation pin",
         }
+    }
+}
+
+#[cfg(feature = "test-support")]
+pub mod testing {
+    use std::path::{Path, PathBuf};
+
+    use anyhow::Result;
+    use ctx_pro_host_protocol::CoreMaterializationFinalizationProgress;
+    use serde_json::Value;
+
+    pub use super::finalization::{
+        run_with as run_pro_catch_up_with, wait_for_completed_generation_with, ProCatchUpAuthority,
+        ProCatchUpSyncOutcome,
+    };
+    pub use super::lease_reconciliation::reconcile_core_finalization_generation_lease;
+    pub use super::SourceBackedProCatchUpRun;
+
+    pub fn persist_finalizing_status(
+        data_root: &Path,
+        generation: &str,
+        attempts: u64,
+        progress: CoreMaterializationFinalizationProgress,
+    ) -> Result<()> {
+        super::status::persist_status(
+            data_root,
+            &super::status::SourceBackedProCatchUpStatus::pending(generation, attempts)
+                .finalizing(progress),
+        )
+    }
+
+    pub fn persist_completed_status(data_root: &Path, generation: &str) -> Result<()> {
+        super::status::persist_status(
+            data_root,
+            &super::status::SourceBackedProCatchUpStatus::pending(generation, 1)
+                .completed(generation.to_owned()),
+        )
+    }
+
+    pub fn pro_catch_up_status_path(data_root: &Path) -> PathBuf {
+        super::status::status_path(data_root)
+    }
+
+    pub fn read_pro_catch_up_status(data_root: &Path) -> Option<Value> {
+        super::status::read_status_json(data_root)
+    }
+
+    pub fn scheduled_pro_catch_up_target(data_root: &Path) -> Result<Option<String>> {
+        super::status::scheduled_target_generation(data_root)
+    }
+
+    pub fn pro_catch_up_has_finalization_pending(data_root: &Path, generation: &str) -> bool {
+        super::status::status_has_finalization_pending(data_root, generation)
+    }
+
+    pub fn helper_recheck_target(data_root: &Path) -> Result<Option<String>> {
+        Ok(super::recheck::read(data_root)?.map(|intent| intent.target_helper_sha256().to_owned()))
     }
 }

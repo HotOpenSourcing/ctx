@@ -51,7 +51,7 @@ fn immediate_follow_up(mut iteration: DaemonIteration) -> DaemonIteration {
     iteration
 }
 
-pub(super) fn run_daemon_scheduler_cycle_with_activity(
+pub(super) fn run_daemon_scheduler_cycle_with_activity<P: crate::ProCatchUpPort + ?Sized>(
     args: &DaemonRunArgs,
     data_root: &Path,
     runtime: &mut DaemonRuntime,
@@ -59,7 +59,7 @@ pub(super) fn run_daemon_scheduler_cycle_with_activity(
     semantic_enabled: bool,
     query_activity: Option<&DaemonQueryActivity>,
     source_refresh: Option<&CoreRefreshEngine>,
-    pro: &dyn crate::ProCatchUpPort,
+    pro: &P,
     artifact_fetcher: &dyn ctx_semantic_model::ArtifactFetcher,
     config: &dyn crate::DaemonConfigPort,
 ) -> Result<DaemonIteration> {
@@ -246,11 +246,11 @@ fn run_pending_core_semantic_catch_up(
     ))))
 }
 
-fn run_pending_core_pro_catch_up(
+fn run_pending_core_pro_catch_up<P: crate::ProCatchUpPort + ?Sized>(
     data_root: &Path,
     runtime: &mut DaemonRuntime,
     source_refresh: Option<&CoreRefreshEngine>,
-    pro: &dyn crate::ProCatchUpPort,
+    pro: &P,
 ) -> Result<Option<DaemonIteration>> {
     run_pending_core_pro_catch_up_with(
         data_root,
@@ -263,14 +263,15 @@ fn run_pending_core_pro_catch_up(
     )
 }
 
-fn run_pending_core_pro_catch_up_with<RunPro>(
+fn run_pending_core_pro_catch_up_with<P, RunPro>(
     data_root: &Path,
     runtime: &mut DaemonRuntime,
     source_refresh: Option<&CoreRefreshEngine>,
-    pro: &dyn crate::ProCatchUpPort,
+    pro: &P,
     run_pro: RunPro,
 ) -> Result<Option<DaemonIteration>>
 where
+    P: crate::ProCatchUpPort + ?Sized,
     RunPro: for<'a> FnOnce(
         &Path,
         &mut DaemonRuntime,
@@ -585,12 +586,12 @@ fn run_core_refresh(
     Ok(DaemonIteration::new(run.did_work, failed, state))
 }
 
-fn run_pro_catch_up_with_retry(
+fn run_pro_catch_up_with_retry<P: crate::ProCatchUpPort + ?Sized>(
     data_root: &Path,
     runtime: &mut DaemonRuntime,
     core_generation_id: &str,
     authority: SourceBackedProCoreAuthority<'_>,
-    pro: &dyn crate::ProCatchUpPort,
+    pro: &P,
 ) -> Result<SourceBackedProCatchUpRun> {
     prepare_pro_retry_for_generation(runtime, data_root, core_generation_id);
     if !runtime.pro_retry.ready() {

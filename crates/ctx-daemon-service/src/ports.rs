@@ -187,10 +187,18 @@ pub enum ProCatchUpOutcome {
 }
 
 pub trait ProCatchUpPort: Sync {
+    type FinalizationLeaseToken;
+
     fn preflight(&self, data_root: &Path) -> Result<()>;
     fn sync(&self, data_root: &Path, index: &VerifiedIndex) -> Result<ProCatchUpOutcome>;
-    fn reconcile_finalization_lease(&self, data_root: &Path) -> Result<()>;
-    fn cancel_finalization_lease(&self, data_root: &Path, reason: &str) -> Result<bool>;
+    fn finalization_lease(&self, data_root: &Path) -> Result<Option<Self::FinalizationLeaseToken>>;
+    fn finalization_lease_generation<'a>(&self, lease: &'a Self::FinalizationLeaseToken)
+        -> &'a str;
+    fn release_observed_finalization_lease(
+        &self,
+        data_root: &Path,
+        lease: &Self::FinalizationLeaseToken,
+    ) -> Result<bool>;
     fn reconstruct_finalization_lease(
         &self,
         data_root: &Path,

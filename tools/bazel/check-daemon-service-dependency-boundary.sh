@@ -106,7 +106,7 @@ manifest_path = root / "crates/ctx-daemon-service/Cargo.toml"
 manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
 dependencies = set(manifest.get("dependencies", {}))
 targets = manifest.get("target", {})
-if set(targets) != {"cfg(unix)", "cfg(windows)"}:
+if set(targets) != {"cfg(unix)", 'cfg(target_os = "macos")'}:
     raise SystemExit("ctx-daemon-service target dependency tables differ")
 for target in targets.values():
     dependencies.update(target.get("dependencies", {}))
@@ -125,16 +125,14 @@ allowed_internal = {
 }
 allowed_external = {
     "anyhow",
-    "base64",
     "fs2",
     "libc",
-    "notify",
+    "objc2-foundation",
     "rusqlite",
     "serde",
     "serde_json",
     "thiserror",
     "uuid",
-    "windows-sys",
 }
 allowed = allowed_internal | allowed_external
 if dependencies != allowed:

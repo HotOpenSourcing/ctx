@@ -1,6 +1,17 @@
-mod lease_reconciliation;
-mod status;
+use std::path::Path;
 
-pub(crate) use lease_reconciliation::{
-    cancel_core_finalization_generation_lease, reconcile_core_finalization_generation_lease,
-};
+use anyhow::Result;
+
+pub(crate) fn cancel_core_finalization_generation_lease(
+    data_root: &Path,
+    reason: &str,
+) -> Result<bool> {
+    ctx_daemon_service::cancel_core_finalization_generation_lease(
+        data_root,
+        reason,
+        &super::daemon_service_ports::PRO_CATCH_UP,
+    )
+}
+
+#[cfg(test)]
+mod tests;

@@ -89,6 +89,20 @@ impl SourceBackedProCatchUpStatus {
         self
     }
 
+    pub(super) fn cancelled(mut self, reason: &str) -> Self {
+        self.status = SourceBackedProCatchUpState::Error;
+        self.pending = false;
+        self.retryable = false;
+        self.finalization_progress = None;
+        self.error_code = Some("cancelled".to_owned());
+        self.last_error = Some(reason.to_owned());
+        self.reason = Some("cancelled".to_owned());
+        self.consecutive_failures = 0;
+        self.retry_after_ms = None;
+        self.retry_not_before_at_ms = None;
+        self
+    }
+
     pub(super) fn finalizing(mut self, progress: CoreMaterializationFinalizationProgress) -> Self {
         self.status = SourceBackedProCatchUpState::Pending;
         self.pending = true;
@@ -167,7 +181,7 @@ impl SourceBackedProCatchUpError {
         }
     }
 
-    pub(super) fn projection(error: anyhow::Error, pro: &dyn ProCatchUpPort) -> Self {
+    pub(super) fn projection<P: ProCatchUpPort + ?Sized>(error: anyhow::Error, pro: &P) -> Self {
         Self::Projection {
             code: pro
                 .stable_error_code(&error)

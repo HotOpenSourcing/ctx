@@ -73,7 +73,6 @@ secret-service = { version = "5.1", default-features = false, features = ["rt-as
 zbus = { version = "5", default-features = false, features = ["blocking-api"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSProcessInfo", "alloc"] }
 security-framework = { version = "3.7", default-features = false }
 security-framework-sys = { version = "2.17", default-features = false }
 

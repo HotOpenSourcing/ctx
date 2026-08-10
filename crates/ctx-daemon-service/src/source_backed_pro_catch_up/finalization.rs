@@ -26,11 +26,11 @@ use super::{SourceBackedProCatchUpRun, SourceBackedProCoreAuthority};
 const SOURCE_BACKED_PRO_CATCH_UP_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const SOURCE_BACKED_PRO_CATCH_UP_WAIT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
-pub fn run_after_core_publication(
+pub fn run_after_core_publication<P: ProCatchUpPort + ?Sized>(
     data_root: &Path,
     core_generation_id: &str,
     authority: SourceBackedProCoreAuthority<'_>,
-    pro: &dyn ProCatchUpPort,
+    pro: &P,
 ) -> Result<SourceBackedProCatchUpRun> {
     if authority.generation_id() != core_generation_id {
         return record_preflight_error(
@@ -71,12 +71,12 @@ pub fn run_after_core_publication(
     )
 }
 
-pub(super) struct ProCatchUpAuthority<'a> {
-    pub(super) generation_id: Option<&'a str>,
-    pub(super) verified_index: Option<&'a VerifiedIndex>,
+pub struct ProCatchUpAuthority<'a> {
+    pub generation_id: Option<&'a str>,
+    pub verified_index: Option<&'a VerifiedIndex>,
 }
 
-pub(super) enum ProCatchUpSyncOutcome {
+pub enum ProCatchUpSyncOutcome {
     Finished {
         receipt: CoreMaterializationReceipt,
         did_work: bool,
@@ -87,15 +87,16 @@ pub(super) enum ProCatchUpSyncOutcome {
     },
 }
 
-pub(super) fn run_with<Preflight, Sync>(
+pub fn run_with<P, Preflight, Sync>(
     data_root: &Path,
     core_generation_id: &str,
     authority: ProCatchUpAuthority<'_>,
-    pro: &dyn ProCatchUpPort,
+    pro: &P,
     preflight: Preflight,
     sync: Sync,
 ) -> Result<SourceBackedProCatchUpRun>
 where
+    P: ProCatchUpPort + ?Sized,
     Preflight: FnOnce(&Path) -> Result<()>,
     Sync: FnOnce(&Path, &VerifiedIndex) -> Result<ProCatchUpSyncOutcome>,
 {
@@ -288,7 +289,7 @@ pub fn wait_for_completed_generation(data_root: &Path, core_generation_id: &str)
     )
 }
 
-pub(super) fn wait_for_completed_generation_with(
+pub fn wait_for_completed_generation_with(
     data_root: &Path,
     core_generation_id: &str,
     timeout: Duration,
@@ -323,201 +324,5 @@ pub(super) fn wait_for_completed_generation_with(
             );
         }
         wait();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    use ctx_history_index::{GenerationWriter, WriterOptions};
-    use ctx_pro_host_protocol::{
-        CoreMaterializationFinalizationPhase, CoreMaterializationFinalizationProgress,
-    };
-
-    use super::*;
-
-    #[derive(Default)]
-    struct RecordingPro {
-        reconstructed: AtomicUsize,
-        released: AtomicUsize,
-    }
-
-    impl ProCatchUpPort for RecordingPro {
-        fn preflight(&self, _data_root: &Path) -> Result<()> {
-            unreachable!()
-        }
-        fn sync(&self, _data_root: &Path, _index: &VerifiedIndex) -> Result<ProCatchUpOutcome> {
-            unreachable!()
-        }
-        fn reconcile_finalization_lease(&self, _data_root: &Path) -> Result<()> {
-            Ok(())
-        }
-        fn cancel_finalization_lease(&self, _data_root: &Path, _reason: &str) -> Result<bool> {
-            Ok(false)
-        }
-        fn reconstruct_finalization_lease(
-            &self,
-            _data_root: &Path,
-            _progress: &CoreMaterializationFinalizationProgress,
-        ) -> Result<()> {
-            self.reconstructed.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        }
-        fn validate_finalization_lease(
-            &self,
-            _data_root: &Path,
-            _progress: &CoreMaterializationFinalizationProgress,
-        ) -> Result<()> {
-            Ok(())
-        }
-        fn release_finalization_lease(
-            &self,
-            _data_root: &Path,
-            _generation_id: Option<&str>,
-        ) -> Result<bool> {
-            self.released.fetch_add(1, Ordering::SeqCst);
-            Ok(true)
-        }
-        fn selected_helper_artifact_sha256(&self, _data_root: &Path) -> Result<Option<String>> {
-            Ok(None)
-        }
-        fn stable_error_code(&self, _error: &anyhow::Error) -> Option<&'static str> {
-            Some("pro_not_installed")
-        }
-    }
-
-    fn empty_index(data_root: &Path) -> VerifiedIndex {
-        GenerationWriter::open(
-            source_backed_index_root(data_root),
-            WriterOptions::default(),
-        )
-        .unwrap()
-        .into_writer()
-        .unwrap()
-        .commit(|_| true)
-        .unwrap();
-        open_verified_index(&source_backed_index_root(data_root)).unwrap()
-    }
-
-    fn receipt(index: &VerifiedIndex) -> CoreMaterializationReceipt {
-        CoreMaterializationReceipt {
-            core_generation_id: index.generation_id().to_owned(),
-            core_record_contract_fingerprint: index
-                .manifest()
-                .core_record_contract_fingerprint
-                .clone(),
-            source_snapshot_sha256: "a".repeat(64),
-            materializer_revision: "test-core-materializer-v1".to_owned(),
-            source_count: 0,
-            event_count: 0,
-        }
-    }
-
-    fn progress(index: &VerifiedIndex) -> CoreMaterializationFinalizationProgress {
-        CoreMaterializationFinalizationProgress {
-            materialization_id: "b".repeat(64),
-            core_generation_id: index.generation_id().to_owned(),
-            finish_request_digest: "d".repeat(64),
-            materializer_revision: "test-core-materializer-v1".to_owned(),
-            phase: CoreMaterializationFinalizationPhase::EmitReplay,
-            cursor_sha256: "c".repeat(64),
-        }
-    }
-
-    #[test]
-    fn pinned_completion_reuses_the_index_and_releases_after_terminal_status() {
-        let temp = tempfile::tempdir().unwrap();
-        let index = empty_index(temp.path());
-        let generation = index.generation_id().to_owned();
-        let pro = RecordingPro::default();
-        let (run, opens) = ctx_history_refresh::count_verified_index_opens(|| {
-            run_with(
-                temp.path(),
-                &generation,
-                ProCatchUpAuthority {
-                    generation_id: Some(&generation),
-                    verified_index: Some(&index),
-                },
-                &pro,
-                |_| Ok(()),
-                |_, supplied| {
-                    Ok(ProCatchUpSyncOutcome::Finished {
-                        receipt: receipt(supplied),
-                        did_work: true,
-                        helper_artifact_sha256: "a".repeat(64),
-                    })
-                },
-            )
-            .unwrap()
-        });
-
-        assert_eq!(opens, 0);
-        assert!(run.did_work);
-        assert!(!run.continuation_pending);
-        assert_eq!(run.status["status"], "completed");
-        assert_eq!(run.status["receipt_core_generation_id"], generation);
-        assert_eq!(pro.reconstructed.load(Ordering::SeqCst), 0);
-        assert_eq!(pro.released.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn pending_finalization_reconstructs_lease_and_yields_without_backoff() {
-        let temp = tempfile::tempdir().unwrap();
-        let index = empty_index(temp.path());
-        let generation = index.generation_id().to_owned();
-        let pro = RecordingPro::default();
-        let run = run_with(
-            temp.path(),
-            &generation,
-            ProCatchUpAuthority {
-                generation_id: Some(&generation),
-                verified_index: Some(&index),
-            },
-            &pro,
-            |_| Ok(()),
-            |_, supplied| {
-                Ok(ProCatchUpSyncOutcome::FinalizationPending {
-                    pending: CoreMaterializationFinalizationPending {
-                        progress: progress(supplied),
-                        replayed: false,
-                    },
-                })
-            },
-        )
-        .unwrap();
-
-        assert!(run.did_work);
-        assert!(run.continuation_pending);
-        assert_eq!(run.status["status"], "pending");
-        assert_eq!(run.status["retryable"], false);
-        assert_eq!(run.status["reason"], "finalizing");
-        assert_eq!(pro.reconstructed.load(Ordering::SeqCst), 1);
-        assert_eq!(pro.released.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn stable_port_error_code_controls_terminal_retry_policy() {
-        let temp = tempfile::tempdir().unwrap();
-        let index = empty_index(temp.path());
-        let generation = index.generation_id().to_owned();
-        let pro = RecordingPro::default();
-        let run = run_with(
-            temp.path(),
-            &generation,
-            ProCatchUpAuthority {
-                generation_id: Some(&generation),
-                verified_index: Some(&index),
-            },
-            &pro,
-            |_| anyhow::bail!("host unavailable"),
-            |_, _| unreachable!(),
-        )
-        .unwrap();
-
-        assert_eq!(run.status["status"], "error");
-        assert_eq!(run.status["error_code"], "pro_not_installed");
-        assert_eq!(run.status["retryable"], false);
-        assert_eq!(pro.released.load(Ordering::SeqCst), 1);
     }
 }

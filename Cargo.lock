@@ -756,7 +756,6 @@ dependencies = [
  "jsonc-parser",
  "libc",
  "notify",
- "objc2-foundation",
  "predicates",
  "proptest",
  "quick-xml",
@@ -854,7 +853,6 @@ name = "ctx-daemon-service"
 version = "1.0.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "ctx-client-observability",
  "ctx-daemon-runtime",
  "ctx-history-capture",
@@ -867,14 +865,13 @@ dependencies = [
  "ctx-upgrade-engine",
  "fs2",
  "libc",
- "notify",
+ "objc2-foundation",
  "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",
  "uuid",
- "windows-sys 0.61.2",
 ]
 
 [[package]]

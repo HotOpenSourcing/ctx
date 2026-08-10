@@ -8,7 +8,9 @@ use ctx_daemon_service::{
     DaemonProductConfig, DaemonServicePorts, DaemonTrigger, ProCatchUpOutcome, ProCatchUpPort,
 };
 use ctx_history_capture::DiscoveryContext;
-use ctx_history_index::VerifiedIndex;
+use ctx_history_index::{
+    release_generation_retention_lease, GenerationRetentionLease, VerifiedIndex,
+};
 use ctx_pro_host_protocol::CoreMaterializationFinalizationProgress;
 use ctx_semantic_model::{ArtifactFetchRequest, ArtifactFetcher, SemanticModelConfig};
 
@@ -26,7 +28,7 @@ pub(super) static PORTS: DaemonServicePorts<
     dyn DaemonConfigPort,
     dyn DaemonAvailabilityPort,
     CliDaemonInstallationPort,
-    dyn ProCatchUpPort,
+    dyn ProCatchUpPort<FinalizationLeaseToken = GenerationRetentionLease>,
     dyn DaemonObservationPort,
 > = DaemonServicePorts {
     config: &CONFIG,
@@ -150,6 +152,8 @@ impl DaemonInstallationPort for CliDaemonInstallationPort {
 pub(super) struct CliProCatchUpPort;
 
 impl ProCatchUpPort for CliProCatchUpPort {
+    type FinalizationLeaseToken = GenerationRetentionLease;
+
     fn preflight(&self, data_root: &Path) -> Result<()> {
         crate::pro::preflight_core_materialization(data_root)
     }
@@ -173,14 +177,28 @@ impl ProCatchUpPort for CliProCatchUpPort {
         )
     }
 
-    fn reconcile_finalization_lease(&self, data_root: &Path) -> Result<()> {
-        super::source_backed_pro_catch_up::reconcile_core_finalization_generation_lease(data_root)
+    fn finalization_lease(&self, data_root: &Path) -> Result<Option<GenerationRetentionLease>> {
+        crate::pro::core_finalization_generation_lease(data_root)
     }
 
-    fn cancel_finalization_lease(&self, data_root: &Path, reason: &str) -> Result<bool> {
-        super::source_backed_pro_catch_up::cancel_core_finalization_generation_lease(
-            data_root, reason,
+    fn finalization_lease_generation<'a>(&self, lease: &'a GenerationRetentionLease) -> &'a str {
+        lease.generation_id()
+    }
+
+    fn release_observed_finalization_lease(
+        &self,
+        data_root: &Path,
+        lease: &GenerationRetentionLease,
+    ) -> Result<bool> {
+        release_generation_retention_lease(
+            ctx_history_refresh::source_backed_index_root(data_root),
+            lease,
         )
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "invalid_response: durable Core generation lease changed before terminal release: {error}"
+            )
+        })
     }
 
     fn reconstruct_finalization_lease(
@@ -223,13 +241,17 @@ impl DaemonObservationPort for CliDaemonObservationPort {
         if events.is_empty() {
             return;
         }
-        let Ok(config) = AppConfig::load(data_root) else {
+        let Some(config) = load_daemon_observation_config(data_root) else {
             return;
         };
-        if config.analytics.enabled {
-            crate::analytics::send_batch(data_root, &config, events);
-        }
+        crate::analytics::send_batch(data_root, &config, events);
     }
+}
+
+fn load_daemon_observation_config(data_root: &Path) -> Option<AppConfig> {
+    AppConfig::load(data_root)
+        .ok()
+        .filter(|config| config.analytics.enabled)
 }
 
 pub(super) struct CliDaemonArtifactFetcher;
@@ -254,5 +276,35 @@ fn cli_trigger(trigger: DaemonTrigger) -> DaemonTriggerCommandArg {
         DaemonTrigger::Setup => DaemonTriggerCommandArg::Setup,
         DaemonTrigger::Import => DaemonTriggerCommandArg::Import,
         DaemonTrigger::Search => DaemonTriggerCommandArg::Search,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, time::Duration};
+
+    use ctx_client_observability::analytics::{DaemonOperationV1, OperationCompletedV1, Outcome};
+
+    use super::*;
+
+    #[test]
+    fn telemetry_policy_is_reloaded_and_failures_fail_closed() {
+        let root = tempfile::tempdir().unwrap();
+        let config_path = root.path().join(crate::config::CONFIG_FILE);
+
+        fs::write(&config_path, "analytics.enabled = true\n").unwrap();
+        assert!(load_daemon_observation_config(root.path()).is_some());
+        fs::write(&config_path, "analytics.enabled = false\n").unwrap();
+        assert!(load_daemon_observation_config(root.path()).is_none());
+        fs::write(&config_path, "not valid config\n").unwrap();
+        assert!(load_daemon_observation_config(root.path()).is_none());
+
+        let event = PublicEventV1::OperationCompleted(OperationCompletedV1::for_daemon(
+            DaemonOperationV1::Status,
+            Outcome::Success,
+            Duration::ZERO,
+        ));
+        OBSERVATION.deliver(root.path(), &[event]);
+        assert!(!crate::identity::install_path(root.path()).exists());
     }
 }

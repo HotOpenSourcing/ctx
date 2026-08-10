@@ -86,6 +86,8 @@ impl ArtifactFetcher for TestArtifact {
 pub(crate) struct TestPro;
 
 impl ProCatchUpPort for TestPro {
+    type FinalizationLeaseToken = ();
+
     fn preflight(&self, _data_root: &Path) -> Result<()> {
         bail!("Pro is not installed")
     }
@@ -94,11 +96,14 @@ impl ProCatchUpPort for TestPro {
         unreachable!("preflight fails")
     }
 
-    fn reconcile_finalization_lease(&self, _data_root: &Path) -> Result<()> {
-        Ok(())
+    fn finalization_lease(&self, _data_root: &Path) -> Result<Option<()>> {
+        Ok(None)
     }
-    fn cancel_finalization_lease(&self, _data_root: &Path, _reason: &str) -> Result<bool> {
-        Ok(false)
+    fn finalization_lease_generation<'a>(&self, _lease: &'a ()) -> &'a str {
+        unreachable!()
+    }
+    fn release_observed_finalization_lease(&self, _data_root: &Path, _lease: &()) -> Result<bool> {
+        unreachable!()
     }
     fn reconstruct_finalization_lease(
         &self,
