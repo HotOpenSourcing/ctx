@@ -972,7 +972,6 @@ sh_test(
         "//crates/ctx-history-index:cargo_package_data",
         "//crates/ctx-semantic-model:BUILD.bazel",
         "//crates/ctx-semantic-model:cargo_package_data",
-        "//tools/bazel:check_semantic_index_boundary.py",
     ],
     tags = [
         "build-graph",
@@ -996,6 +995,7 @@ sh_test(
         "//crates/ctx-semantic-index:cargo_package_data",
         "//crates/ctx-semantic-model:BUILD.bazel",
         "//crates/ctx-semantic-model:cargo_package_data",
+        "//tools/bazel:check_semantic_index_boundary.py",
     ],
     tags = [
         "build-graph",
