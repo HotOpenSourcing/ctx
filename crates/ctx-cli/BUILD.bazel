@@ -123,6 +123,7 @@ CTX_CLI_TEST_COMPILE_DATA = CTX_CLI_COMPILE_DATA + glob([
     "//:release_contracts",
     "//:telemetry_contract_fixtures",
     "//crates/ctx-client-observability:cargo_package_data",
+    "//crates/ctx-daemon-runtime:cargo_package_data",
 ]
 
 RUST_SRCS = glob(["src/**/*.rs"])

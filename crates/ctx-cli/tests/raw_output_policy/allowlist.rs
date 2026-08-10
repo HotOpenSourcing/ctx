@@ -119,7 +119,7 @@ const MCP: TestOwner = TestOwner::behavioral(
     ],
 );
 const MCP_SERVER: TestOwner = TestOwner::behavioral(
-    "src/mcp/tests.rs::local_usage_commit_occurs_once_after_flush_and_never_after_output_failure",
+    "src/mcp/tests.rs::post_flush_observations_follow_one_local_commit_and_skip_it_on_output_failure",
     &["src/mcp.rs"],
     &["run_one_status_response", "OutputFailure", "recorded"],
 );

@@ -316,26 +316,6 @@ fn integration_receipt_event(receipt: ToolIntegrationReceipt) -> PublicEventV1 {
 }
 
 #[cfg(test)]
-fn serve_stdio_loop(
-    data_root: &Path,
-    stdin: &mut impl BufRead,
-    stdout: &mut impl Write,
-    initialized: &mut bool,
-    telemetry: &mut McpTelemetry,
-    usage_recorder: &mut McpUsageRecorder,
-) -> std::result::Result<(), McpServeFailure> {
-    let backend = LocalToolBackend::new(data_root.to_path_buf());
-    serve_stdio_loop_with_backend(
-        stdin,
-        stdout,
-        initialized,
-        telemetry,
-        usage_recorder,
-        &backend,
-    )
-}
-
-#[cfg(test)]
 fn handle_message(
     message: Value,
     data_root: &Path,
