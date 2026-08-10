@@ -156,10 +156,6 @@ impl Persistence {
     }
 }
 
-pub(super) fn validated_installed_helper_path(data_root: &Path) -> Result<PathBuf> {
-    validated_installed_helper(data_root).map(|helper| helper.path().to_path_buf())
-}
-
 pub(super) fn acquire_commercial_lifecycle_lock(
     data_root: &Path,
     create_pro_root: bool,

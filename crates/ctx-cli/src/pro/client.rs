@@ -21,9 +21,9 @@ use super::{
 pub(super) use ctx_pro_host::typed_blame_diagnostic;
 pub(crate) use ctx_pro_host::{
     blame_boundary_error, blame_diagnostic, core_finalization_generation_lease,
-    default_helper_path, git_executable, invalid_blame_request,
-    reconstruct_core_finalization_generation_lease, release_core_finalization_generation_lease,
-    stable_error_code, validate_core_finalization_generation_lease, BlameResultFreshness,
+    default_helper_path, invalid_blame_request, reconstruct_core_finalization_generation_lease,
+    release_core_finalization_generation_lease, stable_error_code,
+    validate_core_finalization_generation_lease, BlameResultFreshness,
     CoreMaterializationSyncOutcome, HelperSmoke, HostedBlameResult, ProSetupRepairability,
     ProStatus, RESOURCE_NOT_FOUND_DIAGNOSTIC,
 };
@@ -91,17 +91,22 @@ impl InstalledProHost for CtxInstalledProHost {
     }
 }
 
-impl CoreGenerationPin for crate::semantic::PinnedSourceBackedGeneration {
+// Keep the daemon-service generation lease owned for the full host operation.
+// This local adapter also prevents either extracted crate from depending on the
+// other solely to satisfy Rust's trait coherence rules.
+struct CtxCoreGenerationPin(crate::semantic::PinnedSourceBackedGeneration);
+
+impl CoreGenerationPin for CtxCoreGenerationPin {
     fn generation_id(&self) -> &str {
-        crate::semantic::PinnedSourceBackedGeneration::generation_id(self)
+        self.0.generation_id()
     }
 }
 
 impl CoreGenerationHost for CtxInstalledProHost {
-    type Pin = crate::semantic::PinnedSourceBackedGeneration;
+    type Pin = CtxCoreGenerationPin;
 
     fn pin_active_core_generation(&self, data_root: &Path) -> Result<Self::Pin> {
-        crate::semantic::pin_active_verified_generation(data_root)
+        crate::semantic::pin_active_verified_generation(data_root).map(CtxCoreGenerationPin)
     }
 }
 

@@ -7,8 +7,6 @@ use ctx_pro_access::{
 };
 use ctx_pro_host_protocol::{AuthorizationRequest, AUTHORIZATION_CHALLENGE_BYTES};
 
-#[cfg(ctx_pro_qualification)]
-pub(crate) use ctx_pro_access::authorization::QualificationAuthorizationProvider;
 pub(crate) use ctx_pro_access::authorization::{
     AuthorizationProvider, EntitlementSchedule, InstallationChallengeSigner,
 };
