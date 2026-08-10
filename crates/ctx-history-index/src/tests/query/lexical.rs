@@ -32,6 +32,7 @@ fn repository_binding(git_object_format: GitObjectFormat) -> RepositoryBinding {
 }
 
 fn with_produced_object(mut record: CoreRecord, object_id: GitObjectId) -> CoreRecord {
+    record.event_origin = EventOrigin::UniqueToSession;
     record
         .repository_bindings
         .push(repository_binding(object_id.format));

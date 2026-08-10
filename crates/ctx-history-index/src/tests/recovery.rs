@@ -454,6 +454,7 @@ impl QueryProjectionMutation {
 
 fn query_projection_fixture_record(source: &SourceKey, body: &str) -> CoreRecord {
     let mut record = document(source, 1, body);
+    record.event_origin = EventOrigin::UniqueToSession;
     record.repository_bindings.push(RepositoryBinding {
         binding_id: "binding-1".to_owned(),
         logical_repository_id: "repo-1".to_owned(),
@@ -775,7 +776,7 @@ fn assert_malicious_incremental_copy_is_rejected(
 fn incremental_candidate_rejects_copied_lineage_projection_mismatches() {
     for mutation in [
         QueryProjectionMutation::Text("event_origin_kind", "unique_to_session"),
-        QueryProjectionMutation::Text("origin_event_identity_digest", "00"),
+        QueryProjectionMutation::Text("origin_event_id", "00000000-0000-0000-0000-000000000000"),
     ] {
         assert_malicious_incremental_copy_is_rejected(mutation, "query_projection");
     }
@@ -1448,7 +1449,7 @@ fn incompatible_schema_generation_is_rebuilt_without_interpretation() {
 
 #[test]
 fn schema_without_encoded_core_size_is_rebuilt_without_fallback() {
-    assert_eq!(LEXICAL_SCHEMA_VERSION, 19);
+    assert_eq!(LEXICAL_SCHEMA_VERSION, 20);
     assert_active_meta_incompatibility_is_rebuilt(
         "encoded-size-schema-rebuild.jsonl",
         |meta| {
@@ -1468,7 +1469,7 @@ fn schema_without_encoded_core_size_is_rebuilt_without_fallback() {
 
 #[test]
 fn schema_without_event_range_order_is_rebuilt_without_fallback() {
-    assert_eq!(LEXICAL_SCHEMA_VERSION, 19);
+    assert_eq!(LEXICAL_SCHEMA_VERSION, 20);
     assert_active_meta_incompatibility_is_rebuilt(
         "event-range-order-schema-rebuild.jsonl",
         |meta| {

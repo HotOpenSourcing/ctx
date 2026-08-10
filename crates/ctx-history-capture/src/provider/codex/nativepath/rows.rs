@@ -32,6 +32,9 @@ use crate::{
 };
 
 const OWNED_ALLOCATION_OVERHEAD_BYTES: usize = 16;
+pub(super) const MAX_CODEX_DURABLE_SESSION_ID_BYTES: usize = 1024;
+pub(super) const MAX_CODEX_DURABLE_CWD_BYTES: usize = 4 * 1024;
+pub(super) const MAX_CODEX_DURABLE_METADATA_BYTES: usize = 1024;
 
 struct JsonLengthWriter {
     bytes: usize,
@@ -95,6 +98,7 @@ pub(crate) struct CodexEventRow {
 pub(crate) struct CodexSourceBackedRowV0 {
     pub(crate) raw_ordinal: u64,
     pub(crate) provider_event_identity: Option<CodexProviderEventIdentityV0>,
+    pub(crate) copied_from_native_session_id: Option<String>,
     pub(crate) occurred_at: DateTime<Utc>,
     pub(crate) event_type: EventType,
     pub(crate) role: Option<EventRole>,
@@ -213,6 +217,11 @@ impl CodexSourceBackedRowV0 {
                 self.provider_event_identity
                     .as_ref()
                     .map_or(0, |identity| identity.value.capacity()),
+            )?
+            .checked_add(
+                self.copied_from_native_session_id
+                    .as_ref()
+                    .map_or(0, String::capacity),
             )?
             .checked_add(self.lexical_body.capacity())?
             .checked_add(
@@ -356,6 +365,7 @@ pub(super) fn build_source_backed_event_row(
         row: CodexSourceBackedRowV0 {
             raw_ordinal,
             provider_event_identity: provider_event_identity(&retained.payload),
+            copied_from_native_session_id: None,
             occurred_at: retained.occurred_at,
             event_type: semantic.event_type,
             role: semantic.role,
@@ -406,6 +416,7 @@ pub(super) fn build_source_backed_sparse_output_row(
     Ok(Some(CodexSourceBackedRowV0 {
         raw_ordinal,
         provider_event_identity,
+        copied_from_native_session_id: None,
         occurred_at,
         event_type,
         role: Some(EventRole::Tool),

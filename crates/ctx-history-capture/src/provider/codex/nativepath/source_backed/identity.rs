@@ -26,7 +26,7 @@ impl CodexEventIdentityStateV0 {
         source: &SourceKey,
         session_id: StableEntityId,
         row: &CodexSourceBackedRowV0,
-    ) -> CodexSourceBackedResultV0<(StableEntityId, TypedKey)> {
+    ) -> CodexSourceBackedResultV0<(StableEntityId, TypedKey, u64)> {
         let (occurrence_key, parts) = match row.provider_event_identity.as_ref() {
             Some(provider_identity) => provider_event_key(row, provider_identity)?,
             None => fallback_event_key(row)?,
@@ -41,7 +41,9 @@ impl CodexEventIdentityStateV0 {
                 .checked_add(1)
                 .ok_or(CodexSourceBackedErrorV0::CountOverflow)?,
         );
-        event_identity_for_occurrence(source, session_id, &parts, occurrence)
+        let (event_id, native_event_id) =
+            event_identity_for_occurrence(source, session_id, &parts, occurrence)?;
+        Ok((event_id, native_event_id, occurrence))
     }
 
     fn first_unused_base_occurrence(
@@ -224,7 +226,6 @@ pub(super) fn codex_core_record(
     row: CodexSourceBackedRowV0,
     event_identity_state: &mut CodexEventIdentityStateV0,
     attributor: &mut crate::repository_attribution::RepositoryAttributor,
-    outcome_lineage: &CodexOutcomeLineageAuthorityV0,
 ) -> CodexSourceBackedResultV0<CoreRecord> {
     let native_session_id = owner.native_session_id.as_str();
     let parent_session_id = owner
@@ -239,11 +240,12 @@ pub(super) fn codex_core_record(
         .transpose()?
         .unwrap_or(session_id);
     let is_primary = owner.session_relationship.is_primary();
-    let (event_id, native_event_id) =
+    let (event_id, native_event_id, provider_occurrence) =
         event_identity_state.next_identity(source, session_id, &row)?;
     let CodexSourceBackedRowV0 {
         raw_ordinal,
         provider_event_identity,
+        copied_from_native_session_id,
         occurred_at,
         event_type,
         role,
@@ -280,25 +282,26 @@ pub(super) fn codex_core_record(
     let result_command_too_large = repository_result
         .as_ref()
         .is_some_and(|evidence| evidence.command_too_large);
-    let result_lineage_origin = match repository_result.as_ref().and_then(|evidence| {
+    let result_origin = match repository_result.as_ref().and_then(|evidence| {
         Some((
             evidence.origin_call_id.as_deref()?,
             evidence.result_call_id.as_deref()?,
         ))
     }) {
-        Some((origin_call_id, result_call_id)) => {
-            Some(outcome_lineage.classify(native_session_id, origin_call_id, result_call_id)?)
-        }
+        Some((_origin_call_id, _result_call_id)) => copied_from_native_session_id
+            .map(
+                |ancestor_native_session_id| CodexOutcomeOriginV0::CopiedFromAncestor {
+                    ancestor_native_session_id,
+                },
+            )
+            .or(Some(CodexOutcomeOriginV0::Unproven)),
         None => None,
     };
     let event_origin = match (
-        result_lineage_origin.as_ref(),
+        result_origin.as_ref(),
         repository_result.as_ref(),
         provider_event_identity.as_ref(),
     ) {
-        (Some(CodexOutcomeOriginV0::UniqueToSession), Some(_), _) => {
-            Some(ctx_history_core::EventOrigin::UniqueToSession)
-        }
         (
             Some(CodexOutcomeOriginV0::CopiedFromAncestor {
                 ancestor_native_session_id,
@@ -315,6 +318,7 @@ pub(super) fn codex_core_record(
                     provider_identity,
                     event_type.as_str(),
                     role.map(|role| role.as_str()),
+                    provider_occurrence,
                 )
             })
             .transpose()?
@@ -334,14 +338,13 @@ pub(super) fn codex_core_record(
         !outcome_observations.is_empty() || !pull_request_associations.is_empty();
     let copied_origin = has_repository_outcomes
         && matches!(
-            result_lineage_origin.as_ref(),
+            result_origin.as_ref(),
             Some(CodexOutcomeOriginV0::CopiedFromAncestor { .. })
         );
     let unproven_origin = has_repository_outcomes
         && !matches!(
-            result_lineage_origin.as_ref(),
-            Some(CodexOutcomeOriginV0::UniqueToSession)
-                | Some(CodexOutcomeOriginV0::CopiedFromAncestor { .. })
+            result_origin.as_ref(),
+            Some(CodexOutcomeOriginV0::CopiedFromAncestor { .. })
         );
     if copied_origin || unproven_origin {
         outcome_observations.clear();
@@ -550,7 +553,7 @@ fn merge_repository_annotation(
 
 fn bounded_core_metadata(value: Option<&str>) -> Option<String> {
     value
-        .filter(|value| !value.is_empty() && value.len() <= 64 * 1024)
+        .filter(|value| !value.is_empty() && value.len() <= MAX_CODEX_DURABLE_METADATA_BYTES)
         .map(str::to_owned)
 }
 
@@ -567,6 +570,7 @@ fn copied_result_event_origin(
     provider_identity: &CodexProviderEventIdentityV0,
     event_type: &str,
     role: Option<&str>,
+    provider_occurrence: u64,
 ) -> CodexSourceBackedResultV0<Option<ctx_history_core::EventOrigin>> {
     if provider_identity.kind != CodexProviderEventIdentityKindV0::CallId
         || provider_identity.value != result_call_id
@@ -576,8 +580,15 @@ fn copied_result_event_origin(
     let ancestor_source = codex_source_key(ancestor_native_session_id)?;
     let ancestor_session_id = codex_session_identity(&ancestor_source, ancestor_native_session_id)?;
     let (_, parts) = provider_event_key_parts(event_type, role, provider_identity)?;
-    let (ancestor_event_id, _) =
-        event_identity_for_occurrence(&ancestor_source, ancestor_session_id, &parts, 0)?;
+    // The child-local provider occurrence is part of the native identity. A
+    // duplicated call ID therefore targets the matching exact ancestor slot,
+    // never the first matching ancestor by default.
+    let (ancestor_event_id, _) = event_identity_for_occurrence(
+        &ancestor_source,
+        ancestor_session_id,
+        &parts,
+        provider_occurrence,
+    )?;
     Ok(Some(ctx_history_core::EventOrigin::CopiedFromAncestor {
         ancestor_session_id: Box::new(ancestor_session_id),
         ancestor_event_id: Box::new(ancestor_event_id),
@@ -607,7 +618,7 @@ pub(super) fn validate_owner(
         _ => {
             return Err(CodexSourceBackedErrorV0::Capture(
                 CaptureError::InvalidPayload(
-                    "Codex scanner owner is not a normalized lineage tuple".to_owned(),
+                    "Codex scanner owner is not a valid child-local session tuple".to_owned(),
                 ),
             ))
         }
@@ -649,8 +660,6 @@ pub(super) fn certify_scan(
     base: Option<&CertifiedSource>,
     staged_documents: u64,
     scan_counters: CodexScanCounters,
-    lineage_dependency_sha256: [u8; 32],
-    certified_lineage_facts: Option<CodexCertifiedLineageFactsV0>,
 ) -> CodexSourceBackedResultV0<CertifiedSource> {
     if scan_counters.retained_records != staged_documents {
         return Err(CodexSourceBackedErrorV0::ScanCountMismatch);
@@ -658,7 +667,7 @@ pub(super) fn certify_scan(
     let counts = cumulative_counts(base, scan, staged_documents, scan_counters)?;
     let opening = source_observation(source_key, &scan.before_observation)?;
     let closing = source_observation(source_key, &scan.after_observation)?;
-    let frontier = match scan.checkpoint(lineage_dependency_sha256, certified_lineage_facts) {
+    let frontier = match scan.checkpoint()? {
         Some(checkpoint) => Some(SourceFrontier::new(
             CODEX_FRONTIER_KIND,
             TypedKey::bytes(checkpoint.encode()?)?,
@@ -726,6 +735,65 @@ fn cumulative_counts(
 fn checked_add(left: u64, right: u64) -> CodexSourceBackedResultV0<u64> {
     left.checked_add(right)
         .ok_or(CodexSourceBackedErrorV0::CountOverflow)
+}
+
+#[cfg(test)]
+mod copied_occurrence_tests {
+    use super::*;
+
+    #[test]
+    fn copied_origin_targets_the_exact_duplicate_provider_occurrence() {
+        let ancestor = "019fb100-0000-7000-8000-000000000001";
+        let provider_identity = CodexProviderEventIdentityV0 {
+            kind: CodexProviderEventIdentityKindV0::CallId,
+            value: "duplicate-provider-call".to_owned(),
+        };
+        let first = copied_result_event_origin(
+            ancestor,
+            "duplicate-provider-call",
+            &provider_identity,
+            "tool_output",
+            Some("tool"),
+            0,
+        )
+        .unwrap()
+        .unwrap();
+        let second = copied_result_event_origin(
+            ancestor,
+            "duplicate-provider-call",
+            &provider_identity,
+            "tool_output",
+            Some("tool"),
+            1,
+        )
+        .unwrap()
+        .unwrap();
+        let event_id = |origin: ctx_history_core::EventOrigin| match origin {
+            ctx_history_core::EventOrigin::CopiedFromAncestor {
+                ancestor_event_id, ..
+            } => *ancestor_event_id,
+            origin => panic!("unexpected copied origin {origin:?}"),
+        };
+        assert_ne!(event_id(first), event_id(second));
+    }
+
+    #[test]
+    fn copied_origin_abstains_without_an_exact_call_identity() {
+        let provider_identity = CodexProviderEventIdentityV0 {
+            kind: CodexProviderEventIdentityKindV0::Id,
+            value: "duplicate-provider-call".to_owned(),
+        };
+        assert!(copied_result_event_origin(
+            "019fb100-0000-7000-8000-000000000002",
+            "duplicate-provider-call",
+            &provider_identity,
+            "tool_output",
+            Some("tool"),
+            0,
+        )
+        .unwrap()
+        .is_none());
+    }
 }
 
 pub(crate) fn source_observation(

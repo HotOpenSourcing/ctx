@@ -313,7 +313,7 @@ fn inventory_freezes_candidate_sets_and_active_repository_revisions() {
     assert_eq!(
         canonical["core_record_contract"],
         serde_json::json!({
-            "fingerprint": "0610be9a5810ce742b505dc4c3b3db24e9ab795126a6b62e0ef2172e04a85cc3",
+            "fingerprint": "22b962275535fd0cc54944023976b9e2b18bcdb065c0105c77531dba7dd63ca5",
             "leaf": {
                 "helper": "ctx_pro_host_protocol::core_record_leaf_sha256",
                 "paired_helper": "ctx_pro_host_protocol::core_record_digests",
@@ -334,7 +334,7 @@ fn inventory_freezes_candidate_sets_and_active_repository_revisions() {
             "repository_outcome_capture_revision": 5,
             "repository_local_root_authorization_fingerprint_revision": 1,
             "mcp_tool_call_attribution_revision": 1,
-            "session_lineage_revision": 1,
+            "session_lineage_revision": 2,
             "mcp_tool_call_attribution": {
                 "wire_path": "CoreRecord.mcp_tool_call",
                 "presence": "optional_omitted_when_absent_explicit_null_rejected",

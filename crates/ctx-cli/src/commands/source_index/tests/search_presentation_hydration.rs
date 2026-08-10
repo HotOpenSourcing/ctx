@@ -4,6 +4,7 @@ fn file_only_search_keeps_an_oversized_grapheme_body_without_requiring_a_body_ma
     let event = fixture_event(CaptureProvider::Codex, "codex_session_jsonl", 94, 1);
     let oversized_cluster = format!("x{}", "\u{301}".repeat(SEARCH_SNIPPET_MAX_BYTES));
     let mut stored = fixture_core_event(&event, oversized_cluster);
+    stored.core_record.event_origin = EventOrigin::UniqueToSession;
     stored
         .core_record
         .repository_bindings
