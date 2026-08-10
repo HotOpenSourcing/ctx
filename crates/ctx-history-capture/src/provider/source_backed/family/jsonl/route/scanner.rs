@@ -78,13 +78,13 @@ impl JsonlFamilyOptimizedLeafOutcome {
 }
 
 #[cfg(test)]
+pub(crate) use activity::with_family_scanner_workers;
+#[cfg(test)]
 pub(super) use activity::{
     jsonl_family_scanner_activity, jsonl_family_scanner_probe,
     record_jsonl_family_scanner_activity, JsonlFamilyScannerActivity, JsonlFamilyScannerProbe,
     FAMILY_SCANNER_WORKERS_OVERRIDE,
 };
-#[cfg(test)]
-pub(crate) use activity::{jsonl_family_scanner_max_worker_count, with_family_scanner_workers};
 
 #[cfg(test)]
 mod activity {
@@ -114,15 +114,10 @@ mod activity {
                 sources_completed: 0,
                 peak_active_scanners: 0,
             }) };
-        static FAMILY_SCANNER_MAX_WORKER_COUNT: Cell<usize> = const { Cell::new(0) };
     }
 
     pub(crate) fn jsonl_family_scanner_activity() -> JsonlFamilyScannerActivity {
         FAMILY_SCANNER_ACTIVITY.get()
-    }
-
-    pub(crate) fn jsonl_family_scanner_max_worker_count() -> usize {
-        FAMILY_SCANNER_MAX_WORKER_COUNT.get()
     }
 
     pub(in super::super) struct JsonlFamilyScannerProbe {
@@ -195,8 +190,6 @@ mod activity {
         worker_count: usize,
         probe: Option<&JsonlFamilyScannerProbe>,
     ) {
-        FAMILY_SCANNER_MAX_WORKER_COUNT
-            .set(FAMILY_SCANNER_MAX_WORKER_COUNT.get().max(worker_count));
         FAMILY_SCANNER_ACTIVITY.set(
             probe.map_or_else(JsonlFamilyScannerActivity::default, |probe| {
                 probe.snapshot(worker_count)
@@ -216,7 +209,6 @@ mod activity {
         let previous = FAMILY_SCANNER_WORKERS_OVERRIDE.replace(Some(workers));
         let _restore = Restore(previous);
         FAMILY_SCANNER_ACTIVITY.set(JsonlFamilyScannerActivity::default());
-        FAMILY_SCANNER_MAX_WORKER_COUNT.set(0);
         run()
     }
 }
