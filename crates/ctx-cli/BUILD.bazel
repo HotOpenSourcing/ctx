@@ -70,6 +70,7 @@ RELEASE_BUILD_RUSTC_ENV = select({
 })
 
 CTX_CLI_DEPS = [
+    "//crates/ctx-daemon-runtime:lib",
     "//crates/ctx-history-capture:lib",
     "//crates/ctx-history-core:lib",
     "//crates/ctx-history-index:lib",
@@ -81,6 +82,7 @@ CTX_CLI_DEPS = [
 ]
 
 CTX_CLI_TEST_DEPS = [
+    "//crates/ctx-daemon-runtime:lib",
     "//crates/ctx-history-capture:lib",
     "//crates/ctx-history-core:lib",
     "//crates/ctx-history-index:lib",
@@ -92,6 +94,7 @@ CTX_CLI_TEST_DEPS = [
 ]
 
 CTX_CLI_QUALIFICATION_DEPS = [
+    "//crates/ctx-daemon-runtime:lib",
     "//crates/ctx-history-capture:lib",
     "//crates/ctx-history-core:lib",
     "//crates/ctx-history-index:lib",
@@ -303,6 +306,7 @@ ctx_rust_test(
     crate_root = "tests/raw_output_policy.rs",
     data = glob(["src/**/*.rs"]) + [
         "build.rs",
+        "//crates/ctx-daemon-runtime:cargo_package_data",
         "//crates/ctx-semantic-model:build.rs",
         "//crates/ctx-upgrade-engine:cargo_package_data",
     ],

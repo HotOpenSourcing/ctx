@@ -53,6 +53,11 @@
       },
       "native_unit": "//crates/ctx-cli:unit_tests"
     },
+    "ctx-daemon-runtime": {
+      "manifest": "crates/ctx-daemon-runtime/Cargo.toml",
+      "targets": {"lib:ctx_daemon_runtime": "//crates/ctx-daemon-runtime:lib"},
+      "native_unit": "//crates/ctx-daemon-runtime:unit_tests"
+    },
     "ctx-history-capture": {
       "manifest": "crates/ctx-history-capture/Cargo.toml",
       "targets": {
