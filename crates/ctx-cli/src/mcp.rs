@@ -122,9 +122,11 @@ fn serve_stdio(data_root: PathBuf) -> Result<()> {
     let mut stdin = stdin.lock();
     let mut stdout = stdout.lock();
     let mut telemetry = McpTelemetry::start(data_root.clone());
-    let mut usage_recorder = McpUsageRecorder::start_authorized(
+    let mut control =
+        crate::observability_composition::LocalUsageControlAuthority::new(data_root.clone());
+    let mut usage_recorder = McpUsageRecorder::start(
         crate::observability_composition::local_usage_storage_authority(&data_root),
-        crate::observability_composition::LocalUsageControlAuthority::new(data_root.clone()),
+        move || control.snapshot(),
     );
     let backend = LocalToolBackend::new(data_root.clone());
     let started = Instant::now();
@@ -260,12 +262,16 @@ fn serve_stdio_loop_with_backend<B: ToolBackend>(
                 let serialized_response_bytes = encoded.len().saturating_add(1);
                 // Usage-v2 owns bounded, process-local search-to-show correlation inside
                 // this delivery boundary; MCP never sends target IDs to storage or logs.
-                usage_recorder.record_delivered(
-                    invocation,
-                    &response,
-                    duration,
-                    serialized_response_bytes,
-                );
+                usage_recorder.record_delivered(invocation, duration, || {
+                    crate::observability_product::mcp_completion_facts(
+                        match descriptor {
+                            RequestDescriptor::ToolCall { operation } => operation,
+                            _ => McpOperationKind::Missing,
+                        },
+                        &response,
+                        serialized_response_bytes,
+                    )
+                });
             }
             telemetry.record_delivered(descriptor, Some(&response), duration);
             if let Some(event) = pro_event {
@@ -275,26 +281,6 @@ fn serve_stdio_loop_with_backend<B: ToolBackend>(
             telemetry.record_delivered(descriptor, None, request_started.elapsed());
         }
     }
-}
-
-#[cfg(test)]
-fn serve_stdio_loop(
-    data_root: &Path,
-    stdin: &mut impl BufRead,
-    stdout: &mut impl Write,
-    initialized: &mut bool,
-    telemetry: &mut McpTelemetry,
-    usage_recorder: &mut McpUsageRecorder,
-) -> std::result::Result<(), McpServeFailure> {
-    let backend = LocalToolBackend::new(data_root.to_path_buf());
-    serve_stdio_loop_with_backend(
-        stdin,
-        stdout,
-        initialized,
-        telemetry,
-        usage_recorder,
-        &backend,
-    )
 }
 
 fn handle_message_with_backend<B: ToolBackend>(
@@ -496,7 +482,7 @@ fn handle_tools_call_with_backend<B: ToolBackend>(
             None,
         );
     };
-    let mut usage_invocation = McpInvocation::from_operation(operation);
+    let mut usage_invocation = operation.observed().map(McpInvocation::from_operation);
     let arguments = params
         .get("arguments")
         .cloned()
@@ -509,7 +495,9 @@ fn handle_tools_call_with_backend<B: ToolBackend>(
                 Instant::now(),
             );
             if let Some(invocation) = usage_invocation.as_mut() {
-                invocation.bind_tool_usage(failure.usage.clone());
+                invocation.bind_tool_usage(crate::observability_product::mcp_tool_usage(
+                    failure.usage.clone(),
+                ));
             }
             return (
                 Ok(McpHandled {
@@ -542,7 +530,9 @@ fn handle_tools_call_with_backend<B: ToolBackend>(
             error.into()
         };
         if let Some(invocation) = usage_invocation.as_mut() {
-            invocation.bind_tool_usage(failure.usage.clone());
+            invocation.bind_tool_usage(crate::observability_product::mcp_tool_usage(
+                failure.usage.clone(),
+            ));
         }
         return (
             Ok(McpHandled {
@@ -558,7 +548,9 @@ fn handle_tools_call_with_backend<B: ToolBackend>(
         Ok(parsed) => parsed,
         Err(failure) => {
             if let Some(invocation) = usage_invocation.as_mut() {
-                invocation.bind_tool_usage(failure.usage.clone());
+                invocation.bind_tool_usage(crate::observability_product::mcp_tool_usage(
+                    failure.usage.clone(),
+                ));
             }
             return (
                 Ok(McpHandled {
@@ -572,7 +564,7 @@ fn handle_tools_call_with_backend<B: ToolBackend>(
         }
     };
     if let Some(invocation) = usage_invocation.as_mut() {
-        invocation.bind_tool_usage(parsed.usage);
+        invocation.bind_tool_usage(crate::observability_product::mcp_tool_usage(parsed.usage));
     }
     match backend.execute(parsed.operation) {
         Ok(ToolOutcome {
@@ -582,7 +574,7 @@ fn handle_tools_call_with_backend<B: ToolBackend>(
             product_observation,
         }) => {
             if let Some(invocation) = usage_invocation.as_mut() {
-                invocation.bind_tool_usage(usage);
+                invocation.bind_tool_usage(crate::observability_product::mcp_tool_usage(usage));
             }
             let value = if let Some(compact) = compact {
                 tool_result_with_text(structured, render_tool_text(&compact))
@@ -600,7 +592,9 @@ fn handle_tools_call_with_backend<B: ToolBackend>(
         }
         Err(failure) => {
             if let Some(invocation) = usage_invocation.as_mut() {
-                invocation.bind_tool_usage(failure.usage.clone());
+                invocation.bind_tool_usage(crate::observability_product::mcp_tool_usage(
+                    failure.usage.clone(),
+                ));
             }
             (
                 Ok(McpHandled {
@@ -613,17 +607,6 @@ fn handle_tools_call_with_backend<B: ToolBackend>(
             )
         }
     }
-}
-
-#[cfg(test)]
-fn handle_message(
-    message: Value,
-    data_root: &Path,
-    initialized: &mut bool,
-) -> (McpHandled<Option<Value>>, Option<McpInvocation>) {
-    let backend = LocalToolBackend::new(data_root.to_path_buf());
-    let descriptor = RequestDescriptor::from_message(&message);
-    handle_message_with_backend(message, initialized, descriptor, &backend)
 }
 
 #[cfg(test)]

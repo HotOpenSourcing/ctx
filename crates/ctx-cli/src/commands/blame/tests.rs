@@ -453,7 +453,9 @@ fn commit_and_pr_results_skip_hydration_for_text_and_json() {
         ],
     ] {
         let cli = crate::Cli::try_parse_from(arguments).unwrap();
-        let mut usage = crate::local_usage::CliUsage::from_command(&cli.command);
+        let mut usage = crate::local_usage::CliUsage::from_descriptor(
+            &crate::dispatch::command_operation_descriptor(&cli.command),
+        );
         let crate::cli::CommandRoot::Blame(args) = cli.command else {
             panic!("expected blame command");
         };
@@ -538,7 +540,9 @@ fn file_hydration_is_automatic_for_text_and_json_and_empty_context_is_nonfatal()
         ),
     ] {
         let cli = crate::Cli::try_parse_from(arguments).unwrap();
-        let mut usage = crate::local_usage::CliUsage::from_command(&cli.command);
+        let mut usage = crate::local_usage::CliUsage::from_descriptor(
+            &crate::dispatch::command_operation_descriptor(&cli.command),
+        );
         let crate::cli::CommandRoot::Blame(args) = cli.command else {
             panic!("expected blame command");
         };
@@ -636,7 +640,9 @@ fn output_failure_does_not_retain_blame_result_or_citation_counts() {
         lineage: None,
     });
     let cli = crate::Cli::try_parse_from(["ctx", "blame", "commit", "abc1234"]).unwrap();
-    let mut usage = crate::local_usage::CliUsage::from_command(&cli.command);
+    let mut usage = crate::local_usage::CliUsage::from_descriptor(
+        &crate::dispatch::command_operation_descriptor(&cli.command),
+    );
     let mut ui = sink_ui();
 
     let error = emit_blame_result(&result, true, &mut usage, &mut ui, |_, _, _| {
@@ -689,7 +695,9 @@ fn successful_blame_observes_structured_results_and_empty_pages() {
         lineage: None,
     });
     let cli = crate::Cli::try_parse_from(["ctx", "blame", "commit", "abc1234"]).unwrap();
-    let mut usage = crate::local_usage::CliUsage::from_command(&cli.command);
+    let mut usage = crate::local_usage::CliUsage::from_descriptor(
+        &crate::dispatch::command_operation_descriptor(&cli.command),
+    );
     let mut ui = sink_ui();
     emit_blame_result(&result, true, &mut usage, &mut ui, |result, _, _| {
         blame_json_output_bytes(result, None)
@@ -711,7 +719,9 @@ fn successful_blame_observes_structured_results_and_empty_pages() {
 
     result.result.matches.clear();
     result.result.outcome = outcome(BlameCoverageUnit::CommitFact, 0, 0, 0, 0);
-    let mut usage = crate::local_usage::CliUsage::from_command(&cli.command);
+    let mut usage = crate::local_usage::CliUsage::from_descriptor(
+        &crate::dispatch::command_operation_descriptor(&cli.command),
+    );
     let mut expected_ui = sink_ui();
     let expected_bytes = print_blame_result(&result, false, &mut expected_ui).unwrap();
     let mut ui = sink_ui();
@@ -761,7 +771,9 @@ fn human_byte_accounting_is_plain_and_invariant_across_color_modes() {
         );
         let mut ui =
             crate::ui::Ui::with_writers(writer, stdout_context, io::sink(), stderr_context);
-        let mut usage = crate::local_usage::CliUsage::from_command(&cli.command);
+        let mut usage = crate::local_usage::CliUsage::from_descriptor(
+            &crate::dispatch::command_operation_descriptor(&cli.command),
+        );
         emit_blame_result(&result, false, &mut usage, &mut ui, print_blame_result).unwrap();
         ui.flush().unwrap();
         let completed = usage.completed(true, std::time::Duration::ZERO).unwrap();
@@ -826,7 +838,9 @@ fn automatic_evidence_context_bytes_are_included_in_local_usage_accounting() {
             .unwrap();
     assert!(expected > default);
 
-    let mut usage = crate::local_usage::CliUsage::from_command(&cli.command);
+    let mut usage = crate::local_usage::CliUsage::from_descriptor(
+        &crate::dispatch::command_operation_descriptor(&cli.command),
+    );
     let mut ui = sink_ui();
     emit_blame_result(&result, false, &mut usage, &mut ui, |result, json, ui| {
         print_blame_result_with_evidence_preview(result, json, &previews, ui)
@@ -892,7 +906,9 @@ fn semantically_invalid_pr_keeps_the_cli_blame_target_not_applicable() {
         "forge:github.com/ctxrs/ctx",
     ])
     .unwrap();
-    let mut usage = crate::local_usage::CliUsage::from_command(&cli.command);
+    let mut usage = crate::local_usage::CliUsage::from_descriptor(
+        &crate::dispatch::command_operation_descriptor(&cli.command),
+    );
     let crate::cli::CommandRoot::Blame(args) = cli.command else {
         panic!("expected blame command");
     };

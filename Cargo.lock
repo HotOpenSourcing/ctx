@@ -737,6 +737,7 @@ dependencies = [
  "chrono",
  "clap",
  "clap_mangen",
+ "ctx-client-observability",
  "ctx-daemon-runtime",
  "ctx-history-capture",
  "ctx-history-core",
@@ -783,6 +784,24 @@ dependencies = [
  "zbus",
  "zeroize",
  "zstd",
+]
+
+[[package]]
+name = "ctx-client-observability"
+version = "0.26.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "ctx-history-core",
+ "libc",
+ "rusqlite",
+ "same-file",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

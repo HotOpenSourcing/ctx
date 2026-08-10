@@ -70,6 +70,7 @@ RELEASE_BUILD_RUSTC_ENV = select({
 })
 
 CTX_CLI_DEPS = [
+    "//crates/ctx-client-observability:lib",
     "//crates/ctx-daemon-runtime:lib",
     "//crates/ctx-history-capture:lib",
     "//crates/ctx-history-core:lib",
@@ -82,6 +83,7 @@ CTX_CLI_DEPS = [
 ]
 
 CTX_CLI_TEST_DEPS = [
+    "//crates/ctx-client-observability:test_support_lib",
     "//crates/ctx-daemon-runtime:lib",
     "//crates/ctx-history-capture:lib",
     "//crates/ctx-history-core:lib",
@@ -94,6 +96,7 @@ CTX_CLI_TEST_DEPS = [
 ]
 
 CTX_CLI_QUALIFICATION_DEPS = [
+    "//crates/ctx-client-observability:lib",
     "//crates/ctx-daemon-runtime:lib",
     "//crates/ctx-history-capture:lib",
     "//crates/ctx-history-core:lib",
@@ -116,6 +119,7 @@ CTX_CLI_TEST_COMPILE_DATA = CTX_CLI_COMPILE_DATA + glob([
 ]) + [
     "//:release_contracts",
     "//:telemetry_contract_fixtures",
+    "//crates/ctx-client-observability:cargo_package_data",
 ]
 
 RUST_SRCS = glob(["src/**/*.rs"])

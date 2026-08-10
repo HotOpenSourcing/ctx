@@ -10,8 +10,8 @@ use ctx_pro_host_protocol::{BlameTarget, LineRange, MAX_BLAME_RESULTS};
 
 use crate::{
     analytics::{
-        send_pro_operation, Outcome, ProBlameTargetV1, ProBlameTelemetryV1, ProFailureBucketV1,
-        ProHostOperationV1, ProSurfaceV1,
+        send_pro_operation, Outcome, ProBlameTelemetryV1, ProFailureBucketV1, ProHostOperationV1,
+        ProSurfaceV1,
     },
     output::JsonOutputFormat,
     pro::{print_blame_result, print_blame_result_with_evidence_preview, DEFAULT_BLAME_LIMIT},
@@ -333,11 +333,11 @@ fn run_with(
     target
         .validate()
         .map_err(|error| anyhow!("invalid_request: {}", error.message))?;
-    local_usage.bind_blame_target(&target);
+    local_usage.bind_target_type(crate::observability_product::blame_usage_target(&target));
     let interactive_human = !json && io::stdout().is_terminal() && io::stderr().is_terminal();
 
     let started = Instant::now();
-    let target_kind = ProBlameTargetV1::from_protocol(&target);
+    let target_kind = crate::observability_product::blame_analytics_target(&target);
     let mut telemetry = ProBlameTelemetryV1::new(Some(target_kind), ProSurfaceV1::Cli);
     let result = (|| {
         let result = present_blame_result(
@@ -385,7 +385,9 @@ fn emit_blame_result(
     emit: impl FnOnce(&crate::pro::HostedBlameResult, bool, &mut crate::ui::Ui) -> Result<usize>,
 ) -> Result<()> {
     let measured_output_bytes = emit(result, json, ui)?;
-    local_usage.set_blame_result(&result.result);
+    let (result_count, citation_count, pro_outcome) =
+        crate::observability_product::blame_usage(&result.result);
+    local_usage.set_blame_observation(result_count, citation_count, pro_outcome);
     local_usage.set_measured_output_bytes(measured_output_bytes);
     Ok(())
 }
