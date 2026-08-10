@@ -1,12 +1,12 @@
 use std::fmt;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use anyhow::anyhow;
 use ctx_pro_host_protocol::{
-    decode_base64url, valid_pro_installation_id, EntitlementAccessKind, SignedEntitlement,
-    ED25519_SIGNATURE_BYTES, ENTITLEMENT_CLOCK_SKEW_SECONDS, ENTITLEMENT_GRANT_SECONDS,
-    ENTITLEMENT_MAX_GRACE_SECONDS, ENTITLEMENT_SCHEMA_VERSION, INSTALLATION_PUBLIC_KEY_BYTES,
-    PROTOCOL_VERSION,
+    decode_base64url, installation_key_thumbprint, valid_pro_installation_id,
+    EntitlementAccessKind, SignedEntitlement, ED25519_SIGNATURE_BYTES,
+    ENTITLEMENT_CLOCK_SKEW_SECONDS, ENTITLEMENT_GRANT_SECONDS, ENTITLEMENT_MAX_GRACE_SECONDS,
+    ENTITLEMENT_SCHEMA_VERSION, INSTALLATION_PUBLIC_KEY_BYTES, PROTOCOL_VERSION,
 };
 use ed25519_dalek::{Signer as _, SigningKey};
 use serde::{Deserialize, Serialize};
@@ -49,11 +49,11 @@ const RECORD_ID_HEX_BYTES: usize = 64;
 const RECORD_ID_DOMAIN: &[u8] = b"ctx\0credential-vault\0record-id\0v2\0";
 const WORKOS_SCHEMA_VERSION: u16 = 1;
 
-pub(crate) use anonymous_trial::AnonymousTrialMaterial;
+pub use anonymous_trial::AnonymousTrialMaterial;
 use anonymous_trial::{decode, encode, store_state};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CredentialVaultNamespace {
+pub enum CredentialVaultNamespace {
     Production,
     Staging,
 }
@@ -68,7 +68,7 @@ impl CredentialVaultNamespace {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CredentialRecordKind {
+pub enum CredentialRecordKind {
     WorkOsSession,
     AnonymousTrial,
     InstallationSigningKey,
@@ -141,6 +141,18 @@ fn validate_installation_id(installation_id: &str) -> Result<(), CredentialVault
     Ok(())
 }
 
+fn validate_data_root(data_root: &Path) -> Result<(), CredentialVaultError> {
+    if !data_root.is_absolute()
+        || data_root.parent().is_none()
+        || data_root
+            .components()
+            .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+    {
+        return Err(CredentialVaultError::InvalidDataRoot);
+    }
+    Ok(())
+}
+
 fn derive_record_id(
     installation_id: &str,
     namespace: CredentialVaultNamespace,
@@ -158,7 +170,7 @@ fn derive_record_id(
 
 #[derive(Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkOsSessionMaterial {
+pub struct WorkOsSessionMaterial {
     schema_version: u16,
     access_token: String,
     #[serde(default)]
@@ -169,7 +181,7 @@ pub(crate) struct WorkOsSessionMaterial {
 }
 
 impl WorkOsSessionMaterial {
-    pub(crate) fn new(
+    pub fn new(
         access_token: String,
         refresh_token: Option<String>,
         access_expires_at_unix: i64,
@@ -192,20 +204,28 @@ impl WorkOsSessionMaterial {
         self.refresh_token.as_deref()
     }
 
-    pub(crate) const fn access_expires_at_unix(&self) -> i64 {
+    pub const fn access_expires_at_unix(&self) -> i64 {
         self.access_expires_at_unix
     }
 
-    pub(crate) const fn entitlement_refresh_not_before_unix(&self) -> Option<i64> {
+    pub fn has_refresh_token(&self) -> bool {
+        self.refresh_token.is_some()
+    }
+
+    pub const fn entitlement_refresh_not_before_unix(&self) -> Option<i64> {
         self.entitlement_refresh_not_before_unix
     }
 
-    pub(crate) fn with_entitlement_refresh_not_before_unix(
+    pub fn with_entitlement_refresh_not_before_unix(
         mut self,
         value: Option<i64>,
     ) -> Result<Self, CredentialVaultError> {
         self.entitlement_refresh_not_before_unix = value;
         self.validate().map(|()| self)
+    }
+
+    pub fn matches_access_token(&self, token: &crate::workos_device::WorkOsAccessToken) -> bool {
+        self.access_token == token.as_str()
     }
 
     fn validate(&self) -> Result<(), CredentialVaultError> {
@@ -233,11 +253,16 @@ impl fmt::Debug for WorkOsSessionMaterial {
 }
 
 #[derive(Zeroize, ZeroizeOnDrop)]
-pub(crate) struct InstallationSigningKeySeed([u8; INSTALLATION_PUBLIC_KEY_BYTES]);
+pub struct InstallationSigningKeySeed([u8; INSTALLATION_PUBLIC_KEY_BYTES]);
 
 impl InstallationSigningKeySeed {
-    pub(crate) const fn from_bytes(bytes: [u8; INSTALLATION_PUBLIC_KEY_BYTES]) -> Self {
+    const fn from_persisted_bytes(bytes: [u8; INSTALLATION_PUBLIC_KEY_BYTES]) -> Self {
         Self(bytes)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub const fn from_bytes(bytes: [u8; INSTALLATION_PUBLIC_KEY_BYTES]) -> Self {
+        Self::from_persisted_bytes(bytes)
     }
 
     pub(crate) fn generate() -> Result<Self, CredentialVaultError> {
@@ -252,6 +277,11 @@ impl InstallationSigningKeySeed {
     pub(crate) const fn expose(&self) -> &[u8; INSTALLATION_PUBLIC_KEY_BYTES] {
         &self.0
     }
+
+    pub fn key_thumbprint(&self) -> String {
+        let public_key = SigningKey::from_bytes(&self.0).verifying_key().to_bytes();
+        installation_key_thumbprint(&public_key)
+    }
 }
 
 impl fmt::Debug for InstallationSigningKeySeed {
@@ -260,16 +290,78 @@ impl fmt::Debug for InstallationSigningKeySeed {
     }
 }
 
-pub(crate) struct BoundedSignedEntitlement(SignedEntitlement);
+pub struct BoundedSignedEntitlement(SignedEntitlement);
 
 impl BoundedSignedEntitlement {
-    pub(crate) fn new(value: SignedEntitlement) -> Result<Self, CredentialVaultError> {
+    pub fn new(value: SignedEntitlement) -> Result<Self, CredentialVaultError> {
         validate_entitlement(&value)?;
         Ok(Self(value))
     }
 
     pub(crate) const fn as_inner(&self) -> &SignedEntitlement {
         &self.0
+    }
+
+    pub fn bind(
+        issued: crate::commercial_api::IssuedEntitlement,
+        public_key: &[u8; INSTALLATION_PUBLIC_KEY_BYTES],
+        trust: crate::authorization::EntitlementTrust,
+    ) -> anyhow::Result<Self> {
+        let entitlement = issued.into_inner();
+        trust.validate_identity(&entitlement.grant.issuer, &entitlement.grant.key_id)?;
+        if entitlement.grant.installation_key_thumbprint != installation_key_thumbprint(public_key)
+        {
+            return Err(anyhow!(
+                "invalid_response: entitlement is bound to another installation"
+            ));
+        }
+        Self::new(entitlement).map_err(vault_error)
+    }
+
+    pub fn bind_anonymous_trial(
+        issued: crate::commercial_api::IssuedEntitlement,
+        public_key: &[u8; INSTALLATION_PUBLIC_KEY_BYTES],
+        trust: crate::authorization::EntitlementTrust,
+        trial_deadline_unix: i64,
+    ) -> anyhow::Result<Self> {
+        let entitlement = issued.into_inner();
+        if entitlement.grant.access_kind != EntitlementAccessKind::Trial
+            || entitlement.grant.access_deadline_unix != trial_deadline_unix
+            || entitlement.grant.grace_deadline_unix != trial_deadline_unix
+            || entitlement.grant.expires_at_unix > trial_deadline_unix
+        {
+            return Err(anyhow!(
+                "invalid_response: anonymous entitlement exceeds the authoritative trial"
+            ));
+        }
+        trust.validate_identity(&entitlement.grant.issuer, &entitlement.grant.key_id)?;
+        if entitlement.grant.installation_key_thumbprint != installation_key_thumbprint(public_key)
+        {
+            return Err(anyhow!(
+                "invalid_response: entitlement is bound to another installation"
+            ));
+        }
+        Self::new(entitlement).map_err(vault_error)
+    }
+
+    pub fn installation_key_thumbprint(&self) -> &str {
+        &self.0.grant.installation_key_thumbprint
+    }
+
+    pub fn schedule(&self) -> crate::authorization::EntitlementSchedule {
+        crate::authorization::EntitlementSchedule {
+            refresh_after_unix: self.0.grant.refresh_after_unix,
+            access_deadline_unix: self.0.grant.access_deadline_unix,
+            grace_deadline_unix: self.0.grant.grace_deadline_unix,
+        }
+    }
+
+    pub fn access_kind(&self) -> EntitlementAccessKind {
+        self.0.grant.access_kind
+    }
+
+    pub fn matches_account(&self, subject: &str, account_id: &str) -> bool {
+        self.0.grant.subject == subject && self.0.grant.account_id == account_id
     }
 }
 
@@ -280,7 +372,7 @@ impl fmt::Debug for BoundedSignedEntitlement {
 }
 
 #[derive(Debug)]
-pub(crate) enum CredentialRecord {
+pub enum CredentialRecord {
     WorkOsSession(WorkOsSessionMaterial),
     AnonymousTrial(AnonymousTrialMaterial),
     InstallationSigningKey(InstallationSigningKeySeed),
@@ -299,7 +391,7 @@ impl CredentialRecord {
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
-pub(crate) enum CredentialVaultError {
+pub enum CredentialVaultError {
     #[error("credential was not found in the native vault")]
     NotFound,
     #[error("native key store is locked or access was denied")]
@@ -320,6 +412,24 @@ pub(crate) enum CredentialVaultError {
     EntropyUnavailable,
     #[error("native key store operation failed")]
     Backend,
+}
+
+/// Converts platform-vault failures to the stable host error vocabulary
+/// without including record identifiers, paths, namespaces, or secret data.
+pub fn vault_error(error: CredentialVaultError) -> anyhow::Error {
+    let code = match error {
+        CredentialVaultError::Locked => "key_store_locked",
+        CredentialVaultError::NotFound
+        | CredentialVaultError::Corrupt
+        | CredentialVaultError::Ambiguous
+        | CredentialVaultError::Unavailable { .. }
+        | CredentialVaultError::SecretTooLarge { .. }
+        | CredentialVaultError::InvalidDataRoot
+        | CredentialVaultError::InvalidRecordId
+        | CredentialVaultError::EntropyUnavailable
+        | CredentialVaultError::Backend => "key_store_unavailable",
+    };
+    anyhow!("{code}: {error}")
 }
 
 #[derive(Zeroize, ZeroizeOnDrop)]
@@ -376,7 +486,7 @@ pub(super) fn validate_record_id(record_id: &str) -> Result<(), CredentialVaultE
     }
 }
 
-pub(crate) struct PlatformCredentialVault {
+pub struct PlatformCredentialVault {
     backend: PlatformBackend,
     record_ids: CredentialRecordIds,
 }
@@ -391,21 +501,25 @@ fn production_backend(_data_root: &Path) -> PlatformBackend {
     PlatformBackend::production()
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct VaultScope<'a> {
+    pub data_root: &'a Path,
+    pub installation_id: &'a str,
+}
+
 impl PlatformCredentialVault {
-    pub(crate) fn production(
-        data_root: &Path,
+    pub fn production(
+        scope: VaultScope<'_>,
         namespace: CredentialVaultNamespace,
     ) -> Result<Self, CredentialVaultError> {
-        let installation_id = crate::identity::existing_installation_id(data_root)
-            .map_err(|_| CredentialVaultError::InvalidDataRoot)?
-            .ok_or(CredentialVaultError::NotFound)?;
+        validate_data_root(scope.data_root)?;
         Ok(Self {
-            backend: production_backend(data_root),
-            record_ids: CredentialRecordIds::new(&installation_id, namespace)?,
+            backend: production_backend(scope.data_root),
+            record_ids: CredentialRecordIds::new(scope.installation_id, namespace)?,
         })
     }
 
-    pub(crate) fn cleanup_backend_state(data_root: &Path) -> Result<(), CredentialVaultError> {
+    pub fn cleanup_backend_state(data_root: &Path) -> Result<(), CredentialVaultError> {
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         {
             PlatformBackend::production(data_root).cleanup_if_empty()
@@ -417,31 +531,28 @@ impl PlatformCredentialVault {
         }
     }
 
-    #[cfg(all(test, target_os = "linux"))]
-    pub(crate) fn store_file_fallback_installation_key_for_test(
-        data_root: &Path,
+    #[cfg(all(any(test, feature = "test-support"), target_os = "linux"))]
+    pub fn store_file_fallback_installation_key_for_test(
+        scope: VaultScope<'_>,
         namespace: CredentialVaultNamespace,
         seed: [u8; INSTALLATION_PUBLIC_KEY_BYTES],
     ) -> Result<(), CredentialVaultError> {
-        let installation_id = crate::identity::existing_installation_id(data_root)
-            .map_err(|_| CredentialVaultError::InvalidDataRoot)?
-            .ok_or(CredentialVaultError::NotFound)?;
-        let record_ids = CredentialRecordIds::new(&installation_id, namespace)?;
+        let record_ids = CredentialRecordIds::new(scope.installation_id, namespace)?;
         linux::store_file_fallback_record_for_test(
-            data_root,
+            scope.data_root,
             record_ids.get(CredentialRecordKind::InstallationSigningKey),
             &seed,
         )
     }
 
-    pub(crate) fn load(
+    pub fn load(
         &self,
         kind: CredentialRecordKind,
     ) -> Result<CredentialRecord, CredentialVaultError> {
         load_record(&self.backend, self.record_ids.get(kind), kind)
     }
 
-    pub(crate) fn load_or_create_installation_signing_key(
+    pub fn load_or_create_installation_signing_key(
         &self,
     ) -> Result<InstallationSigningKeySeed, CredentialVaultError> {
         let candidate = InstallationSigningKeySeed::generate()?;
@@ -454,14 +565,14 @@ impl PlatformCredentialVault {
             .as_slice()
             .try_into()
             .map_err(|_| CredentialVaultError::Corrupt)?;
-        Ok(InstallationSigningKeySeed::from_bytes(seed))
+        Ok(InstallationSigningKeySeed::from_persisted_bytes(seed))
     }
 
-    pub(crate) fn store(&self, record: &CredentialRecord) -> Result<(), CredentialVaultError> {
+    pub fn store(&self, record: &CredentialRecord) -> Result<(), CredentialVaultError> {
         store_record(&self.backend, &self.record_ids, record)
     }
 
-    pub(crate) fn store_anonymous_trial_state(
+    pub fn store_anonymous_trial_state(
         &self,
         entitlement: BoundedSignedEntitlement,
         trial: AnonymousTrialMaterial,
@@ -469,17 +580,17 @@ impl PlatformCredentialVault {
         store_state(&self.backend, &self.record_ids, entitlement, trial)
     }
 
-    pub(crate) fn delete(&self, kind: CredentialRecordKind) -> Result<(), CredentialVaultError> {
+    pub fn delete(&self, kind: CredentialRecordKind) -> Result<(), CredentialVaultError> {
         self.backend.delete(self.record_ids.get(kind))
     }
 }
 
-pub(crate) struct VaultInstallationChallengeSigner<'a> {
+pub struct VaultInstallationChallengeSigner<'a> {
     vault: &'a PlatformCredentialVault,
 }
 
 impl<'a> VaultInstallationChallengeSigner<'a> {
-    pub(crate) const fn new(vault: &'a PlatformCredentialVault) -> Self {
+    pub const fn new(vault: &'a PlatformCredentialVault) -> Self {
         Self { vault }
     }
 
@@ -529,7 +640,7 @@ fn load_record<B: CredentialVaultBackend>(
                 .try_into()
                 .map_err(|_| CredentialVaultError::Corrupt)?;
             Ok(CredentialRecord::InstallationSigningKey(
-                InstallationSigningKeySeed::from_bytes(seed),
+                InstallationSigningKeySeed::from_persisted_bytes(seed),
             ))
         }
         CredentialRecordKind::SignedEntitlement => {
@@ -715,7 +826,10 @@ mod tests {
         ] {
             assert!(matches!(
                 PlatformCredentialVault::production(
-                    &data_root,
+                    VaultScope {
+                        data_root: &data_root,
+                        installation_id: "6a1de1ab-c732-45ed-b3f8-bbf6ab1048e8",
+                    },
                     CredentialVaultNamespace::Production
                 ),
                 Err(CredentialVaultError::InvalidDataRoot)

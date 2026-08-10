@@ -172,7 +172,7 @@ fn payout_result() -> ReferralPayoutResult {
         kind: "payout_onboarding_created".to_owned(),
         payout_state: "onboarding_pending".to_owned(),
         url: "https://connect.stripe.com/setup/s/test".to_owned(),
-        expires_at_unix: super::super::commercial_api::unix_time().unwrap() + 300,
+        expires_at_unix: super::super::commercial_lifecycle::unix_time().unwrap() + 300,
     }
 }
 

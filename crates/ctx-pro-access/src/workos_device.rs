@@ -9,7 +9,9 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
 use url::Url;
-use zeroize::Zeroize as _;
+use zeroize::{Zeroize as _, Zeroizing};
+
+use crate::credential_vault::{vault_error, WorkOsSessionMaterial};
 
 const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 const MAX_RESPONSE_BYTES: u64 = 96 * 1024;
@@ -26,29 +28,43 @@ const MAX_USER_PROFILE_KEY_BYTES: usize = 256;
 const REQUIRED_PERMISSION: &str = "ctx-pro:access";
 
 #[derive(Debug, Clone)]
-pub(super) struct WorkOsConfig {
-    pub(super) api_origin: Url,
-    pub(super) client_id: String,
+pub struct WorkOsConfig {
+    pub api_origin: Url,
+    pub client_id: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Deserialize, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 #[serde(deny_unknown_fields)]
-pub(super) struct DeviceAuthorization {
+pub struct DeviceAuthorization {
     device_code: String,
-    pub(super) user_code: String,
-    pub(super) verification_uri: String,
-    pub(super) verification_uri_complete: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub verification_uri_complete: String,
     expires_in: u64,
     interval: u64,
 }
 
+impl std::fmt::Debug for DeviceAuthorization {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DeviceAuthorization")
+            .field("device_code", &"[REDACTED]")
+            .field("user_code", &"[REDACTED]")
+            .field("verification_uri", &"[REDACTED]")
+            .field("verification_uri_complete", &"[REDACTED]")
+            .field("expires_in", &self.expires_in)
+            .field("interval", &self.interval)
+            .finish()
+    }
+}
+
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct WorkOsTokens {
-    pub(super) access_token: String,
-    pub(super) refresh_token: String,
+pub struct WorkOsTokens {
+    access_token: String,
+    refresh_token: String,
     #[serde(default, deserialize_with = "deserialize_optional_present_string")]
-    pub(super) organization_id: Option<String>,
+    organization_id: Option<String>,
     #[serde(default)]
     authentication_method: Option<String>,
     user: WorkOsUser,
@@ -120,13 +136,31 @@ enum WorkOsTokenDisposition {
     OrganizationBound,
 }
 
-pub(super) struct WorkOsDeviceClient {
+pub struct WorkOsAccessToken(Zeroizing<String>);
+
+impl WorkOsAccessToken {
+    pub(crate) fn new(value: String) -> Self {
+        Self(Zeroizing::new(value))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl std::fmt::Debug for WorkOsAccessToken {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("WorkOsAccessToken([REDACTED])")
+    }
+}
+
+pub struct WorkOsDeviceClient {
     config: WorkOsConfig,
     agent: ureq::Agent,
 }
 
 impl WorkOsDeviceClient {
-    pub(super) fn new(config: WorkOsConfig) -> Result<Self> {
+    pub fn new(config: WorkOsConfig) -> Result<Self> {
         validate_config(&config)?;
         Ok(Self {
             config,
@@ -139,7 +173,7 @@ impl WorkOsDeviceClient {
         })
     }
 
-    pub(super) fn begin(&self) -> Result<DeviceAuthorization> {
+    pub fn begin(&self) -> Result<DeviceAuthorization> {
         let url = self.endpoint("/user_management/authorize/device")?;
         let response = self
             .agent
@@ -153,7 +187,7 @@ impl WorkOsDeviceClient {
         Ok(value)
     }
 
-    pub(super) fn poll(&self, device: &DeviceAuthorization) -> Result<WorkOsTokens> {
+    pub fn poll(&self, device: &DeviceAuthorization) -> Result<WorkOsTokens> {
         validate_device_authorization(device)?;
         let url = self.endpoint("/user_management/authenticate")?;
         let deadline = Instant::now() + Duration::from_secs(device.expires_in);
@@ -202,7 +236,10 @@ impl WorkOsDeviceClient {
         }
     }
 
-    pub(super) fn refresh(&self, refresh_token: &str) -> Result<WorkOsTokens> {
+    pub fn refresh_session(&self, session: &WorkOsSessionMaterial) -> Result<WorkOsTokens> {
+        let refresh_token = session
+            .refresh_token()
+            .ok_or_else(|| anyhow!("authentication_required: run `ctx pro`"))?;
         let tokens = self.refresh_inner(refresh_token, None)?;
         if self.validate_tokens(&tokens)? != WorkOsTokenDisposition::OrganizationBound {
             bail!("authentication_invalid: WorkOS token refresh has no organization");
@@ -210,15 +247,15 @@ impl WorkOsDeviceClient {
         Ok(tokens)
     }
 
-    pub(super) fn refresh_for_organization(
+    pub fn refresh_for_organization(
         &self,
-        refresh_token: &str,
+        tokens: &WorkOsTokens,
         organization_id: &str,
     ) -> Result<WorkOsTokens> {
         validate_identifier(organization_id, "organization")?;
-        let tokens = self.refresh_inner(refresh_token, Some(organization_id))?;
-        self.validate_refreshed_organization(&tokens, organization_id)?;
-        Ok(tokens)
+        let refreshed = self.refresh_inner(&tokens.refresh_token, Some(organization_id))?;
+        self.validate_refreshed_organization(&refreshed, organization_id)?;
+        Ok(refreshed)
     }
 
     fn validate_refreshed_organization(
@@ -257,8 +294,8 @@ impl WorkOsDeviceClient {
         Ok(tokens)
     }
 
-    pub(super) fn validate_access_token(&self, access_token: &str) -> Result<()> {
-        let claims = claims(access_token)?;
+    pub fn validate_access_token(&self, access_token: &WorkOsAccessToken) -> Result<()> {
+        let claims = claims(access_token.as_str())?;
         validate_identifier(&claims.sub, "subject")?;
         validate_identifier(&claims.sid, "session")?;
         validate_identifier(
@@ -273,13 +310,38 @@ impl WorkOsDeviceClient {
         validate_permissions(claims.permissions.as_deref(), true)
     }
 
-    pub(super) fn access_token_expiration(&self, access_token: &str) -> Result<i64> {
-        self.validate_access_token(access_token)?;
+    pub(crate) fn access_token_expiration(&self, access_token: &str) -> Result<i64> {
+        let token = WorkOsAccessToken::new(access_token.to_owned());
+        self.validate_access_token(&token)?;
         Ok(claims(access_token)?.exp)
     }
 
-    pub(super) fn bootstrap_pending(&self, tokens: &WorkOsTokens) -> Result<bool> {
+    pub fn bootstrap_pending(&self, tokens: &WorkOsTokens) -> Result<bool> {
         Ok(self.validate_tokens(tokens)? == WorkOsTokenDisposition::BootstrapPending)
+    }
+
+    pub fn session_access_token(
+        &self,
+        session: &WorkOsSessionMaterial,
+    ) -> Result<WorkOsAccessToken> {
+        let token = WorkOsAccessToken::new(session.access_token().to_owned());
+        self.validate_access_token(&token)?;
+        Ok(token)
+    }
+
+    pub fn persistable_session(
+        &self,
+        tokens: WorkOsTokens,
+    ) -> Result<(WorkOsSessionMaterial, WorkOsAccessToken)> {
+        let expires_at = self.access_token_expiration(&tokens.access_token)?;
+        let access = WorkOsAccessToken::new(tokens.access_token.clone());
+        let session = WorkOsSessionMaterial::new(
+            tokens.access_token.clone(),
+            Some(tokens.refresh_token.clone()),
+            expires_at,
+        )
+        .map_err(vault_error)?;
+        Ok((session, access))
     }
 
     fn validate_tokens(&self, tokens: &WorkOsTokens) -> Result<WorkOsTokenDisposition> {
@@ -345,6 +407,10 @@ fn refresh_form<'a>(
 }
 
 impl WorkOsTokens {
+    pub(crate) fn access_token(&self) -> &str {
+        &self.access_token
+    }
+
     fn ignored_fields(&self) -> usize {
         self.user.ignored.len()
     }
@@ -568,7 +634,7 @@ fn unix_time() -> Result<i64> {
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(response: ureq::Response, label: &str) -> Result<T> {
-    let mut bytes = Vec::new();
+    let mut bytes = workos_response_buffer();
     response
         .into_reader()
         .take(MAX_RESPONSE_BYTES + 1)
@@ -578,6 +644,10 @@ fn read_json<T: for<'de> Deserialize<'de>>(response: ureq::Response, label: &str
         bail!("invalid_response: {label} is too large");
     }
     serde_json::from_slice(&bytes).with_context(|| format!("invalid_response: parse {label}"))
+}
+
+fn workos_response_buffer() -> Zeroizing<Vec<u8>> {
+    Zeroizing::new(Vec::with_capacity(MAX_RESPONSE_BYTES as usize + 1))
 }
 
 fn require_json(response: &ureq::Response, label: &str) -> Result<()> {
@@ -604,6 +674,15 @@ fn safe_http_error(error: ureq::Error, operation: &str) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn json_response(body: &str) -> ureq::Response {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .parse()
+        .unwrap()
+    }
 
     fn token_response() -> Value {
         serde_json::json!({
@@ -643,6 +722,31 @@ mod tests {
         assert_eq!(tokens.organization_id.as_deref(), Some("org_123"));
         assert_eq!(tokens.user.id, "user_123");
         assert_eq!(tokens.ignored_fields(), 11);
+    }
+
+    #[test]
+    fn response_reader_preserves_success_and_parse_error_behavior() {
+        let parsed: Value = read_json(json_response(r#"{"ok":true}"#), "test response").unwrap();
+        assert_eq!(parsed, serde_json::json!({"ok": true}));
+
+        let error = read_json::<Value>(json_response(r#"{"secret":"truncated"#), "test response")
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .starts_with("invalid_response: parse test response"));
+    }
+
+    #[test]
+    fn response_buffer_preallocates_the_complete_bounded_read() {
+        fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>(_: &T) {}
+
+        let mut bytes = workos_response_buffer();
+        let allocation = bytes.as_ptr();
+        assert_zeroize_on_drop(&bytes);
+        assert!(bytes.capacity() > MAX_RESPONSE_BYTES as usize);
+
+        bytes.resize(MAX_RESPONSE_BYTES as usize + 1, b'x');
+        assert_eq!(bytes.as_ptr(), allocation);
     }
 
     #[test]
@@ -740,7 +844,9 @@ mod tests {
             "iat":now, "exp":now+300, "aud":"client_123456", "scope":"openid profile",
             "permissions":[REQUIRED_PERMISSION]
         }));
-        client.validate_access_token(&token).unwrap();
+        client
+            .validate_access_token(&WorkOsAccessToken::new(token))
+            .unwrap();
     }
 
     #[test]
@@ -865,11 +971,11 @@ mod tests {
         .unwrap();
         let now = unix_time().unwrap();
         client
-            .validate_access_token(&jwt(serde_json::json!({
+            .validate_access_token(&WorkOsAccessToken::new(jwt(serde_json::json!({
                 "sub":"user_123","sid":"session_123","org_id":"org_123",
                 "client_id":"client_123456",
                 "iat":now,"exp":now+300,"permissions":[REQUIRED_PERMISSION]
-            })))
+            }))))
             .unwrap();
         for claims in [
             serde_json::json!({"sub":"user_123","sid":"session_123","org_id":"org_123","client_id":"other_123","iat":now,"exp":now+300,"permissions":[REQUIRED_PERMISSION]}),
@@ -877,14 +983,16 @@ mod tests {
             serde_json::json!({"sub":"user_123","sid":"session_123","org_id":"org_123","client_id":"client_123456","iat":now,"exp":now+300,"aud":["client_123456","other_123"],"permissions":[REQUIRED_PERMISSION]}),
             serde_json::json!({"sub":"user_123","sid":"session_123","org_id":"org_123","client_id":"client_123456","iat":now,"exp":now+300,"aud":"client_123456","scope":{"bad":true},"permissions":[REQUIRED_PERMISSION]}),
         ] {
-            assert!(client.validate_access_token(&jwt(claims)).is_err());
+            assert!(client
+                .validate_access_token(&WorkOsAccessToken::new(jwt(claims)))
+                .is_err());
         }
     }
 
     #[test]
     fn bounds_device_authorization() {
         let value = DeviceAuthorization {
-            device_code: "device".to_owned(),
+            device_code: "device-secret".to_owned(),
             user_code: "ABCD-EFGH".to_owned(),
             verification_uri: "https://auth.example/device".to_owned(),
             verification_uri_complete: "https://auth.example/device?user_code=ABCD-EFGH".to_owned(),
@@ -892,5 +1000,9 @@ mod tests {
             interval: 5,
         };
         validate_device_authorization(&value).unwrap();
+        let debug = format!("{value:?}");
+        assert!(!debug.contains("device-secret"));
+        assert!(!debug.contains("ABCD-EFGH"));
+        assert!(!debug.contains("auth.example"));
     }
 }

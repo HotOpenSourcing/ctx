@@ -555,10 +555,13 @@ fn interrupted_artifact_fetch_retains_cleanup_evidence_until_verified_uninstall(
 #[test]
 fn no_native_partial_bootstrap_delete_data_cleans_and_retries_without_helper_ipc() {
     let root = tempfile::tempdir().unwrap();
-    crate::identity::installation_id(root.path()).unwrap();
+    let installation_id = crate::identity::installation_id(root.path()).unwrap();
     let result = with_pro_initialization(root.path(), || -> Result<()> {
         crate::pro::credential_vault::PlatformCredentialVault::store_file_fallback_installation_key_for_test(
-            root.path(),
+            crate::pro::credential_vault::VaultScope {
+                data_root: root.path(),
+                installation_id: &installation_id,
+            },
             crate::pro::credential_vault::CredentialVaultNamespace::Production,
             [0x42; ctx_pro_host_protocol::INSTALLATION_PUBLIC_KEY_BYTES],
         )?;

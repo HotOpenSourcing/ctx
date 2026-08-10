@@ -77,6 +77,7 @@ CTX_CLI_DEPS = [
     "//crates/ctx-history-core:lib",
     "//crates/ctx-history-index:lib",
     "//crates/ctx-history-refresh:lib",
+    "//crates/ctx-pro-access:lib",
     "//crates/ctx-pro-host-protocol:lib",
     "//crates/ctx-semantic-index:lib",
     "//crates/ctx-semantic-model:lib",
@@ -91,10 +92,26 @@ CTX_CLI_TEST_DEPS = [
     "//crates/ctx-history-core:lib",
     "//crates/ctx-history-index:lib",
     "//crates/ctx-history-refresh:test_support_lib",
+    "//crates/ctx-pro-access:test_support_lib",
     "//crates/ctx-pro-host-protocol:lib",
     "//crates/ctx-semantic-index:test_support_lib",
     "//crates/ctx-semantic-model:test_support_lib",
     "//crates/ctx-upgrade-engine:test_support_lib",
+]
+
+CTX_CLI_PRO_TEST_HOST_DEPS = [
+    "//crates/ctx-agent-integrations:lib",
+    "//crates/ctx-client-observability:lib",
+    "//crates/ctx-daemon-runtime:lib",
+    "//crates/ctx-history-capture:lib",
+    "//crates/ctx-history-core:lib",
+    "//crates/ctx-history-index:lib",
+    "//crates/ctx-history-refresh:lib",
+    "//crates/ctx-pro-access:qualification_lib",
+    "//crates/ctx-pro-host-protocol:lib",
+    "//crates/ctx-semantic-index:lib",
+    "//crates/ctx-semantic-model:lib",
+    "//crates/ctx-upgrade-engine:lib",
 ]
 
 CTX_CLI_QUALIFICATION_DEPS = [
@@ -105,6 +122,7 @@ CTX_CLI_QUALIFICATION_DEPS = [
     "//crates/ctx-history-core:lib",
     "//crates/ctx-history-index:lib",
     "//crates/ctx-history-refresh:lib",
+    "//crates/ctx-pro-access:lib",
     "//crates/ctx-pro-host-protocol:lib",
     "//crates/ctx-semantic-index:lib",
     "//crates/ctx-semantic-model:lib",
@@ -169,7 +187,7 @@ ctx_rust_binary(
     edition = crate_edition(),
     aliases = aliases(),
     compile_data = CTX_CLI_COMPILE_DATA,
-    deps = all_crate_deps(normal = True) + CTX_CLI_DEPS,
+    deps = all_crate_deps(normal = True) + CTX_CLI_PRO_TEST_HOST_DEPS,
     proc_macro_deps = all_crate_deps(proc_macro = True),
     rustc_env = RELEASE_BUILD_RUSTC_ENV,
     rustc_env_files = [
@@ -273,30 +291,6 @@ ctx_rust_test(
         "CARGO_BIN_EXE_ctx": "$(rootpath :ctx)",
     },
     tags = ["exclusive"],
-)
-
-ctx_rust_test(
-    name = "pro_qualification_authorizer_tests",
-    srcs = ["src/pro/qualification_authorizer.rs"],
-    crate_name = "pro_qualification_authorizer_tests",
-    crate_root = "src/pro/qualification_authorizer.rs",
-    edition = crate_edition(),
-    aliases = aliases(
-        normal = True,
-        normal_dev = True,
-    ),
-    deps = crate_deps([
-        "anyhow",
-        "libc",
-        "sha2",
-        "tempfile",
-        "windows-sys",
-    ]) + ["//crates/ctx-history-core:lib"],
-    tags = [
-        "manual",
-        "qualification",
-        "security",
-    ],
 )
 
 ctx_rust_test(

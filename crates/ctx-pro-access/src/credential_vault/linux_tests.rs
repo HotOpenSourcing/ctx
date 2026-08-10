@@ -25,7 +25,7 @@ const HELPER_MODE_ENV: &str = "CTX_TEST_LINUX_CREDENTIAL_VAULT_HELPER";
 const HELPER_RESULT_ENV: &str = "CTX_TEST_LINUX_CREDENTIAL_VAULT_RESULT";
 const HELPER_DATA_ROOT_ENV: &str = "CTX_TEST_LINUX_CREDENTIAL_VAULT_DATA_ROOT";
 const HELPER_TEST_NAME: &str =
-    "pro::credential_vault::linux::tests::platform_credential_vault_subprocess_helper";
+    "credential_vault::linux::tests::platform_credential_vault_subprocess_helper";
 
 #[derive(Debug, Clone, Copy)]
 enum AdapterMode {
@@ -147,16 +147,6 @@ impl SecretServiceAdapter for FakeAdapter {
                 .ok_or(CredentialVaultError::NotFound)
         })
     }
-}
-
-pub(crate) fn store_file_fallback_record_for_test(
-    data_root: &Path,
-    record_id: &str,
-    value: &[u8],
-) -> Result<(), CredentialVaultError> {
-    let backend = LinuxBackend::new(data_root, FakeAdapter::new(AdapterMode::Unavailable));
-    drop(backend.load_or_store(record_id, value)?);
-    Ok(())
 }
 
 fn test_root() -> tempfile::TempDir {

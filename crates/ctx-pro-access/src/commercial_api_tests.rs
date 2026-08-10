@@ -5,12 +5,37 @@ use super::referral::{
 };
 use super::*;
 use ctx_pro_host_protocol::{EntitlementAccessKind, EntitlementGrant, ENTITLEMENT_SCHEMA_VERSION};
+use serde::ser::SerializeMap as _;
 
 fn test_client() -> CommercialApiClient {
     CommercialApiClient::new(
         CommercialApiConfig::new(Url::parse("https://pro.ctx.test/").unwrap(), None).unwrap(),
+        std::sync::Arc::new(SystemCommercialClock),
     )
     .unwrap()
+}
+
+struct FailingCommercialClock;
+
+impl CommercialClock for FailingCommercialClock {
+    fn unix_time(&self) -> Result<i64> {
+        bail!("test clock failure")
+    }
+}
+
+struct FailingCommercialRequest;
+
+impl Serialize for FailingCommercialRequest {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(1))?;
+        map.serialize_entry("referral_claim_token", "claim.partial_123456")?;
+        Err(serde::ser::Error::custom(
+            "intentional commercial request serialization failure",
+        ))
+    }
 }
 
 #[test]
@@ -60,6 +85,9 @@ fn staging_access_pair_is_attached_only_to_the_exact_fixed_staging_origin() {
             ureq::get("https://example.test/v1/account"),
             &Url::parse("https://example.test/v1/account").unwrap(),
         )
+        .is_err());
+    assert!(config
+        .apply_transport_credentials(ureq::get("https://attacker.example/v1/account"), &url,)
         .is_err());
 }
 
@@ -185,6 +213,17 @@ fn accepts_url_less_pending_checkout_from_worker() {
 }
 
 #[test]
+fn checkout_expiry_validation_is_bounded_at_extreme_injected_times() {
+    let checkout: CheckoutResult = serde_json::from_value(serde_json::json!({
+        "kind": "checkout_pending",
+        "expires_at_unix": i64::MAX
+    }))
+    .unwrap();
+    checkout.validate_at(i64::MAX - 1).unwrap();
+    assert!(checkout.validate_at(i64::MAX).is_err());
+}
+
+#[test]
 fn pins_created_checkout_and_portal_urls_to_exact_stripe_hosts() {
     let now = unix_time().unwrap();
     for invalid in [
@@ -271,6 +310,103 @@ fn commercial_request_bodies_cannot_carry_history_content() {
             "referral_claim_token": "claim.opaque_123456",
         })
     );
+}
+
+#[test]
+fn checkout_referral_body_is_raii_guarded_on_pre_send_clock_failure() {
+    fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>(_: &T) {}
+
+    let referral_claim_token = "claim.opaque_123456";
+    let request = CheckoutRequest {
+        referral_claim_token: Some(referral_claim_token),
+    };
+    let expected = serde_json::to_vec(&request).unwrap();
+    let mut direct_writer = BoundedCommercialRequestWriter::new();
+    let allocation = direct_writer.body.as_ptr();
+    let capacity = direct_writer.body.capacity();
+    serde_json::to_writer(&mut direct_writer, &request).unwrap();
+    assert_eq!(direct_writer.body.as_ptr(), allocation);
+    assert_eq!(direct_writer.body.capacity(), capacity);
+    assert!(capacity >= COMMERCIAL_REQUEST_BUFFER_BYTES);
+    assert_eq!(direct_writer.body.as_slice(), expected.as_slice());
+
+    let encoded = encode_commercial_request(&request).unwrap();
+    assert_zeroize_on_drop(&encoded);
+    assert_eq!(encoded.as_slice(), expected.as_slice());
+    drop(encoded);
+
+    let client = CommercialApiClient::new(
+        CommercialApiConfig::new(Url::parse("https://pro.ctx.test/").unwrap(), None).unwrap(),
+        std::sync::Arc::new(FailingCommercialClock),
+    )
+    .unwrap();
+    let trial: AnonymousTrialMaterial = serde_json::from_value(serde_json::json!({
+        "schema_version": 1,
+        "access_token": "trial.access_token_123456",
+        "trial_deadline_unix": 2_000_000_000_i64,
+        "refresh_not_before_unix": null,
+        "referral_claim_token": referral_claim_token,
+    }))
+    .unwrap();
+    let error = client
+        .checkout(
+            &WorkOsAccessToken::new("workos.access_token_123456".to_owned()),
+            Some(&trial),
+        )
+        .unwrap_err();
+    assert_eq!(error.to_string(), "test clock failure");
+}
+
+#[test]
+fn guarded_commercial_writer_preserves_size_and_serialization_errors() {
+    let empty_boundary_request = serde_json::json!({"value": ""});
+    let boundary_overhead = serde_json::to_vec(&empty_boundary_request).unwrap().len();
+    let maximum_request =
+        serde_json::json!({"value": "m".repeat(MAX_COMMERCIAL_REQUEST_BYTES - boundary_overhead)});
+    let maximum_expected = serde_json::to_vec(&maximum_request).unwrap();
+    assert_eq!(maximum_expected.len(), MAX_COMMERCIAL_REQUEST_BYTES);
+    assert_eq!(
+        encode_commercial_request(&maximum_request)
+            .unwrap()
+            .as_slice(),
+        maximum_expected.as_slice()
+    );
+
+    let one_byte_too_large = serde_json::json!({"value": "m".repeat(MAX_COMMERCIAL_REQUEST_BYTES - boundary_overhead + 1)});
+    assert_eq!(
+        serde_json::to_vec(&one_byte_too_large).unwrap().len(),
+        COMMERCIAL_REQUEST_BUFFER_BYTES
+    );
+    assert_eq!(
+        encode_commercial_request(&one_byte_too_large)
+            .unwrap_err()
+            .to_string(),
+        "invalid_request: commercial request is too large"
+    );
+
+    let oversized = "s".repeat(COMMERCIAL_REQUEST_BUFFER_BYTES);
+    let oversized_request = serde_json::json!({"referral_claim_token": oversized});
+    let mut direct_writer = BoundedCommercialRequestWriter::new();
+    let allocation = direct_writer.body.as_ptr();
+    assert!(serde_json::to_writer(&mut direct_writer, &oversized_request).is_err());
+    assert!(direct_writer.overflowed);
+    assert_eq!(direct_writer.body.len(), COMMERCIAL_REQUEST_BUFFER_BYTES);
+    assert_eq!(direct_writer.body.as_ptr(), allocation);
+
+    let size_error = encode_commercial_request(&oversized_request).unwrap_err();
+    assert_eq!(
+        size_error.to_string(),
+        "invalid_request: commercial request is too large"
+    );
+    assert!(!size_error.to_string().contains(&oversized));
+
+    let serialization_error = encode_commercial_request(&FailingCommercialRequest).unwrap_err();
+    assert!(serialization_error
+        .to_string()
+        .starts_with("invalid_request: encode commercial request"));
+    assert!(!serialization_error
+        .to_string()
+        .contains("claim.partial_123456"));
 }
 
 #[test]
@@ -848,7 +984,7 @@ fn anonymous_trial_response_debug_redacts_credentials() {
                 "{:?}",
                 TrialActivation {
                     disposition: "trial_started".to_owned(),
-                    entitlement: entitlement.clone(),
+                    entitlement: IssuedEntitlement(entitlement.clone()),
                     trial_access_token: activation_token.to_owned(),
                     trial_deadline_unix: 2_000_000_000,
                     referral_claim_token: None,
@@ -860,7 +996,7 @@ fn anonymous_trial_response_debug_redacts_credentials() {
             format!(
                 "{:?}",
                 TrialRefresh {
-                    entitlement,
+                    entitlement: IssuedEntitlement(entitlement),
                     trial_access_token: refresh_token.to_owned(),
                     trial_deadline_unix: 2_000_000_000,
                     referral_claim_token: None,

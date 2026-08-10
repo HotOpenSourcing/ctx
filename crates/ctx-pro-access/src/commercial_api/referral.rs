@@ -3,50 +3,69 @@ use std::fmt;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
-use super::{unix_time, validate_https_url, CommercialApiClient};
+use crate::workos_device::WorkOsAccessToken;
+
+use super::{validate_https_url, CommercialApiClient};
 
 const MAX_REFERRAL_CLAIM_TOKEN_BYTES: usize = 1024;
 const MAX_REFERRAL_COUNT: u64 = 1_000_000_000;
 const REFERRAL_COMMISSION_CENTS: u64 = 1_000;
 const MAX_COMMISSIONED_INVOICES_PER_ATTRIBUTION: u64 = 12;
-pub(super) const MAX_REFERRAL_CENTS_PER_ATTRIBUTION: u64 =
+pub const MAX_REFERRAL_CENTS_PER_ATTRIBUTION: u64 =
     REFERRAL_COMMISSION_CENTS * MAX_COMMISSIONED_INVOICES_PER_ATTRIBUTION;
-pub(super) const MAX_REFERRAL_CENTS: u64 = MAX_REFERRAL_COUNT * MAX_REFERRAL_CENTS_PER_ATTRIBUTION;
+pub const MAX_REFERRAL_CENTS: u64 = MAX_REFERRAL_COUNT * MAX_REFERRAL_CENTS_PER_ATTRIBUTION;
 const MAX_PAYOUT_ONBOARDING_LIFETIME_SECONDS: i64 = 7 * 24 * 60 * 60;
-pub(super) const REFERRALS_PATH: &str = "/v1/referrals";
-pub(super) const REFERRAL_PAYOUT_PATH: &str = "/v1/referrals/payout";
+pub const REFERRALS_PATH: &str = "/v1/referrals";
+pub const REFERRAL_PAYOUT_PATH: &str = "/v1/referrals/payout";
 
-#[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(in crate::pro) struct ReferralCreateResult {
-    pub(in crate::pro) codename: String,
-    pub(in crate::pro) disposition: String,
+pub const REFERRAL_CODENAME_MIN_BYTES: usize = 3;
+pub const REFERRAL_CODENAME_MAX_BYTES: usize = 32;
+
+pub fn valid_referral_codename(value: &str) -> bool {
+    (REFERRAL_CODENAME_MIN_BYTES..=REFERRAL_CODENAME_MAX_BYTES).contains(&value.len())
+        && value.is_ascii()
+        && value.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && !value.as_bytes().windows(2).any(|pair| pair == b"--")
+        && value
+            .as_bytes()
+            .last()
+            .is_some_and(u8::is_ascii_alphanumeric)
 }
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(in crate::pro) struct ReferralStatusResult {
-    pub(in crate::pro) codename: String,
-    pub(in crate::pro) attributed: u64,
-    pub(in crate::pro) subscribed: u64,
-    pub(in crate::pro) earned_cents: u64,
-    pub(in crate::pro) pending_cents: u64,
-    pub(in crate::pro) manual_review_cents: u64,
-    pub(in crate::pro) payable_cents: u64,
-    pub(in crate::pro) processing_cents: u64,
-    pub(in crate::pro) paid_cents: u64,
-    pub(in crate::pro) debt_cents: u64,
-    pub(in crate::pro) currency: String,
-    pub(in crate::pro) payout_state: String,
+pub struct ReferralCreateResult {
+    pub codename: String,
+    pub disposition: String,
 }
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(in crate::pro) struct ReferralPayoutResult {
-    pub(in crate::pro) kind: String,
-    pub(in crate::pro) payout_state: String,
-    pub(in crate::pro) url: String,
-    pub(in crate::pro) expires_at_unix: i64,
+pub struct ReferralStatusResult {
+    pub codename: String,
+    pub attributed: u64,
+    pub subscribed: u64,
+    pub earned_cents: u64,
+    pub pending_cents: u64,
+    pub manual_review_cents: u64,
+    pub payable_cents: u64,
+    pub processing_cents: u64,
+    pub paid_cents: u64,
+    pub debt_cents: u64,
+    pub currency: String,
+    pub payout_state: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReferralPayoutResult {
+    pub kind: String,
+    pub payout_state: String,
+    pub url: String,
+    pub expires_at_unix: i64,
 }
 
 impl fmt::Debug for ReferralCreateResult {
@@ -68,9 +87,9 @@ impl fmt::Debug for ReferralPayoutResult {
 }
 
 impl CommercialApiClient {
-    pub(in crate::pro) fn referral_create(
+    pub fn referral_create(
         &self,
-        access_token: &str,
+        access_token: &WorkOsAccessToken,
         codename: &str,
     ) -> Result<ReferralCreateResult> {
         validate_codename(codename)?;
@@ -83,18 +102,18 @@ impl CommercialApiClient {
         Ok(result)
     }
 
-    pub(in crate::pro) fn referral_status(
+    pub fn referral_status(
         &self,
-        access_token: &str,
+        access_token: &WorkOsAccessToken,
     ) -> Result<ReferralStatusResult> {
         let result: ReferralStatusResult = self.get(REFERRALS_PATH, access_token)?;
         result.validate()?;
         Ok(result)
     }
 
-    pub(in crate::pro) fn referral_payout(
+    pub fn referral_payout(
         &self,
-        access_token: &str,
+        access_token: &WorkOsAccessToken,
         country: Option<&str>,
     ) -> Result<ReferralPayoutResult> {
         validate_payout_country(country)?;
@@ -103,14 +122,14 @@ impl CommercialApiClient {
             access_token,
             &ReferralPayoutRequest { country },
         )?;
-        result.validate()?;
+        result.validate_at(self.unix_time()?)?;
         Ok(result)
     }
 }
 
 impl ReferralCreateResult {
-    pub(in crate::pro) fn validate(&self, requested_codename: &str) -> Result<()> {
-        if !super::super::referral::valid_referral_codename(&self.codename)
+    pub fn validate(&self, requested_codename: &str) -> Result<()> {
+        if !valid_referral_codename(&self.codename)
             || self.codename != requested_codename
             || !matches!(self.disposition.as_str(), "created" | "existing")
         {
@@ -121,7 +140,7 @@ impl ReferralCreateResult {
 }
 
 impl ReferralStatusResult {
-    pub(in crate::pro) fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         let amounts = [
             self.earned_cents,
             self.pending_cents,
@@ -153,7 +172,7 @@ impl ReferralStatusResult {
             ),
             _ => false,
         };
-        if !super::super::referral::valid_referral_codename(&self.codename)
+        if !valid_referral_codename(&self.codename)
             || self.attributed > MAX_REFERRAL_COUNT
             || self.subscribed > self.attributed
             || amounts.into_iter().any(|value| {
@@ -175,12 +194,16 @@ impl ReferralStatusResult {
 }
 
 impl ReferralPayoutResult {
-    pub(super) fn validate(&self) -> Result<()> {
+    #[cfg(test)]
+    pub fn validate(&self) -> Result<()> {
+        self.validate_at(super::system_unix_time()?)
+    }
+
+    fn validate_at(&self, now: i64) -> Result<()> {
         if self.kind != "payout_onboarding_created" || self.payout_state != "onboarding_pending" {
             bail!("invalid_response: referral payout result is invalid");
         }
         validate_stripe_hosted_url(&self.url)?;
-        let now = unix_time()?;
         if self.expires_at_unix <= now
             || self.expires_at_unix > now.saturating_add(MAX_PAYOUT_ONBOARDING_LIFETIME_SECONDS)
         {
@@ -191,17 +214,17 @@ impl ReferralPayoutResult {
 }
 
 #[derive(Serialize)]
-pub(super) struct ReferralCreateRequest<'a> {
-    pub(super) codename: &'a str,
+pub struct ReferralCreateRequest<'a> {
+    pub codename: &'a str,
 }
 
 #[derive(Serialize)]
-pub(super) struct ReferralPayoutRequest<'a> {
+pub struct ReferralPayoutRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) country: Option<&'a str>,
+    pub country: Option<&'a str>,
 }
 
-pub(super) fn validate_optional_codename(codename: Option<&str>) -> Result<()> {
+pub fn validate_optional_codename(codename: Option<&str>) -> Result<()> {
     if let Some(codename) = codename {
         validate_codename(codename)?;
     }
@@ -209,20 +232,20 @@ pub(super) fn validate_optional_codename(codename: Option<&str>) -> Result<()> {
 }
 
 fn validate_codename(codename: &str) -> Result<()> {
-    if !super::super::referral::valid_referral_codename(codename) {
+    if !valid_referral_codename(codename) {
         bail!("invalid_request: referral codename is invalid");
     }
     Ok(())
 }
 
-pub(super) fn validate_optional_claim_token(token: Option<&str>) -> Result<()> {
+pub fn validate_optional_claim_token(token: Option<&str>) -> Result<()> {
     if let Some(token) = token {
         validate_referral_claim_token(token)?;
     }
     Ok(())
 }
 
-pub(super) fn validate_referral_claim_token(token: &str) -> Result<()> {
+pub fn validate_referral_claim_token(token: &str) -> Result<()> {
     if token.len() < 16
         || token.len() > MAX_REFERRAL_CLAIM_TOKEN_BYTES
         || token.bytes().any(|byte| {
@@ -234,7 +257,7 @@ pub(super) fn validate_referral_claim_token(token: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn validate_payout_country(country: Option<&str>) -> Result<()> {
+pub fn validate_payout_country(country: Option<&str>) -> Result<()> {
     if country.is_some_and(|value| {
         value.len() != 2 || !value.bytes().all(|byte| byte.is_ascii_uppercase())
     }) {

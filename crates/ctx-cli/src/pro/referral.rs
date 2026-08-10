@@ -18,6 +18,7 @@ use super::{
     commercial_config::selected_channel,
     commercial_lifecycle::{open_browser, CommercialLifecycleService},
     lifecycle::lifecycle_manifest::ReleaseChannel,
+    workos_device::WorkOsAccessToken,
 };
 use crate::{
     output::JsonOutputFormat,
@@ -507,7 +508,11 @@ pub(super) trait ReferralService {
 }
 
 impl CommercialLifecycleService {
-    fn referral_access_token(&self, auth_mode: ReferralAuthMode, ui: &mut Ui) -> Result<String> {
+    fn referral_access_token(
+        &self,
+        auth_mode: ReferralAuthMode,
+        ui: &mut Ui,
+    ) -> Result<WorkOsAccessToken> {
         match auth_mode {
             ReferralAuthMode::Interactive { browser_enabled } => {
                 self.access_token(ui, true, browser_enabled)
@@ -534,17 +539,13 @@ impl ReferralService for CommercialLifecycleService {
         auth_mode: ReferralAuthMode,
         ui: &mut Ui,
     ) -> Result<ReferralCreateResult> {
-        let mut access_token = self.referral_access_token(auth_mode, ui)?;
-        let result = self.api.referral_create(&access_token, codename);
-        access_token.zeroize();
-        result
+        let access_token = self.referral_access_token(auth_mode, ui)?;
+        self.api.referral_create(&access_token, codename)
     }
 
     fn status(&mut self, auth_mode: ReferralAuthMode, ui: &mut Ui) -> Result<ReferralStatusResult> {
-        let mut access_token = self.referral_access_token(auth_mode, ui)?;
-        let result = self.api.referral_status(&access_token);
-        access_token.zeroize();
-        result
+        let access_token = self.referral_access_token(auth_mode, ui)?;
+        self.api.referral_status(&access_token)
     }
 
     fn payout(
@@ -553,10 +554,8 @@ impl ReferralService for CommercialLifecycleService {
         auth_mode: ReferralAuthMode,
         ui: &mut Ui,
     ) -> Result<ReferralPayoutResult> {
-        let mut access_token = self.referral_access_token(auth_mode, ui)?;
-        let result = self.api.referral_payout(&access_token, country);
-        access_token.zeroize();
-        result
+        let access_token = self.referral_access_token(auth_mode, ui)?;
+        self.api.referral_payout(&access_token, country)
     }
 }
 

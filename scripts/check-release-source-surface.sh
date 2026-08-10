@@ -35,6 +35,7 @@ source_paths=(
   crates/ctx-cli/src
   crates/ctx-client-observability/src
   crates/ctx-daemon-runtime/src
+  crates/ctx-pro-access/src
   crates/ctx-upgrade-engine/src
   crates/ctx-history-capture/src
   crates/ctx-history-search/src

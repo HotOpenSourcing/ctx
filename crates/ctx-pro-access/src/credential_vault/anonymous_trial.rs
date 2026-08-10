@@ -1,7 +1,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::{
     encode_entitlement, invalid_secret, BoundedSignedEntitlement, CredentialRecordIds,
@@ -16,7 +16,7 @@ const MAX_ANONYMOUS_TRIAL_STATE_BYTES: usize = MAX_STORED_SECRET_BYTES;
 
 #[derive(Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct AnonymousTrialMaterial {
+pub struct AnonymousTrialMaterial {
     schema_version: u16,
     access_token: String,
     trial_deadline_unix: i64,
@@ -27,7 +27,8 @@ pub(crate) struct AnonymousTrialMaterial {
 }
 
 impl AnonymousTrialMaterial {
-    pub(crate) fn new(
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new(
         access_token: String,
         trial_deadline_unix: i64,
     ) -> Result<Self, CredentialVaultError> {
@@ -41,32 +42,67 @@ impl AnonymousTrialMaterial {
         value.validate().map(|()| value)
     }
 
+    pub(crate) fn from_server(
+        access_token: String,
+        trial_deadline_unix: i64,
+        referral_claim_token: Option<String>,
+    ) -> Result<Self, CredentialVaultError> {
+        let mut value = Self {
+            schema_version: ANONYMOUS_TRIAL_SCHEMA_VERSION,
+            access_token,
+            trial_deadline_unix,
+            refresh_not_before_unix: None,
+            referral_claim_token,
+        };
+        if let Err(error) = value.validate() {
+            value.zeroize();
+            return Err(error);
+        }
+        Ok(value)
+    }
+
+    pub(crate) fn apply_server_refresh(
+        mut self,
+        access_token: String,
+        refreshed_referral_claim_token: Option<String>,
+    ) -> Result<Self, CredentialVaultError> {
+        let mut access_token = Zeroizing::new(access_token);
+        let mut refreshed_referral_claim_token = Zeroizing::new(refreshed_referral_claim_token);
+        if self.referral_claim_token.is_none() && refreshed_referral_claim_token.is_some() {
+            return Err(CredentialVaultError::Corrupt);
+        }
+        zeroize_before_replace(&mut self.access_token, std::mem::take(&mut *access_token));
+        self.refresh_not_before_unix = None;
+        if refreshed_referral_claim_token.is_some() {
+            zeroize_before_replace(
+                &mut self.referral_claim_token,
+                std::mem::take(&mut *refreshed_referral_claim_token),
+            );
+        }
+        self.validate().map(|()| self)
+    }
+
     pub(crate) fn access_token(&self) -> &str {
         &self.access_token
     }
 
-    pub(crate) const fn trial_deadline_unix(&self) -> i64 {
+    pub const fn trial_deadline_unix(&self) -> i64 {
         self.trial_deadline_unix
     }
 
-    pub(crate) const fn refresh_not_before_unix(&self) -> Option<i64> {
+    pub const fn refresh_not_before_unix(&self) -> Option<i64> {
         self.refresh_not_before_unix
+    }
+
+    pub fn has_referral_claim(&self) -> bool {
+        self.referral_claim_token.is_some()
     }
 
     pub(crate) fn referral_claim_token(&self) -> Option<&str> {
         self.referral_claim_token.as_deref()
     }
 
-    pub(crate) fn with_access_token(
-        mut self,
-        access_token: String,
-    ) -> Result<Self, CredentialVaultError> {
-        self.access_token = access_token;
-        self.refresh_not_before_unix = None;
-        self.validate().map(|()| self)
-    }
-
-    pub(crate) fn with_refresh_not_before_unix(
+    pub fn with_refresh_not_before_unix(
         mut self,
         value: Option<i64>,
     ) -> Result<Self, CredentialVaultError> {
@@ -74,11 +110,13 @@ impl AnonymousTrialMaterial {
         self.validate().map(|()| self)
     }
 
-    pub(crate) fn with_referral_claim_token(
+    #[cfg(test)]
+    fn with_referral_claim_token(
         mut self,
         value: Option<String>,
     ) -> Result<Self, CredentialVaultError> {
-        self.referral_claim_token = value;
+        let mut value = Zeroizing::new(value);
+        zeroize_before_replace(&mut self.referral_claim_token, std::mem::take(&mut *value));
         self.validate().map(|()| self)
     }
 
@@ -103,6 +141,11 @@ impl AnonymousTrialMaterial {
         }
         Ok(())
     }
+}
+
+fn zeroize_before_replace<T: Zeroize>(target: &mut T, replacement: T) {
+    let mut displaced = std::mem::replace(target, replacement);
+    displaced.zeroize();
 }
 
 impl fmt::Debug for AnonymousTrialMaterial {
@@ -167,7 +210,9 @@ fn invalid_referral_claim_token(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::BTreeSet;
+    use std::rc::Rc;
     use std::sync::Mutex;
 
     use ctx_pro_host_protocol::{
@@ -216,6 +261,48 @@ mod tests {
         let debug = format!("{value:?}");
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains(claim));
+    }
+
+    #[test]
+    fn server_refresh_preserves_or_rotates_a_claim_but_never_attaches_one_late() {
+        let referred = AnonymousTrialMaterial::from_server(
+            "a".repeat(32),
+            2_000,
+            Some("claim.original_123".to_owned()),
+        )
+        .unwrap();
+        let preserved = referred.apply_server_refresh("b".repeat(32), None).unwrap();
+        assert_eq!(preserved.referral_claim_token(), Some("claim.original_123"));
+        let rotated = preserved
+            .apply_server_refresh("c".repeat(32), Some("claim.rotated_4567".to_owned()))
+            .unwrap();
+        assert_eq!(rotated.referral_claim_token(), Some("claim.rotated_4567"));
+
+        let nonreferred = AnonymousTrialMaterial::from_server("a".repeat(32), 2_000, None).unwrap();
+        assert!(matches!(
+            nonreferred.apply_server_refresh("b".repeat(32), Some("claim.late_123456".to_owned()),),
+            Err(CredentialVaultError::Corrupt)
+        ));
+    }
+
+    struct ZeroizeProbe(Rc<Cell<bool>>);
+
+    impl Zeroize for ZeroizeProbe {
+        fn zeroize(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    #[test]
+    fn secret_replacement_zeroizes_the_displaced_value_immediately() {
+        let displaced_zeroized = Rc::new(Cell::new(false));
+        let replacement_zeroized = Rc::new(Cell::new(false));
+        let mut target = ZeroizeProbe(Rc::clone(&displaced_zeroized));
+
+        zeroize_before_replace(&mut target, ZeroizeProbe(Rc::clone(&replacement_zeroized)));
+
+        assert!(displaced_zeroized.get());
+        assert!(!replacement_zeroized.get());
     }
 
     #[derive(Default)]

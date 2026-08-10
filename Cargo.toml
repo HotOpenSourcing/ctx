@@ -4,6 +4,7 @@ members = [
     "crates/ctx-cli",
     "crates/ctx-client-observability",
     "crates/ctx-daemon-runtime",
+    "crates/ctx-pro-access",
     "crates/ctx-upgrade-engine",
     "crates/ctx-history-capture",
     "crates/ctx-history-core",
