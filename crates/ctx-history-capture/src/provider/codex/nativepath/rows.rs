@@ -18,8 +18,8 @@ use super::record::{
 use crate::provider::codex::events::{
     codex_command_preview, codex_command_text, codex_content_text, codex_local_preview,
     codex_message_body, codex_provider_event, codex_result_content, codex_tool_arguments_preview,
-    codex_tool_arguments_text, codex_tool_arguments_value, codex_tool_name, CodexNativeEvent,
-    CodexToolCallContext,
+    codex_tool_arguments_text, codex_tool_arguments_value, codex_tool_name,
+    CodexInvocationOriginV0, CodexNativeEvent, CodexToolCallContext,
 };
 use crate::{
     provider::codex::repository::{
@@ -99,6 +99,7 @@ pub(crate) struct CodexSourceBackedRowV0 {
     pub(crate) raw_ordinal: u64,
     pub(crate) provider_event_identity: Option<CodexProviderEventIdentityV0>,
     pub(crate) copied_from_native_session_id: Option<String>,
+    pub(crate) repository_result_origin: CodexInvocationOriginV0,
     pub(crate) occurred_at: DateTime<Utc>,
     pub(crate) event_type: EventType,
     pub(crate) role: Option<EventRole>,
@@ -210,6 +211,10 @@ impl CodexSourceBackedRowV0 {
         let allocation_count = 3_usize
             .checked_add(self.touched_paths.len())?
             .checked_add(self.repository_files.len())?
+            .checked_add(usize::from(matches!(
+                self.repository_result_origin,
+                CodexInvocationOriginV0::CopiedFromAncestor { .. }
+            )))?
             .checked_add(usize::from(self.mcp_tool_call.is_some()).checked_mul(2)?)?
             .checked_add(usize::from(self.mcp_exchange.is_some()))?;
         size_of::<Self>()
@@ -223,6 +228,12 @@ impl CodexSourceBackedRowV0 {
                     .as_ref()
                     .map_or(0, String::capacity),
             )?
+            .checked_add(match &self.repository_result_origin {
+                CodexInvocationOriginV0::CopiedFromAncestor {
+                    ancestor_native_session_id,
+                } => ancestor_native_session_id.capacity(),
+                CodexInvocationOriginV0::UniqueToSession | CodexInvocationOriginV0::Unproven => 0,
+            })?
             .checked_add(self.lexical_body.capacity())?
             .checked_add(
                 self.structured_content
@@ -366,6 +377,7 @@ pub(super) fn build_source_backed_event_row(
             raw_ordinal,
             provider_event_identity: provider_event_identity(&retained.payload),
             copied_from_native_session_id: None,
+            repository_result_origin: CodexInvocationOriginV0::Unproven,
             occurred_at: retained.occurred_at,
             event_type: semantic.event_type,
             role: semantic.role,
@@ -413,10 +425,20 @@ pub(super) fn build_source_backed_sparse_output_row(
         Some(EventRole::Tool),
         &normalized_body,
     );
+    let repository_result_origin = context
+        .map(|context| context.invocation_origin.clone())
+        .unwrap_or(CodexInvocationOriginV0::Unproven);
+    let copied_from_native_session_id = match &repository_result_origin {
+        CodexInvocationOriginV0::CopiedFromAncestor {
+            ancestor_native_session_id,
+        } => Some(ancestor_native_session_id.clone()),
+        CodexInvocationOriginV0::UniqueToSession | CodexInvocationOriginV0::Unproven => None,
+    };
     Ok(Some(CodexSourceBackedRowV0 {
         raw_ordinal,
         provider_event_identity,
-        copied_from_native_session_id: None,
+        copied_from_native_session_id,
+        repository_result_origin,
         occurred_at,
         event_type,
         role: Some(EventRole::Tool),
