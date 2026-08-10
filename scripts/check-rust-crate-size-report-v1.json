@@ -1,0 +1,111 @@
+{
+  "schema_version": 2,
+  "metric": {
+    "tool": "scc",
+    "version": "3.7.0",
+    "field": "Code"
+  },
+  "hard_limit": 20000,
+  "census_sha256": "ce2953cfa523ef7fc2c59fd056337a6da0c1f754dbdcaa5d13926d378ae20914",
+  "packages": [
+    {
+      "package": "ctx",
+      "manifest": "crates/ctx-cli/Cargo.toml",
+      "production_cloc": 115409,
+      "production_files": 319,
+      "source_inventory_sha256": "045cca7183d95f7cb69fea56af560ecfd2431e60b675a35d9d9415d89298cf7d",
+      "ceiling": 115409,
+      "policy_status": "temporary-exception"
+    },
+    {
+      "package": "ctx-history-capture",
+      "manifest": "crates/ctx-history-capture/Cargo.toml",
+      "production_cloc": 160949,
+      "production_files": 470,
+      "source_inventory_sha256": "94e937194a34b243be724ed6e605f029dfa48f663b365eb2b1df3694779861bd",
+      "ceiling": 160949,
+      "policy_status": "temporary-exception"
+    },
+    {
+      "package": "ctx-history-core",
+      "manifest": "crates/ctx-history-core/Cargo.toml",
+      "production_cloc": 7246,
+      "production_files": 21,
+      "source_inventory_sha256": "9e6502c16695af383e94439dc9c09a873a645cebb40b7329dcc8e7b5e66b5a98",
+      "ceiling": 20000,
+      "policy_status": "within-limit"
+    },
+    {
+      "package": "ctx-history-index",
+      "manifest": "crates/ctx-history-index/Cargo.toml",
+      "production_cloc": 17716,
+      "production_files": 45,
+      "source_inventory_sha256": "2ed6915fc04e82046bb2fcbb1aece184813d191369263db0884dd3d2cc1efc17",
+      "ceiling": 20000,
+      "policy_status": "within-limit"
+    },
+    {
+      "package": "ctx-history-index-generation",
+      "manifest": "crates/ctx-history-index-generation/Cargo.toml",
+      "production_cloc": 5378,
+      "production_files": 17,
+      "source_inventory_sha256": "e933d93be6c90b18079cae5d82c737b70b7b636e5a11a3c50b87e526bfdad0dc",
+      "ceiling": 20000,
+      "policy_status": "within-limit"
+    },
+    {
+      "package": "ctx-history-refresh",
+      "manifest": "crates/ctx-history-refresh/Cargo.toml",
+      "production_cloc": 13445,
+      "production_files": 32,
+      "source_inventory_sha256": "27a58cef72454a3a897b0afe66f886c8c0c8535d153b37641451f4af6dda7cdc",
+      "ceiling": 20000,
+      "policy_status": "within-limit"
+    },
+    {
+      "package": "ctx-pro-host-protocol",
+      "manifest": "crates/ctx-pro-host-protocol/Cargo.toml",
+      "production_cloc": 8765,
+      "production_files": 22,
+      "source_inventory_sha256": "64aa5dbb94706af3b788ae822da24aca3531d609c6f5fc3c6d994f2b8fe4cf4e",
+      "ceiling": 20000,
+      "policy_status": "within-limit"
+    },
+    {
+      "package": "ctx-protocol",
+      "manifest": "crates/ctx-protocol/Cargo.toml",
+      "production_cloc": 1781,
+      "production_files": 1,
+      "source_inventory_sha256": "92c332cf5b6f5f0d459b3c3056086d62bcfcf5c6088f3402db5d2b3513fa0174",
+      "ceiling": 20000,
+      "policy_status": "within-limit"
+    },
+    {
+      "package": "ctx-sdk",
+      "manifest": "crates/ctx-sdk/Cargo.toml",
+      "production_cloc": 1686,
+      "production_files": 4,
+      "source_inventory_sha256": "614cb918d7b9ea1d8ed96dcc79d61d19a19242181bfedb335d08e4d93cf9a9ce",
+      "ceiling": 20000,
+      "policy_status": "within-limit"
+    },
+    {
+      "package": "ctx-semantic-index",
+      "manifest": "crates/ctx-semantic-index/Cargo.toml",
+      "production_cloc": 10023,
+      "production_files": 28,
+      "source_inventory_sha256": "3a6fc02fb8e6b00cb45bbaee632efe8d9221d015488ecfd2b949a8de546e17af",
+      "ceiling": 20000,
+      "policy_status": "within-limit"
+    },
+    {
+      "package": "ctx-semantic-model",
+      "manifest": "crates/ctx-semantic-model/Cargo.toml",
+      "production_cloc": 8584,
+      "production_files": 26,
+      "source_inventory_sha256": "5abc77cb176aa9f3641e96d8886f2c154988513ce5b246df90eb07832836013f",
+      "ceiling": 20000,
+      "policy_status": "within-limit"
+    }
+  ]
+}

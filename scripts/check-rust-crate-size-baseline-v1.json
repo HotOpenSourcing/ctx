@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "snapshot": "5a972aeb8ba846bef25167b11763d18cab271004",
+  "hard_limit": 20000,
+  "packages": [
+    {
+      "package": "ctx",
+      "manifest": "crates/ctx-cli/Cargo.toml",
+      "production_cloc": 115409
+    },
+    {
+      "package": "ctx-history-capture",
+      "manifest": "crates/ctx-history-capture/Cargo.toml",
+      "production_cloc": 160949
+    },
+    {
+      "package": "ctx-history-core",
+      "manifest": "crates/ctx-history-core/Cargo.toml",
+      "production_cloc": 7246
+    },
+    {
+      "package": "ctx-history-index",
+      "manifest": "crates/ctx-history-index/Cargo.toml",
+      "production_cloc": 17716
+    },
+    {
+      "package": "ctx-history-index-generation",
+      "manifest": "crates/ctx-history-index-generation/Cargo.toml",
+      "production_cloc": 5378
+    },
+    {
+      "package": "ctx-history-refresh",
+      "manifest": "crates/ctx-history-refresh/Cargo.toml",
+      "production_cloc": 13445
+    },
+    {
+      "package": "ctx-pro-host-protocol",
+      "manifest": "crates/ctx-pro-host-protocol/Cargo.toml",
+      "production_cloc": 8765
+    },
+    {
+      "package": "ctx-protocol",
+      "manifest": "crates/ctx-protocol/Cargo.toml",
+      "production_cloc": 1781
+    },
+    {
+      "package": "ctx-sdk",
+      "manifest": "crates/ctx-sdk/Cargo.toml",
+      "production_cloc": 1686
+    },
+    {
+      "package": "ctx-semantic-index",
+      "manifest": "crates/ctx-semantic-index/Cargo.toml",
+      "production_cloc": 10023
+    },
+    {
+      "package": "ctx-semantic-model",
+      "manifest": "crates/ctx-semantic-model/Cargo.toml",
+      "production_cloc": 8584
+    }
+  ]
+}
