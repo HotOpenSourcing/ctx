@@ -697,7 +697,7 @@ mod tests {
         assert!(matches!(
             mapped,
             ToolBackendError::GenerationAuthority(StructuredToolError { structured, .. })
-                if structured["error_code"] == "generation_uncertified_empty"
+                if structured["error_code"] == "source_unavailable"
         ));
     }
 
