@@ -10,10 +10,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use ctx_history_core::MAX_ENCODED_CORE_RECORD_BYTES;
-use ctx_history_index::{
+use ctx_history_index_format::GenerationManifest;
+use ctx_history_index_generation::{
     acquire_generation_retention_lease, load_generation_retention_lease,
-    release_generation_retention_lease, CoreEventPageBudget, CoreSourceEventPagePlan,
-    GenerationManifest, GenerationRetentionLease, SourceEventCursor, StoredCoreRecordJson,
+    release_generation_retention_lease, GenerationRetentionLease,
+};
+use ctx_history_index_query::{
+    CoreEventPageBudget, CoreSourceEventPagePlan, SourceEventCursor, StoredCoreRecordJson,
     VerifiedIndex,
 };
 use ctx_pro_host_protocol::{

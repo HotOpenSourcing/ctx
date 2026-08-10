@@ -21,7 +21,7 @@ pub enum CoreMaterializationSyncOutcome {
 pub fn sync_core_materialization(
     host: &(impl InstalledProHost + ?Sized),
     data_root: &Path,
-    index: &ctx_history_index::VerifiedIndex,
+    index: &ctx_history_index_query::VerifiedIndex,
 ) -> Result<CoreMaterializationSyncOutcome> {
     match core_materialization_feed::sync_generation_pinned_core(host, data_root, index)? {
         core_materialization_feed::CoreMaterializationSyncProgress::Finished(report) => {

@@ -2,7 +2,7 @@ use ctx_history_core::{
     RepositoryBinding, RepositoryFileInvocationEvidence, RepositoryFileInvocationKind,
     CORE_CONTENT_POLICY_REVISION, CORE_NORMALIZATION_REVISION, CORE_RECORD_VERSION,
 };
-use ctx_history_index::CoreEventRecord;
+use ctx_history_index_query::CoreEventRecord;
 use ctx_pro_host_protocol::{
     BlameResult, EvidenceCitation, NumberedEvidence, ResolvedBlameTarget, ResourceKind, ResourceRef,
 };

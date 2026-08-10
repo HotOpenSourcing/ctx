@@ -171,7 +171,7 @@ fn prepared_request_reuses_stored_core_json_and_matches_legacy_frames_byte_for_b
             &source,
             None,
             3,
-            ctx_history_index::DEFAULT_CORE_EVENT_PAGE_BUDGET,
+            ctx_history_index_query::DEFAULT_CORE_EVENT_PAGE_BUDGET,
         )
         .unwrap();
     let mut items = stored_page.items.into_iter();

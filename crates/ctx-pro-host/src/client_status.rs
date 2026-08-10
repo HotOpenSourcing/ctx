@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::Result;
-use ctx_history_index::VerifiedIndex;
+use ctx_history_index_query::VerifiedIndex;
 use ctx_pro_host_protocol::{
     Capability, CoreProjectionCurrentness, EntitlementAccessState, HelperMessage, HostMessage,
     MaterializedCoverage, ProOperation, ProStorageEvidence, RepositoryCoverage, StatusRequest,

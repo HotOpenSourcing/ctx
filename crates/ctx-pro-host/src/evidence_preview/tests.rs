@@ -9,7 +9,7 @@ use ctx_history_core::{
     CORE_REPOSITORY_ASSOCIATION_POLICY_REVISION,
     CORE_REPOSITORY_LOCAL_ROOT_AUTHORIZATION_FINGERPRINT_REVISION,
 };
-use ctx_history_index::{CoreEventRecord, EventRecord};
+use ctx_history_index_query::{CoreEventRecord, EventRecord};
 use ctx_pro_host_protocol::{
     BlameAttribution, BlameCoverage, BlameCoverageUnit, BlameOutcome, BlameResult,
     EvidenceCitation, GitSnapshot, NumberedEvidence, ResolvedBlameTarget, ResourceKind,
