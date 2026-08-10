@@ -69,10 +69,7 @@ mod repository_tests {
         projector: &mut CursorProjector,
         records: &[Value],
     ) -> Vec<CoreRecord> {
-        let mut authority = CursorResultTerminalAuthority {
-            available: true,
-            ..CursorResultTerminalAuthority::default()
-        };
+        let mut authority = CursorResultTerminalAuthority::available();
         for (ordinal, record) in records.iter().enumerate() {
             let encoded = serde_json::to_vec(record).unwrap();
             if let Some(events) = project_cursor_jsonl_record(
@@ -90,7 +87,12 @@ mod repository_tests {
                         ..
                     } = event.body
                     {
-                        authority.observe(&call_id, false);
+                        authority.observe(
+                            RESULT_TERMINAL_CALL_ID_DOMAIN,
+                            &call_id,
+                            JsonlTerminalObservationRegion::AppendedSuffix,
+                            MAX_CURSOR_TOOL_CONTEXTS,
+                        );
                     }
                 }
             }

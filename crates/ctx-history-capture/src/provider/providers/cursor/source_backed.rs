@@ -43,7 +43,8 @@ use crate::{
         observe_opened_file, read_bounded_record_unhashed, JsonlFamilyAdapter,
         JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf, JsonlFamilyProjectionMode,
         JsonlFamilyProjector, JsonlFamilyTerminalProof, JsonlFamilyWorkerContext, JsonlReader,
-        JsonlRecordFraming, JsonlRecordRef, JsonlSourceIdentity,
+        JsonlRecordFraming, JsonlRecordRef, JsonlSourceIdentity, JsonlTerminalAuthority,
+        JsonlTerminalObservationRegion,
     },
     CaptureError, Result, CURSOR_AGENT_TRANSCRIPT_SOURCE_FORMAT, MAX_PROVIDER_JSONL_LINE_BYTES,
 };
@@ -137,54 +138,7 @@ struct CursorPreflightState {
     authorities: HashMap<[u8; 32], CursorResultTerminalAuthority>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-struct CursorResultTerminalState {
-    candidates: u8,
-    in_certified_prefix: bool,
-    after_certified_prefix: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-struct CursorResultTerminalAuthority {
-    call_ids: HashMap<[u8; 32], CursorResultTerminalState>,
-    exhausted: bool,
-    available: bool,
-}
-
-impl CursorResultTerminalAuthority {
-    fn observe(&mut self, call_id: &str, in_certified_prefix: bool) {
-        self.available = true;
-        if self.exhausted {
-            return;
-        }
-        let digest = cursor_result_terminal_call_id_digest(call_id);
-        if !self.call_ids.contains_key(&digest) && self.call_ids.len() >= MAX_CURSOR_TOOL_CONTEXTS {
-            self.call_ids.clear();
-            self.exhausted = true;
-            return;
-        }
-        let state = self.call_ids.entry(digest).or_default();
-        state.candidates = state.candidates.saturating_add(1).min(2);
-        state.in_certified_prefix |= in_certified_prefix;
-        state.after_certified_prefix |= !in_certified_prefix;
-    }
-
-    fn is_unique(&self, call_id: &str) -> bool {
-        !self.available
-            || (!self.exhausted
-                && self
-                    .call_ids
-                    .get(&cursor_result_terminal_call_id_digest(call_id))
-                    .is_some_and(|state| state.candidates == 1))
-    }
-
-    fn append_requires_replacement(&self) -> bool {
-        self.exhausted
-            || self.call_ids.values().any(|state| {
-                state.in_certified_prefix && state.after_certified_prefix && state.candidates > 1
-            })
-    }
-}
+type CursorResultTerminalAuthority = JsonlTerminalAuthority;
 
 pub(crate) fn cursor_jsonl_adapter() -> Arc<dyn JsonlFamilyAdapter> {
     Arc::new(CursorJsonlAdapter::default())
@@ -425,10 +379,7 @@ fn preflight_cursor_result_terminals(
         leaf.source_path(),
     );
     let mut reader = JsonlReader::open(identity, source_file, None, None)?;
-    let mut authority = CursorResultTerminalAuthority {
-        available: true,
-        ..CursorResultTerminalAuthority::default()
-    };
+    let mut authority = CursorResultTerminalAuthority::available();
     while reader
         .visit_page(&mut |record: JsonlRecordRef<'_>| -> Result<()> {
             let evidence = record.evidence();
@@ -450,7 +401,16 @@ fn preflight_cursor_result_terminals(
                     ..
                 } = event.body
                 {
-                    authority.observe(&call_id, in_certified_prefix);
+                    authority.observe(
+                        RESULT_TERMINAL_CALL_ID_DOMAIN,
+                        &call_id,
+                        if in_certified_prefix {
+                            JsonlTerminalObservationRegion::CertifiedPrefix
+                        } else {
+                            JsonlTerminalObservationRegion::AppendedSuffix
+                        },
+                        MAX_CURSOR_TOOL_CONTEXTS,
+                    );
                 }
             }
             Ok(())
@@ -458,13 +418,6 @@ fn preflight_cursor_result_terminals(
         .is_some()
     {}
     Ok(authority)
-}
-
-fn cursor_result_terminal_call_id_digest(call_id: &str) -> [u8; 32] {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(RESULT_TERMINAL_CALL_ID_DOMAIN);
-    hasher.update(call_id.as_bytes());
-    hasher.finalize().into()
 }
 
 struct CursorProjector {
@@ -695,9 +648,10 @@ impl CursorProjector {
                 discovery_evidence,
                 ..
             } => {
-                let unique_terminal = call_id
-                    .as_deref()
-                    .is_some_and(|call_id| self.result_terminal_authority.is_unique(call_id));
+                let unique_terminal = call_id.as_deref().is_some_and(|call_id| {
+                    self.result_terminal_authority
+                        .is_unique(RESULT_TERMINAL_CALL_ID_DOMAIN, call_id)
+                });
                 let context = if *ambiguous_linkage {
                     None
                 } else {

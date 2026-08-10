@@ -746,10 +746,7 @@ fn test_projector() -> ClaudeProjector {
 }
 
 fn project_claude_records(projector: &mut ClaudeProjector, records: &[Vec<u8>]) -> Vec<CoreRecord> {
-    let mut authority = ClaudeResultTerminalAuthority {
-        available: true,
-        ..ClaudeResultTerminalAuthority::default()
-    };
+    let mut authority = ClaudeResultTerminalAuthority::available();
     for (ordinal, record) in records.iter().enumerate() {
         let locator = ClaudePhysicalLocator {
             path: PathBuf::from("test-session.jsonl"),
@@ -764,7 +761,12 @@ fn project_claude_records(projector: &mut ClaudeProjector, records: &[Vec<u8>]) 
                     .as_ref()
                     .and_then(|result| result.call_id.as_deref())
             }) {
-                authority.observe(call_id, false);
+                authority.observe(
+                    RESULT_TERMINAL_CALL_ID_DOMAIN,
+                    call_id,
+                    JsonlTerminalObservationRegion::AppendedSuffix,
+                    MAX_PENDING_CALLS,
+                );
             }
         }
     }

@@ -15,7 +15,6 @@ use ctx_history_core::{
     RepositoryFileObservationKind, SourceKey, StableEntityId, TypedKey,
 };
 use serde::{Deserialize, Serialize};
-use sha2::Digest;
 use thiserror::Error;
 
 use super::dto::{GeminiEventBody, GeminiTranscriptLayout};
@@ -36,7 +35,8 @@ use crate::{
         family::jsonl::{
             jsonl_family_driver, observe_opened_file, JsonlFamilyAdapter, JsonlFamilyAppendMode,
             JsonlFamilyInventory, JsonlFamilyLeaf, JsonlFamilyProjector, JsonlFamilyWorkerContext,
-            JsonlReader, JsonlRecordRef, JsonlSourceIdentity,
+            JsonlReader, JsonlRecordRef, JsonlSourceIdentity, JsonlTerminalAuthority,
+            JsonlTerminalObservationRegion,
         },
         SourceBackedCoordinatorResult, SourceBackedProviderRegistry, SourceBackedRouteSelection,
         SourceBackedSelectorAuthority,
@@ -128,44 +128,7 @@ struct GeminiJsonlAdapter {
     preflight: Mutex<HashMap<[u8; 32], GeminiResultTerminalAuthority>>,
 }
 
-#[derive(Debug, Clone, Default)]
-struct GeminiResultTerminalAuthority {
-    call_ids: HashMap<[u8; 32], u8>,
-    exhausted: bool,
-    available: bool,
-}
-
-impl GeminiResultTerminalAuthority {
-    fn observe(&mut self, call_id: &str) {
-        self.available = true;
-        if self.exhausted {
-            return;
-        }
-        let digest = gemini_result_terminal_call_id_digest(call_id);
-        if !self.call_ids.contains_key(&digest) && self.call_ids.len() >= MAX_GEMINI_TOOL_CONTEXTS {
-            self.call_ids.clear();
-            self.exhausted = true;
-            return;
-        }
-        let candidates = self.call_ids.entry(digest).or_default();
-        *candidates = candidates.saturating_add(1).min(2);
-    }
-
-    fn is_unique(&self, call_id: &str) -> bool {
-        !self.available
-            || (!self.exhausted
-                && self
-                    .call_ids
-                    .get(&gemini_result_terminal_call_id_digest(call_id))
-                    .is_some_and(|candidates| *candidates == 1))
-    }
-
-    fn observe_ambiguous_terminal(&mut self) {
-        self.available = true;
-        self.call_ids.clear();
-        self.exhausted = true;
-    }
-}
+type GeminiResultTerminalAuthority = JsonlTerminalAuthority;
 
 fn gemini_jsonl_adapter() -> Arc<dyn JsonlFamilyAdapter> {
     Arc::new(GeminiJsonlAdapter::default())
@@ -336,10 +299,7 @@ fn preflight_gemini_result_terminals(
         leaf.source_path(),
     );
     let mut reader = JsonlReader::open(identity, source_file, None, None)?;
-    let mut authority = GeminiResultTerminalAuthority {
-        available: true,
-        ..GeminiResultTerminalAuthority::default()
-    };
+    let mut authority = GeminiResultTerminalAuthority::available();
     while reader
         .visit_page(&mut |record: JsonlRecordRef<'_>| -> crate::Result<()> {
             let evidence = record.evidence();
@@ -361,7 +321,12 @@ fn preflight_gemini_result_terminals(
                     ..
                 } = event.body
                 {
-                    authority.observe(&call_id);
+                    authority.observe(
+                        RESULT_TERMINAL_CALL_ID_DOMAIN,
+                        &call_id,
+                        JsonlTerminalObservationRegion::WholeSource,
+                        MAX_GEMINI_TOOL_CONTEXTS,
+                    );
                 }
             }
             Ok(())
@@ -370,13 +335,6 @@ fn preflight_gemini_result_terminals(
     {}
     parser.finish().map_err(capture_scan_error)?;
     Ok(authority)
-}
-
-fn gemini_result_terminal_call_id_digest(call_id: &str) -> [u8; 32] {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(RESULT_TERMINAL_CALL_ID_DOMAIN);
-    hasher.update(call_id.as_bytes());
-    hasher.finalize().into()
 }
 
 struct GeminiProjector {
@@ -642,9 +600,9 @@ fn gemini_attribution_for_event(
             outcome,
             ..
         } => {
-            let unique_terminal = call_id
-                .as_deref()
-                .is_some_and(|call_id| result_terminal_authority.is_unique(call_id));
+            let unique_terminal = call_id.as_deref().is_some_and(|call_id| {
+                result_terminal_authority.is_unique(RESULT_TERMINAL_CALL_ID_DOMAIN, call_id)
+            });
             let direct = GeminiToolContext {
                 command: command.clone(),
                 command_too_large: *command_too_large,
@@ -1135,17 +1093,19 @@ pub(super) fn project_gemini_test_events(
     let mut repository_attributor = crate::repository_attribution::RepositoryAttributor::default();
     let mut tool_contexts = BTreeMap::new();
     let mut linkage_capacity_exceeded = false;
-    let mut result_terminal_authority = GeminiResultTerminalAuthority {
-        available: true,
-        ..GeminiResultTerminalAuthority::default()
-    };
+    let mut result_terminal_authority = GeminiResultTerminalAuthority::available();
     for event in &events {
         if let GeminiEventBody::OutputDiagnostic {
             call_id: Some(call_id),
             ..
         } = &event.body
         {
-            result_terminal_authority.observe(call_id);
+            result_terminal_authority.observe(
+                RESULT_TERMINAL_CALL_ID_DOMAIN,
+                call_id,
+                JsonlTerminalObservationRegion::WholeSource,
+                MAX_GEMINI_TOOL_CONTEXTS,
+            );
         }
     }
     let mut emitted_event_digests = BTreeSet::new();

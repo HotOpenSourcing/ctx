@@ -44,7 +44,7 @@ use crate::{
             observe_opened_file, JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory,
             JsonlFamilyLeaf, JsonlFamilyProjectionMode, JsonlFamilyProjector,
             JsonlFamilyWorkerContext, JsonlFileObservation, JsonlReader, JsonlRecordRef,
-            JsonlSourceIdentity,
+            JsonlSourceIdentity, JsonlTerminalAuthority, JsonlTerminalObservationRegion,
         },
     },
     CaptureError, Result, CLAUDE_PROJECTS_SOURCE_FORMAT,
@@ -82,60 +82,7 @@ struct ClaudePreflightState {
     authorities: HashMap<[u8; 32], ClaudeResultTerminalAuthority>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-struct ClaudeResultTerminalState {
-    candidates: u8,
-    in_certified_prefix: bool,
-    after_certified_prefix: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-struct ClaudeResultTerminalAuthority {
-    call_ids: HashMap<[u8; 32], ClaudeResultTerminalState>,
-    exhausted: bool,
-    available: bool,
-}
-
-impl ClaudeResultTerminalAuthority {
-    fn observe(&mut self, call_id: &str, in_certified_prefix: bool) {
-        self.available = true;
-        if self.exhausted {
-            return;
-        }
-        let digest = claude_result_terminal_call_id_digest(call_id);
-        if !self.call_ids.contains_key(&digest) && self.call_ids.len() >= MAX_PENDING_CALLS {
-            self.call_ids.clear();
-            self.exhausted = true;
-            return;
-        }
-        let state = self.call_ids.entry(digest).or_default();
-        state.candidates = state.candidates.saturating_add(1).min(2);
-        state.in_certified_prefix |= in_certified_prefix;
-        state.after_certified_prefix |= !in_certified_prefix;
-    }
-
-    fn is_unique(&self, call_id: &str) -> bool {
-        !self.available
-            || (!self.exhausted
-                && self
-                    .call_ids
-                    .get(&claude_result_terminal_call_id_digest(call_id))
-                    .is_some_and(|state| state.candidates == 1))
-    }
-
-    fn append_requires_replacement(&self) -> bool {
-        self.exhausted
-            || self.call_ids.values().any(|state| {
-                state.in_certified_prefix && state.after_certified_prefix && state.candidates > 1
-            })
-    }
-
-    fn observe_ambiguous_terminal(&mut self) {
-        self.available = true;
-        self.call_ids.clear();
-        self.exhausted = true;
-    }
-}
+type ClaudeResultTerminalAuthority = JsonlTerminalAuthority;
 
 fn claude_source_backed_adapter() -> Arc<dyn JsonlFamilyAdapter> {
     Arc::new(ClaudeJsonlAdapter::default())
@@ -355,10 +302,7 @@ fn preflight_claude_result_terminals(
         leaf.source_path(),
     );
     let mut reader = JsonlReader::open(identity, source_file, None, None)?;
-    let mut authority = ClaudeResultTerminalAuthority {
-        available: true,
-        ..ClaudeResultTerminalAuthority::default()
-    };
+    let mut authority = ClaudeResultTerminalAuthority::available();
     while reader
         .visit_page(&mut |record: JsonlRecordRef<'_>| -> Result<()> {
             let evidence = record.evidence();
@@ -386,20 +330,22 @@ fn preflight_claude_result_terminals(
                     .as_ref()
                     .and_then(|result| result.call_id.as_deref())
             }) {
-                authority.observe(call_id, in_certified_prefix);
+                authority.observe(
+                    RESULT_TERMINAL_CALL_ID_DOMAIN,
+                    call_id,
+                    if in_certified_prefix {
+                        JsonlTerminalObservationRegion::CertifiedPrefix
+                    } else {
+                        JsonlTerminalObservationRegion::AppendedSuffix
+                    },
+                    MAX_PENDING_CALLS,
+                );
             }
             Ok(())
         })?
         .is_some()
     {}
     Ok(authority)
-}
-
-fn claude_result_terminal_call_id_digest(call_id: &str) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(RESULT_TERMINAL_CALL_ID_DOMAIN);
-    hasher.update(call_id.as_bytes());
-    hasher.finalize().into()
 }
 
 struct Identities {
@@ -619,10 +565,10 @@ impl JsonlFamilyProjector for ClaudeProjector {
                     self.linkage_capacity_exceeded,
                     &mut input,
                 );
-                let unique_terminal = result
-                    .call_id
-                    .as_deref()
-                    .is_some_and(|call_id| self.result_terminal_authority.is_unique(call_id));
+                let unique_terminal = result.call_id.as_deref().is_some_and(|call_id| {
+                    self.result_terminal_authority
+                        .is_unique(RESULT_TERMINAL_CALL_ID_DOMAIN, call_id)
+                });
                 discovery_contribution = claude_result_contribution(
                     result,
                     context.as_ref().filter(|_| unique_terminal),
