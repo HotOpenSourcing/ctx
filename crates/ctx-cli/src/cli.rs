@@ -7,7 +7,7 @@ use crate::{
     commands::{
         list::ListEventsArgs,
         locate::LocateArgs,
-        search::RefreshArg,
+        search::CliRefreshArg,
         show::{ShowEventArgs, ShowSessionArgs},
     },
     docs, integrations, mcp,
@@ -407,7 +407,7 @@ pub(crate) struct SearchArgs {
         help = "Search backend override: hybrid, semantic, or lexical",
         long_help = "Search backend override. By default ctx uses lexical search unless local semantic search is enabled in config, then hybrid. hybrid combines self-contained Core lexical evidence and semantic vector evidence; lexical uses only the Tantivy Core index; semantic requires local semantic search to be enabled and ready."
     )]
-    pub(crate) backend: Option<SearchBackendArg>,
+    pub(crate) backend: Option<CliSearchBackendArg>,
     #[arg(
         long = "semantic-weight",
         default_value_t = 0.35,
@@ -418,11 +418,11 @@ pub(crate) struct SearchArgs {
     #[arg(
         long,
         value_enum,
-        default_value_t = RefreshArg::Background,
+        default_value_t = CliRefreshArg::Background,
         help = "Index freshness behavior: background, off, or wait",
         long_help = "Index freshness behavior. background serves the existing index and lets daemon maintenance refresh history/indexes; off searches the existing index only; wait runs or waits for required refresh work before searching."
     )]
-    pub(crate) refresh: RefreshArg,
+    pub(crate) refresh: CliRefreshArg,
     #[arg(
         long,
         help = "Include the active Codex session tree when CODEX_THREAD_ID is set"
@@ -438,7 +438,7 @@ pub(crate) struct SearchArgs {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(crate) enum SearchBackendArg {
+pub(crate) enum CliSearchBackendArg {
     Hybrid,
     Lexical,
     Semantic,
@@ -450,16 +450,6 @@ pub(crate) enum ContentScopeArg {
     Transcript,
     Calls,
     Outputs,
-}
-
-impl SearchBackendArg {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Hybrid => "hybrid",
-            Self::Lexical => "lexical",
-            Self::Semantic => "semantic",
-        }
-    }
 }
 
 #[derive(Debug, Args, Clone)]

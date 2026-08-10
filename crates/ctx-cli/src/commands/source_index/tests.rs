@@ -57,6 +57,7 @@ mod tests {
         },
         search::{
             presentations_for_search_hits_with_budget, resolve_source_search_backend,
+            source_search_request,
             NormalizedSearchQuery, SearchCollection, SearchEventMetadata, SearchHit,
             SearchPresentation, SearchPresentationHydrationBudget,
             SearchPresentationRetentionBudgetExceeded, SearchResultWindow,
@@ -318,8 +319,8 @@ mod tests {
         let CommandRoot::Search(explicit) = explicit.command else {
             panic!("expected search command");
         };
-        let mut omitted = SourceSearchRequest::from(&omitted);
-        let mut explicit = SourceSearchRequest::from(&explicit);
+        let mut omitted = source_search_request(&omitted);
+        let mut explicit = source_search_request(&explicit);
         assert_eq!(omitted.content_scope, SearchContentScope::All);
         assert_eq!(explicit.content_scope, SearchContentScope::All);
 
@@ -411,7 +412,7 @@ mod tests {
         let CommandRoot::Search(args) = cli.command else {
             panic!("expected search command");
         };
-        let request = SourceSearchRequest::from(&args);
+        let request = source_search_request(&args);
         let temp = tempdir().unwrap();
         write_test_generation(temp.path());
         let filters = index_search_filters(&request, &open_index(temp.path()).unwrap()).unwrap();
