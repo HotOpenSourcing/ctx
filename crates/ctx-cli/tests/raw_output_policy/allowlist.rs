@@ -19,7 +19,11 @@ macro_rules! allow {
 
 const GATE: TestOwner = TestOwner::behavioral(
     "tests/raw_output_policy.rs::production_raw_output_inventory_is_closed",
-    &["build.rs", "crates/ctx-semantic-model/build.rs"],
+    &[
+        "build.rs",
+        "crates/ctx-semantic-model/build.rs",
+        "crates/ctx-upgrade-engine/build.rs",
+    ],
     &["compare_policy", "scan_package", "is_closed"],
 );
 const UNIT: TestOwner = TestOwner::behavioral(
@@ -161,13 +165,13 @@ const UPGRADE: TestOwner = TestOwner::behavioral(
     &["auto_mode_json"],
 );
 const HOSTED_TRANSACTION_RECEIPT: TestOwner = TestOwner::behavioral(
-    "src/upgrade/install/hosted_transaction/tests.rs::hosted_transaction_receipts_keep_the_stable_machine_schema",
-    &["src/upgrade/install/hosted_transaction.rs"],
+    "crates/ctx-upgrade-engine/src/upgrade/install/hosted_transaction/tests.rs::hosted_transaction_receipts_keep_the_stable_machine_schema",
+    &["crates/ctx-upgrade-engine/src/upgrade/install/hosted_transaction.rs"],
     &["install_receipt", "uninstall_receipt", "install_value"],
 );
 const WINDOWS_READINESS: TestOwner = TestOwner::behavioral(
-    "src/upgrade/install/transaction/windows/tests.rs::readiness_receipt_is_exact_and_bounded",
-    &["src/upgrade/install/transaction/windows/helper.rs"],
+    "crates/ctx-upgrade-engine/src/upgrade/install/transaction/windows/tests.rs::readiness_receipt_is_exact_and_bounded",
+    &["crates/ctx-upgrade-engine/src/upgrade/install/transaction/windows/helper.rs"],
     &["ready_receipt", "validate_ready_receipt"],
 );
 const DISPATCH_MACHINE_ERROR: TestOwner = TestOwner::behavioral(
@@ -201,6 +205,7 @@ const MACHINE_BODY: &str = "command emits a preformatted protocol body verbatim"
 
 const CLI_BUILD: &str = "build.rs";
 const MODEL_BUILD: &str = "crates/ctx-semantic-model/build.rs";
+const ENGINE_BUILD: &str = "crates/ctx-upgrade-engine/build.rs";
 const ANALYTICS_SENDER: &str = "src/analytics/sender.rs";
 const BLAME: &str = "src/commands/blame.rs";
 const INDEX_COMMAND: &str = "src/commands/index.rs";
@@ -231,8 +236,10 @@ const UI_MODULE: &str = "src/ui/mod.rs";
 const UI_WRITER: &str = "src/ui/writer.rs";
 const UPGRADE_HUMAN: &str = "src/upgrade/command/human.rs";
 const UPGRADE_STATUS: &str = "src/upgrade/command/status.rs";
-const HOSTED_TRANSACTION: &str = "src/upgrade/install/hosted_transaction.rs";
-const WINDOWS_HELPER: &str = "src/upgrade/install/transaction/windows/helper.rs";
+const HOSTED_TRANSACTION: &str =
+    "crates/ctx-upgrade-engine/src/upgrade/install/hosted_transaction.rs";
+const WINDOWS_HELPER: &str =
+    "crates/ctx-upgrade-engine/src/upgrade/install/transaction/windows/helper.rs";
 
 pub(super) const ALLOWLIST: &[AllowEntry] = &[
     allow!(
@@ -302,6 +309,30 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     allow!(
         MODEL_BUILD,
         "main#2@90a37aff9068bc84",
+        PrintMacro,
+        MachineProtocol,
+        CARGO_DIRECTIVE,
+        GATE
+    ),
+    allow!(
+        ENGINE_BUILD,
+        "main#1@3d618d0d6e1305c1",
+        PrintMacro,
+        MachineProtocol,
+        CARGO_DIRECTIVE,
+        GATE
+    ),
+    allow!(
+        ENGINE_BUILD,
+        "main#2@45d34d119bef8d7e",
+        PrintMacro,
+        MachineProtocol,
+        CARGO_DIRECTIVE,
+        GATE
+    ),
+    allow!(
+        ENGINE_BUILD,
+        "main#3@17e10d71b62c3756",
         PrintMacro,
         MachineProtocol,
         CARGO_DIRECTIVE,
@@ -1181,7 +1212,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         UPGRADE_HUMAN,
-        "render_outcome#1@fdd8f1dd9ce705c8",
+        "render_outcome#1@5b4943c239ed0363",
         PrintMacro,
         MachineProtocol,
         JSON_PROTOCOL,

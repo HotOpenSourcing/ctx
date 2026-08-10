@@ -158,7 +158,7 @@ fn render_unhandled_command_error(error: &anyhow::Error) -> Result<()> {
 }
 
 pub(crate) fn run_cli() -> Result<()> {
-    if upgrade::run_legacy_automatic_upgrade_bridge()? {
+    if upgrade::ports::engine().run_legacy_automatic_bridge()? {
         return Ok(());
     }
     let started = Instant::now();

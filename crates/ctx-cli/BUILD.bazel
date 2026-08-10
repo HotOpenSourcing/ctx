@@ -77,6 +77,7 @@ CTX_CLI_DEPS = [
     "//crates/ctx-pro-host-protocol:lib",
     "//crates/ctx-semantic-index:lib",
     "//crates/ctx-semantic-model:lib",
+    "//crates/ctx-upgrade-engine:lib",
 ]
 
 CTX_CLI_TEST_DEPS = [
@@ -87,6 +88,18 @@ CTX_CLI_TEST_DEPS = [
     "//crates/ctx-pro-host-protocol:lib",
     "//crates/ctx-semantic-index:test_support_lib",
     "//crates/ctx-semantic-model:test_support_lib",
+    "//crates/ctx-upgrade-engine:test_support_lib",
+]
+
+CTX_CLI_QUALIFICATION_DEPS = [
+    "//crates/ctx-history-capture:lib",
+    "//crates/ctx-history-core:lib",
+    "//crates/ctx-history-index:lib",
+    "//crates/ctx-history-refresh:lib",
+    "//crates/ctx-pro-host-protocol:lib",
+    "//crates/ctx-semantic-index:lib",
+    "//crates/ctx-semantic-model:lib",
+    "//crates/ctx-upgrade-engine:qualification_lib",
 ]
 
 CTX_CLI_COMPILE_DATA = [
@@ -172,7 +185,7 @@ ctx_rust_binary(
     edition = crate_edition(),
     aliases = aliases(),
     compile_data = CTX_CLI_COMPILE_DATA,
-    deps = all_crate_deps(normal = True) + CTX_CLI_DEPS,
+    deps = all_crate_deps(normal = True) + CTX_CLI_QUALIFICATION_DEPS,
     proc_macro_deps = all_crate_deps(proc_macro = True),
     rustc_env = RELEASE_BUILD_RUSTC_ENV,
     rustc_env_files = [
@@ -207,13 +220,12 @@ ctx_rust_binary(
     edition = crate_edition(),
     aliases = aliases(),
     compile_data = CTX_CLI_COMPILE_DATA,
-    deps = all_crate_deps(normal = True) + CTX_CLI_DEPS,
+    deps = all_crate_deps(normal = True) + CTX_CLI_QUALIFICATION_DEPS,
     proc_macro_deps = all_crate_deps(proc_macro = True),
     rustc_env = RELEASE_BUILD_RUSTC_ENV,
     rustc_env_files = [
         ":cargo_toml_env_vars",
         "release-stamp.env",
-        "src/upgrade/test-harness.env",
     ],
     # Local metadata/signature/key injection exists only in this test-only
     # build capability. The published :ctx target cannot select it.
@@ -231,7 +243,9 @@ ctx_rust_test(
         normal_dev = True,
         proc_macro_dev = True,
     ),
-    compile_data = CTX_CLI_TEST_COMPILE_DATA,
+    compile_data = CTX_CLI_TEST_COMPILE_DATA + [
+        "//crates/ctx-upgrade-engine:cargo_package_data",
+    ],
     data = ctx_cli_test_data() + [":ctx"],
     deps = all_crate_deps(
         normal = True,
@@ -242,12 +256,7 @@ ctx_rust_test(
         proc_macro_dev = True,
     ),
     rustc_env = COMMON_RUSTC_ENV,
-    # Optimized unit tests still need the compile-time-only upgrade harness so
-    # daemon tests can bind installation coordination to owner-safe fixtures.
-    rustc_env_files = [
-        ":cargo_toml_env_vars",
-        "src/upgrade/test-harness.env",
-    ],
+    rustc_env_files = [":cargo_toml_env_vars"],
     rustc_flags = CTX_CLI_RUSTC_FLAGS,
     env = {
         "CARGO_BIN_EXE_ctx": "$(rootpath :ctx)",
@@ -295,6 +304,7 @@ ctx_rust_test(
     data = glob(["src/**/*.rs"]) + [
         "build.rs",
         "//crates/ctx-semantic-model:build.rs",
+        "//crates/ctx-upgrade-engine:cargo_package_data",
     ],
     edition = crate_edition(),
     rustc_env = COMMON_RUSTC_ENV,
@@ -731,7 +741,7 @@ ctx_cli_integration_test(
         "CTX_ORDINARY_RELEASE_BINARY": "$(rootpath :ctx)",
     },
     extra_compile_data = [
-        "src/upgrade/install.rs",
+        "//crates/ctx-upgrade-engine:src/upgrade/install.rs",
         "//:upgrade_extractor_contract",
     ],
     extra_srcs = [
