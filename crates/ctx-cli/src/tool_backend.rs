@@ -300,6 +300,7 @@ pub(crate) enum ToolBackendError {
         detail: String,
     },
     EventQuery(crate::commands::list::events::EventQueryError),
+    SourceUnavailable,
     GenerationChanged,
     GenerationAuthority(ctx_history_refresh::GenerationQueryAuthorityError),
     Cursor {
@@ -354,6 +355,7 @@ impl fmt::Display for ToolBackendError {
             | Self::Cursor { detail, .. }
             | Self::Internal { detail } => formatter.write_str(detail),
             Self::EventQuery(error) => fmt::Display::fmt(error, formatter),
+            Self::SourceUnavailable => formatter.write_str("source_unavailable"),
             Self::GenerationAuthority(error) => fmt::Display::fmt(error, formatter),
             Self::GenerationChanged => formatter.write_str(
                 "History changed while ctx was opening the searchable generation. Retry the same request.",

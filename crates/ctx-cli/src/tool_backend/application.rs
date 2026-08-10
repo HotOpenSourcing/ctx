@@ -428,6 +428,9 @@ fn classify_mcp_search_error(
         crate::commands::source_index::McpSearchError::SemanticFailed { detail } => {
             ToolBackendError::internal(detail)
         }
+        crate::commands::source_index::McpSearchError::SourceUnavailable => {
+            ToolBackendError::SourceUnavailable
+        }
         crate::commands::source_index::McpSearchError::GenerationChanged => {
             ToolBackendError::GenerationChanged
         }
