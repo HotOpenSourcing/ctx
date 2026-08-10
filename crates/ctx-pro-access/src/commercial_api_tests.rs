@@ -5,6 +5,7 @@ use super::referral::{
 };
 use super::*;
 use ctx_pro_host_protocol::{EntitlementAccessKind, EntitlementGrant, ENTITLEMENT_SCHEMA_VERSION};
+use serde::ser::SerializeMap as _;
 
 fn test_client() -> CommercialApiClient {
     CommercialApiClient::new(
@@ -19,6 +20,21 @@ struct FailingCommercialClock;
 impl CommercialClock for FailingCommercialClock {
     fn unix_time(&self) -> Result<i64> {
         bail!("test clock failure")
+    }
+}
+
+struct FailingCommercialRequest;
+
+impl Serialize for FailingCommercialRequest {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(1))?;
+        map.serialize_entry("referral_claim_token", "claim.partial_123456")?;
+        Err(serde::ser::Error::custom(
+            "intentional commercial request serialization failure",
+        ))
     }
 }
 
@@ -301,15 +317,22 @@ fn checkout_referral_body_is_raii_guarded_on_pre_send_clock_failure() {
     fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>(_: &T) {}
 
     let referral_claim_token = "claim.opaque_123456";
-    let encoded = encode_commercial_request(&CheckoutRequest {
+    let request = CheckoutRequest {
         referral_claim_token: Some(referral_claim_token),
-    })
-    .unwrap();
+    };
+    let expected = serde_json::to_vec(&request).unwrap();
+    let mut direct_writer = BoundedCommercialRequestWriter::new();
+    let allocation = direct_writer.body.as_ptr();
+    let capacity = direct_writer.body.capacity();
+    serde_json::to_writer(&mut direct_writer, &request).unwrap();
+    assert_eq!(direct_writer.body.as_ptr(), allocation);
+    assert_eq!(direct_writer.body.capacity(), capacity);
+    assert!(capacity >= COMMERCIAL_REQUEST_BUFFER_BYTES);
+    assert_eq!(direct_writer.body.as_slice(), expected.as_slice());
+
+    let encoded = encode_commercial_request(&request).unwrap();
     assert_zeroize_on_drop(&encoded);
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&encoded).unwrap(),
-        serde_json::json!({"referral_claim_token": referral_claim_token})
-    );
+    assert_eq!(encoded.as_slice(), expected.as_slice());
     drop(encoded);
 
     let client = CommercialApiClient::new(
@@ -332,6 +355,58 @@ fn checkout_referral_body_is_raii_guarded_on_pre_send_clock_failure() {
         )
         .unwrap_err();
     assert_eq!(error.to_string(), "test clock failure");
+}
+
+#[test]
+fn guarded_commercial_writer_preserves_size_and_serialization_errors() {
+    let empty_boundary_request = serde_json::json!({"value": ""});
+    let boundary_overhead = serde_json::to_vec(&empty_boundary_request).unwrap().len();
+    let maximum_request =
+        serde_json::json!({"value": "m".repeat(MAX_COMMERCIAL_REQUEST_BYTES - boundary_overhead)});
+    let maximum_expected = serde_json::to_vec(&maximum_request).unwrap();
+    assert_eq!(maximum_expected.len(), MAX_COMMERCIAL_REQUEST_BYTES);
+    assert_eq!(
+        encode_commercial_request(&maximum_request)
+            .unwrap()
+            .as_slice(),
+        maximum_expected.as_slice()
+    );
+
+    let one_byte_too_large = serde_json::json!({"value": "m".repeat(MAX_COMMERCIAL_REQUEST_BYTES - boundary_overhead + 1)});
+    assert_eq!(
+        serde_json::to_vec(&one_byte_too_large).unwrap().len(),
+        COMMERCIAL_REQUEST_BUFFER_BYTES
+    );
+    assert_eq!(
+        encode_commercial_request(&one_byte_too_large)
+            .unwrap_err()
+            .to_string(),
+        "invalid_request: commercial request is too large"
+    );
+
+    let oversized = "s".repeat(COMMERCIAL_REQUEST_BUFFER_BYTES);
+    let oversized_request = serde_json::json!({"referral_claim_token": oversized});
+    let mut direct_writer = BoundedCommercialRequestWriter::new();
+    let allocation = direct_writer.body.as_ptr();
+    assert!(serde_json::to_writer(&mut direct_writer, &oversized_request).is_err());
+    assert!(direct_writer.overflowed);
+    assert_eq!(direct_writer.body.len(), COMMERCIAL_REQUEST_BUFFER_BYTES);
+    assert_eq!(direct_writer.body.as_ptr(), allocation);
+
+    let size_error = encode_commercial_request(&oversized_request).unwrap_err();
+    assert_eq!(
+        size_error.to_string(),
+        "invalid_request: commercial request is too large"
+    );
+    assert!(!size_error.to_string().contains(&oversized));
+
+    let serialization_error = encode_commercial_request(&FailingCommercialRequest).unwrap_err();
+    assert!(serialization_error
+        .to_string()
+        .starts_with("invalid_request: encode commercial request"));
+    assert!(!serialization_error
+        .to_string()
+        .contains("claim.partial_123456"));
 }
 
 #[test]

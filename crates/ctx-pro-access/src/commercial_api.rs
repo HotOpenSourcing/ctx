@@ -1,5 +1,5 @@
 use std::{
-    fmt,
+    fmt, io,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -48,6 +48,7 @@ pub const COMMERCIAL_ACCEPT: &str = "application/json, application/problem+json"
 const STAGING_ACCESS_ORIGIN: &str = "https://pro-staging.ctx.rs/";
 const MAX_ACCESS_HEADER_BYTES: usize = 4096;
 const MAX_COMMERCIAL_REQUEST_BYTES: usize = 16 * 1024;
+const COMMERCIAL_REQUEST_BUFFER_BYTES: usize = MAX_COMMERCIAL_REQUEST_BYTES + 1;
 const CLOUDFLARE_ACCESS_CLIENT_ID_HEADER: &str = "CF-Access-Client-Id";
 const CLOUDFLARE_ACCESS_CLIENT_SECRET_HEADER: &str = "CF-Access-Client-Secret";
 
@@ -710,13 +711,60 @@ impl CommercialApiClient {
 }
 
 fn encode_commercial_request<B: Serialize>(body: &B) -> Result<Zeroizing<Vec<u8>>> {
-    let body = Zeroizing::new(
-        serde_json::to_vec(body).context("invalid_request: encode commercial request")?,
-    );
-    if body.len() > MAX_COMMERCIAL_REQUEST_BYTES {
+    let mut writer = BoundedCommercialRequestWriter::new();
+    match serde_json::to_writer(&mut writer, body) {
+        Ok(()) => {}
+        Err(_) if writer.overflowed => {
+            bail!("invalid_request: commercial request is too large")
+        }
+        Err(error) => return Err(error).context("invalid_request: encode commercial request"),
+    }
+    if writer.body.len() > MAX_COMMERCIAL_REQUEST_BYTES {
         bail!("invalid_request: commercial request is too large");
     }
-    Ok(body)
+    Ok(writer.into_body())
+}
+
+struct BoundedCommercialRequestWriter {
+    body: Zeroizing<Vec<u8>>,
+    overflowed: bool,
+}
+
+impl BoundedCommercialRequestWriter {
+    fn new() -> Self {
+        Self {
+            body: Zeroizing::new(Vec::with_capacity(COMMERCIAL_REQUEST_BUFFER_BYTES)),
+            overflowed: false,
+        }
+    }
+
+    fn into_body(self) -> Zeroizing<Vec<u8>> {
+        self.body
+    }
+}
+
+impl io::Write for BoundedCommercialRequestWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        let remaining = COMMERCIAL_REQUEST_BUFFER_BYTES.saturating_sub(self.body.len());
+        if remaining == 0 {
+            self.overflowed = true;
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "bounded commercial request buffer is full",
+            ));
+        }
+        let written = remaining.min(bytes.len());
+        self.body.extend_from_slice(&bytes[..written]);
+        self.overflowed |= written < bytes.len();
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl TrialChallenge {

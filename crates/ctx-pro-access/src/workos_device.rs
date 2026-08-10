@@ -634,7 +634,7 @@ fn unix_time() -> Result<i64> {
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(response: ureq::Response, label: &str) -> Result<T> {
-    let mut bytes = Zeroizing::new(Vec::new());
+    let mut bytes = workos_response_buffer();
     response
         .into_reader()
         .take(MAX_RESPONSE_BYTES + 1)
@@ -644,6 +644,10 @@ fn read_json<T: for<'de> Deserialize<'de>>(response: ureq::Response, label: &str
         bail!("invalid_response: {label} is too large");
     }
     serde_json::from_slice(&bytes).with_context(|| format!("invalid_response: parse {label}"))
+}
+
+fn workos_response_buffer() -> Zeroizing<Vec<u8>> {
+    Zeroizing::new(Vec::with_capacity(MAX_RESPONSE_BYTES as usize + 1))
 }
 
 fn require_json(response: &ureq::Response, label: &str) -> Result<()> {
@@ -730,6 +734,19 @@ mod tests {
         assert!(error
             .to_string()
             .starts_with("invalid_response: parse test response"));
+    }
+
+    #[test]
+    fn response_buffer_preallocates_the_complete_bounded_read() {
+        fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>(_: &T) {}
+
+        let mut bytes = workos_response_buffer();
+        let allocation = bytes.as_ptr();
+        assert_zeroize_on_drop(&bytes);
+        assert!(bytes.capacity() > MAX_RESPONSE_BYTES as usize);
+
+        bytes.resize(MAX_RESPONSE_BYTES as usize + 1, b'x');
+        assert_eq!(bytes.as_ptr(), allocation);
     }
 
     #[test]
