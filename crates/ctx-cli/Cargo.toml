@@ -48,6 +48,7 @@ xz2.workspace = true
 zeroize = { workspace = true, features = ["derive"] }
 zstd.workspace = true
 fs2 = "0.4.3"
+ctx-daemon-runtime = { path = "../ctx-daemon-runtime" }
 ctx-history-capture = { path = "../ctx-history-capture" }
 ctx-history-core = { path = "../ctx-history-core" }
 ctx-history-index = { path = "../ctx-history-index" }
