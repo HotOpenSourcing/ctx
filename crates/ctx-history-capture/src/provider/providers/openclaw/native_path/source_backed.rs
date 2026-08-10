@@ -31,9 +31,11 @@ use crate::{
         ctx_retrieval,
         normalization::{provider_explicit_result_value_text, provider_timestamp_value},
         source_backed::family::jsonl::{
-            JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf,
+            remember_pending_exchange, take_pending_exchange, JsonlFamilyAdapter,
+            JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf,
             JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyTerminalProof,
-            JsonlFamilyWorkerContext, JsonlReader, JsonlRecordRef, JsonlSourceIdentity,
+            JsonlFamilyWorkerContext, JsonlPendingExchangeLookup, JsonlPendingExchangeRemember,
+            JsonlPendingExchangeState, JsonlReader, JsonlRecordRef, JsonlSourceIdentity,
         },
     },
     provider_sources::{provider_source_for_path, ProviderSourceStatus},
@@ -339,19 +341,8 @@ impl From<StoredContributionClass> for ctx_retrieval::ContributionClass {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum PendingCallState {
-    Exact(PendingCall),
-    Ambiguous,
-}
-
-#[derive(Debug)]
-enum PendingCallLookup {
-    Exact(PendingCall),
-    Ambiguous,
-    Missing,
-}
+type PendingCallState = JsonlPendingExchangeState<PendingCall>;
+type PendingCallLookup = JsonlPendingExchangeLookup<PendingCall>;
 
 #[derive(Debug, Clone, Copy)]
 struct FallbackEventIdentity {
@@ -452,11 +443,9 @@ fn remember_pending_call(
     call_id: &str,
     state: PendingCallState,
 ) {
-    if let Some(existing) = pending_calls.get_mut(call_id) {
-        *existing = PendingCallState::Ambiguous;
-    } else if pending_calls.len() < capacity {
-        pending_calls.insert(call_id.to_owned(), state);
-    } else {
+    if remember_pending_exchange(pending_calls, call_id, state, capacity)
+        == JsonlPendingExchangeRemember::CapacityExceeded
+    {
         *linkage_capacity_exceeded = true;
     }
 }
@@ -465,11 +454,7 @@ fn take_pending_call(
     pending_calls: &mut HashMap<String, PendingCallState>,
     call_id: Option<&str>,
 ) -> PendingCallLookup {
-    match call_id.and_then(|call_id| pending_calls.remove(call_id)) {
-        Some(PendingCallState::Exact(context)) => PendingCallLookup::Exact(context),
-        Some(PendingCallState::Ambiguous) => PendingCallLookup::Ambiguous,
-        None => PendingCallLookup::Missing,
-    }
+    take_pending_exchange(pending_calls, call_id)
 }
 
 fn resolve_pending_call(

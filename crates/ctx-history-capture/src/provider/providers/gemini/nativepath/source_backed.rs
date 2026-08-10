@@ -33,10 +33,11 @@ use crate::{
     provider::source_backed::{
         executable_route,
         family::jsonl::{
-            jsonl_family_driver, observe_opened_file, JsonlFamilyAdapter, JsonlFamilyAppendMode,
-            JsonlFamilyInventory, JsonlFamilyLeaf, JsonlFamilyProjector, JsonlFamilyWorkerContext,
-            JsonlReader, JsonlRecordRef, JsonlSourceIdentity, JsonlTerminalAuthority,
-            JsonlTerminalObservationRegion,
+            jsonl_family_driver, observe_opened_file, remember_pending_exchange,
+            JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf,
+            JsonlFamilyProjector, JsonlFamilyWorkerContext, JsonlPendingExchangeRemember,
+            JsonlPendingExchangeState, JsonlReader, JsonlRecordRef, JsonlSourceIdentity,
+            JsonlTerminalAuthority, JsonlTerminalObservationRegion,
         },
         SourceBackedCoordinatorResult, SourceBackedProviderRegistry, SourceBackedRouteSelection,
         SourceBackedSelectorAuthority,
@@ -418,11 +419,7 @@ struct GeminiToolContext {
     retrieval_contribution: Option<ctx_retrieval::ContributionClass>,
 }
 
-#[derive(Debug, Clone)]
-enum GeminiToolContextState {
-    Exact(GeminiToolContext),
-    Ambiguous,
-}
+type GeminiToolContextState = JsonlPendingExchangeState<GeminiToolContext>;
 
 impl JsonlFamilyProjector for GeminiProjector {
     fn project(
@@ -579,12 +576,13 @@ fn gemini_attribution_for_event(
                 context.origin_call_id = Some(call_id.to_owned());
                 context.origin_event_sequence = gemini_event_sequence(event);
                 context.retrieval_contribution = Some(member_contribution);
-                if tool_contexts.contains_key(call_id) {
-                    tool_contexts.insert(call_id.to_owned(), GeminiToolContextState::Ambiguous);
-                } else if tool_contexts.len() < MAX_GEMINI_TOOL_CONTEXTS {
-                    tool_contexts
-                        .insert(call_id.to_owned(), GeminiToolContextState::Exact(context));
-                } else {
+                if remember_pending_exchange(
+                    tool_contexts,
+                    call_id,
+                    GeminiToolContextState::Exact(context),
+                    MAX_GEMINI_TOOL_CONTEXTS,
+                ) == JsonlPendingExchangeRemember::CapacityExceeded
+                {
                     *linkage_capacity_exceeded = true;
                 }
             }

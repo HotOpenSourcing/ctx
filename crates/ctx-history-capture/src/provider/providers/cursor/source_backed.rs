@@ -40,11 +40,12 @@ use crate::{
         discovery_exclusion_for, ContributionClass, ResultAtom, ResultTerminalStatus,
     },
     provider::source_backed::family::jsonl::{
-        observe_opened_file, read_bounded_record_unhashed, JsonlFamilyAdapter,
-        JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf, JsonlFamilyProjectionMode,
-        JsonlFamilyProjector, JsonlFamilyTerminalProof, JsonlFamilyWorkerContext, JsonlReader,
-        JsonlRecordFraming, JsonlRecordRef, JsonlSourceIdentity, JsonlTerminalAuthority,
-        JsonlTerminalObservationRegion,
+        observe_opened_file, read_bounded_record_unhashed, remember_pending_exchange,
+        JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf,
+        JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyTerminalProof,
+        JsonlFamilyWorkerContext, JsonlPendingExchangeRemember, JsonlPendingExchangeState,
+        JsonlReader, JsonlRecordFraming, JsonlRecordRef, JsonlSourceIdentity,
+        JsonlTerminalAuthority, JsonlTerminalObservationRegion,
     },
     CaptureError, Result, CURSOR_AGENT_TRANSCRIPT_SOURCE_FORMAT, MAX_PROVIDER_JSONL_LINE_BYTES,
 };
@@ -476,12 +477,7 @@ struct CursorToolContext {
     ctx_retrieval_derived: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum CursorToolContextState {
-    Exact(CursorToolContext),
-    Ambiguous,
-}
+type CursorToolContextState = JsonlPendingExchangeState<CursorToolContext>;
 
 impl JsonlFamilyProjector for CursorProjector {
     fn project(
@@ -542,18 +538,21 @@ impl JsonlFamilyProjector for CursorProjector {
 
 impl CursorProjector {
     fn remember_tool_context(&mut self, call_id: &str, state: CursorToolContextState) {
-        if let Some(existing) = self.tool_contexts.get_mut(call_id) {
-            *existing = CursorToolContextState::Ambiguous;
-            return;
-        }
-        if self.tool_contexts.len() >= MAX_CURSOR_TOOL_CONTEXTS {
-            self.linkage_capacity_exceeded = true;
-            return;
-        }
-        self.tool_contexts.insert(call_id.to_owned(), state);
-        if !cursor_checkpoint_fits(self) {
-            self.tool_contexts.remove(call_id);
-            self.linkage_capacity_exceeded = true;
+        match remember_pending_exchange(
+            &mut self.tool_contexts,
+            call_id,
+            state,
+            MAX_CURSOR_TOOL_CONTEXTS,
+        ) {
+            JsonlPendingExchangeRemember::Inserted if !cursor_checkpoint_fits(self) => {
+                self.tool_contexts.remove(call_id);
+                self.linkage_capacity_exceeded = true;
+            }
+            JsonlPendingExchangeRemember::CapacityExceeded => {
+                self.linkage_capacity_exceeded = true;
+            }
+            JsonlPendingExchangeRemember::Inserted
+            | JsonlPendingExchangeRemember::BecameAmbiguous => {}
         }
     }
 

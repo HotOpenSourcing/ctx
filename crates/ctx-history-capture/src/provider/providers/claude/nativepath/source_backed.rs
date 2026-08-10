@@ -41,10 +41,12 @@ use crate::{
         normalization::provider_explicit_result_value_text,
         providers::native_jsonl::visit_native_jsonl_files,
         source_backed::family::jsonl::{
-            observe_opened_file, JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory,
-            JsonlFamilyLeaf, JsonlFamilyProjectionMode, JsonlFamilyProjector,
-            JsonlFamilyWorkerContext, JsonlFileObservation, JsonlReader, JsonlRecordRef,
-            JsonlSourceIdentity, JsonlTerminalAuthority, JsonlTerminalObservationRegion,
+            observe_opened_file, remember_pending_exchange, take_pending_exchange,
+            JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf,
+            JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyWorkerContext,
+            JsonlFileObservation, JsonlPendingExchangeLookup, JsonlPendingExchangeRemember,
+            JsonlPendingExchangeState, JsonlReader, JsonlRecordRef, JsonlSourceIdentity,
+            JsonlTerminalAuthority, JsonlTerminalObservationRegion,
         },
     },
     CaptureError, Result, CLAUDE_PROJECTS_SOURCE_FORMAT,
@@ -381,19 +383,8 @@ struct PendingCall {
     ctx_retrieval_derived: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum PendingCallState {
-    Exact(PendingCall),
-    Ambiguous,
-}
-
-#[derive(Debug)]
-enum PendingCallLookup {
-    Exact(PendingCall),
-    Ambiguous,
-    Missing,
-}
+type PendingCallState = JsonlPendingExchangeState<PendingCall>;
+type PendingCallLookup = JsonlPendingExchangeLookup<PendingCall>;
 
 #[derive(Debug, Clone, Copy)]
 struct FallbackEventIdentity {
@@ -425,18 +416,17 @@ impl ClaudeProjector {
     }
 
     fn remember_pending_call(&mut self, call_id: &str, state: PendingCallState) {
-        if let Some(existing) = self.pending_calls.get_mut(call_id) {
-            *existing = PendingCallState::Ambiguous;
-            return;
-        }
-        if self.pending_calls.len() >= MAX_PENDING_CALLS {
-            self.linkage_capacity_exceeded = true;
-            return;
-        }
-        self.pending_calls.insert(call_id.to_owned(), state);
-        if !projector_checkpoint_fits(self) {
-            self.pending_calls.remove(call_id);
-            self.linkage_capacity_exceeded = true;
+        match remember_pending_exchange(&mut self.pending_calls, call_id, state, MAX_PENDING_CALLS)
+        {
+            JsonlPendingExchangeRemember::Inserted if !projector_checkpoint_fits(self) => {
+                self.pending_calls.remove(call_id);
+                self.linkage_capacity_exceeded = true;
+            }
+            JsonlPendingExchangeRemember::CapacityExceeded => {
+                self.linkage_capacity_exceeded = true;
+            }
+            JsonlPendingExchangeRemember::Inserted
+            | JsonlPendingExchangeRemember::BecameAmbiguous => {}
         }
     }
 }
@@ -1008,11 +998,9 @@ fn remember_pending_call(
     call_id: &str,
     state: PendingCallState,
 ) {
-    if let Some(existing) = pending_calls.get_mut(call_id) {
-        *existing = PendingCallState::Ambiguous;
-    } else if pending_calls.len() < MAX_PENDING_CALLS {
-        pending_calls.insert(call_id.to_owned(), state);
-    } else {
+    if remember_pending_exchange(pending_calls, call_id, state, MAX_PENDING_CALLS)
+        == JsonlPendingExchangeRemember::CapacityExceeded
+    {
         *linkage_capacity_exceeded = true;
     }
 }
@@ -1021,11 +1009,7 @@ fn take_pending_call(
     pending_calls: &mut HashMap<String, PendingCallState>,
     call_id: Option<&str>,
 ) -> PendingCallLookup {
-    match call_id.and_then(|call_id| pending_calls.remove(call_id)) {
-        Some(PendingCallState::Exact(context)) => PendingCallLookup::Exact(context),
-        Some(PendingCallState::Ambiguous) => PendingCallLookup::Ambiguous,
-        None => PendingCallLookup::Missing,
-    }
+    take_pending_exchange(pending_calls, call_id)
 }
 
 fn resolve_pending_call(
