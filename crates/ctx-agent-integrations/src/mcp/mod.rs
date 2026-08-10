@@ -22,7 +22,7 @@ use arguments::{
     validate_argument_keys, validate_search_filter_arguments, SourceIdentityFilterArgs,
 };
 pub use input::{read_mcp_input_line, McpInputLine};
-use pro::{blame_operation, pro_blame_tool, rejected_blame_operation, MCP_BLAME_MAX_OUTPUT_BYTES};
+use pro::{blame_operation, pro_blame_tool, rejected_blame_operation};
 use query_events::query_events_operation;
 pub use response::error_response;
 use response::{
@@ -38,6 +38,11 @@ pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 pub const MCP_SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[MCP_PROTOCOL_VERSION, "2025-06-18"];
 pub const MCP_MAX_LINE_BYTES: usize = 1024 * 1024;
 pub const MCP_PRESENTATION_MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+pub const MCP_BLAME_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+/// Maximum exact JSON encoding size of an accepted string request ID.
+/// Numeric IDs have a much smaller intrinsic `serde_json::Number` representation.
+/// This leaves ample fixed-envelope room inside the smallest MCP tool response bound.
+pub const MCP_MAX_ENCODED_REQUEST_ID_BYTES: usize = 64 * 1024;
 const MCP_DEFAULT_SESSION_PAGE_LIMIT: usize = 200;
 const MCP_MAX_SESSION_PAGE_LIMIT: usize = 4_096;
 const MCP_MAX_SESSION_CURSOR_BYTES: usize = 4_096;
@@ -52,6 +57,26 @@ pub fn encode_response_line(response: &Value) -> serde_json::Result<String> {
     let mut encoded = serde_json::to_string(response)?;
     encoded.push('\n');
     Ok(encoded)
+}
+
+fn request_id_is_accepted(id: Option<&Value>) -> bool {
+    match id {
+        None | Some(Value::Number(_)) => true,
+        Some(Value::String(value)) => {
+            encoded_json_string_bytes(value) <= MCP_MAX_ENCODED_REQUEST_ID_BYTES
+        }
+        Some(Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_)) => false,
+    }
+}
+
+fn encoded_json_string_bytes(value: &str) -> usize {
+    value.chars().fold(2_usize, |bytes, character| {
+        bytes.saturating_add(match character {
+            '"' | '\\' | '\u{0008}' | '\t' | '\n' | '\u{000c}' | '\r' => 2,
+            '\u{0000}'..='\u{001f}' => 6,
+            character => character.len_utf8(),
+        })
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -271,6 +296,9 @@ pub fn handle_protocol_message<B: ToolBackend>(
             None,
         )));
     };
+    if !request_id_is_accepted(object.get("id")) {
+        return McpHandled::plain(Some(invalid_request_response(None)));
+    }
     if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
         return McpHandled::plain(Some(invalid_request_response(object.get("id"))));
     }
@@ -282,12 +310,6 @@ pub fn handle_protocol_message<B: ToolBackend>(
     let Some(method) = message.get("method").and_then(Value::as_str) else {
         return McpHandled::plain(Some(invalid_request_response(id.as_ref())));
     };
-    if matches!(
-        id,
-        Some(Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_))
-    ) {
-        return McpHandled::plain(Some(invalid_request_response(None)));
-    }
     let Some(id) = id else {
         if method == "notifications/initialized" {
             *initialized = true;
@@ -813,4 +835,103 @@ fn event_type_names() -> Vec<&'static str> {
         EventType::Summary.as_str(),
         EventType::Notice.as_str(),
     ]
+}
+
+#[cfg(test)]
+mod request_id_tests {
+    use ctx_history_core::CaptureProvider;
+    use serde_json::{json, Value};
+
+    use super::{
+        encoded_json_string_bytes, handle_protocol_message, request_id_is_accepted,
+        McpServerIdentity, RequestDescriptor, MCP_MAX_ENCODED_REQUEST_ID_BYTES,
+    };
+    use crate::tool_backend::{
+        ToolBackend, ToolBackendError, ToolExecutionError, ToolOperation, ToolOutcome,
+    };
+
+    struct UnusedBackend;
+
+    impl ToolBackend for UnusedBackend {
+        fn execute(&self, _operation: ToolOperation) -> Result<ToolOutcome, ToolExecutionError> {
+            panic!("request-ID validation must run before the backend")
+        }
+
+        fn invalid_blame_request(&self) -> ToolBackendError {
+            panic!("request-ID validation must run before the backend")
+        }
+
+        fn render_text(&self, _value: &Value) -> String {
+            panic!("request-ID validation must run before the backend")
+        }
+
+        fn parse_provider(&self, _value: &str) -> Option<CaptureProvider> {
+            panic!("request-ID validation must run before the backend")
+        }
+
+        fn provider_names(&self) -> Vec<&'static str> {
+            panic!("request-ID validation must run before the backend")
+        }
+    }
+
+    #[test]
+    fn encoded_request_id_boundary_is_exact() {
+        let accepted = "x".repeat(MCP_MAX_ENCODED_REQUEST_ID_BYTES - 2);
+        let rejected = "x".repeat(MCP_MAX_ENCODED_REQUEST_ID_BYTES - 1);
+        assert_eq!(
+            encoded_json_string_bytes(&accepted),
+            MCP_MAX_ENCODED_REQUEST_ID_BYTES
+        );
+        assert_eq!(
+            serde_json::to_vec(&accepted).unwrap().len(),
+            MCP_MAX_ENCODED_REQUEST_ID_BYTES
+        );
+        assert!(request_id_is_accepted(Some(&Value::String(
+            accepted.clone()
+        ))));
+        assert!(!request_id_is_accepted(Some(&Value::String(
+            rejected.clone()
+        ))));
+
+        let escaped = "\"\\\n\u{0001}雪";
+        assert_eq!(
+            encoded_json_string_bytes(escaped),
+            serde_json::to_vec(escaped).unwrap().len()
+        );
+        assert!(request_id_is_accepted(Some(&json!(u64::MAX))));
+        assert!(!request_id_is_accepted(Some(&Value::Null)));
+
+        let mut initialized = true;
+        let accepted_response = handle_protocol_message(
+            json!({"jsonrpc": "2.0", "id": accepted, "method": "ping"}),
+            RequestDescriptor::Ping,
+            &mut initialized,
+            McpServerIdentity {
+                name: "ctx",
+                version: "test",
+            },
+            &UnusedBackend,
+        )
+        .value
+        .unwrap();
+        assert_eq!(
+            serde_json::to_vec(&accepted_response["id"]).unwrap().len(),
+            MCP_MAX_ENCODED_REQUEST_ID_BYTES
+        );
+
+        let rejected_response = handle_protocol_message(
+            json!({"jsonrpc": "2.0", "id": rejected, "method": "ping"}),
+            RequestDescriptor::Ping,
+            &mut initialized,
+            McpServerIdentity {
+                name: "ctx",
+                version: "test",
+            },
+            &UnusedBackend,
+        )
+        .value
+        .unwrap();
+        assert_eq!(rejected_response["id"], Value::Null);
+        assert_eq!(rejected_response["error"]["code"], -32600);
+    }
 }

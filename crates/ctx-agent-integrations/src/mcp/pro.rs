@@ -13,7 +13,6 @@ use crate::tool_backend::{
 };
 
 pub(super) const MCP_BLAME_LIMIT: usize = 8;
-pub(super) const MCP_BLAME_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 
 #[allow(
     clippy::result_large_err,

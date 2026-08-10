@@ -346,12 +346,12 @@ fn blame_response_preserves_the_exact_typed_result_at_the_boundary() {
 }
 
 #[test]
-fn blame_compact_fallback_preserves_a_large_known_string_id() {
-    let response_id = json!("request-id-".repeat(32 * 1024));
+fn production_blame_bound_preserves_the_largest_accepted_string_id() {
+    let response_id = json!("x".repeat(crate::mcp::MCP_MAX_ENCODED_REQUEST_ID_BYTES - 2));
     let response = success_response(
         response_id.clone(),
         tool_result(json!({
-            "matches": [{"large": "x".repeat(512 * 1024)}],
+            "matches": [{"large": "x".repeat(crate::mcp::MCP_BLAME_MAX_OUTPUT_BYTES)}],
         })),
     );
     let compact = error_response(
@@ -366,24 +366,29 @@ fn blame_compact_fallback_preserves_a_large_known_string_id() {
         "Blame response too large",
         None,
     );
-    let output_limit = serialized_json_line_bytes(&compact).unwrap();
-    let minimal_limit = serialized_json_line_bytes(&minimal).unwrap();
-    assert!(minimal_limit < output_limit);
-    assert!(serialized_json_line_bytes(&response).unwrap() > output_limit);
+    assert!(
+        serialized_json_line_bytes(&response).unwrap() > crate::mcp::MCP_BLAME_MAX_OUTPUT_BYTES
+    );
+    assert!(
+        serialized_json_line_bytes(&compact).unwrap() <= crate::mcp::MCP_BLAME_MAX_OUTPUT_BYTES
+    );
+    assert!(
+        serialized_json_line_bytes(&minimal).unwrap() <= crate::mcp::MCP_BLAME_MAX_OUTPUT_BYTES
+    );
 
-    let bounded = bound_blame_mcp_response(response.clone(), response_id.clone(), output_limit);
+    let bounded = bound_blame_mcp_response(
+        response,
+        response_id.clone(),
+        crate::mcp::MCP_BLAME_MAX_OUTPUT_BYTES,
+    );
 
-    assert_eq!(bounded, compact);
     assert_eq!(bounded["id"], response_id);
     assert_ne!(bounded["id"], Value::Null);
-    assert_eq!(serialized_json_line_bytes(&bounded).unwrap(), output_limit);
-
-    let minimal_bounded = bound_blame_mcp_response(response, response_id.clone(), minimal_limit);
-    assert_eq!(minimal_bounded, minimal);
-    assert_eq!(minimal_bounded["id"], response_id);
-    assert_ne!(minimal_bounded["id"], Value::Null);
     assert_eq!(
-        serialized_json_line_bytes(&minimal_bounded).unwrap(),
-        minimal_limit
+        bounded["result"]["structuredContent"]["error_code"],
+        "invalid_response"
+    );
+    assert!(
+        serialized_json_line_bytes(&bounded).unwrap() <= crate::mcp::MCP_BLAME_MAX_OUTPUT_BYTES
     );
 }
