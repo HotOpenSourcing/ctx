@@ -69,6 +69,12 @@
       "targets": {"lib:ctx_history_core": "//crates/ctx-history-core:lib"},
       "native_unit": "//crates/ctx-history-core:unit_tests"
     },
+    "ctx-history-index-generation": {
+      "manifest": "crates/ctx-history-index-generation/Cargo.toml",
+      "targets": {"lib:ctx_history_index_generation": "//crates/ctx-history-index-generation:lib"},
+      "native_unit": "//crates/ctx-history-index-generation:unit_tests",
+      "feature_variants": ["//crates/ctx-history-index-generation:test_support_lib"]
+    },
     "ctx-history-index": {
       "manifest": "crates/ctx-history-index/Cargo.toml",
       "targets": {
