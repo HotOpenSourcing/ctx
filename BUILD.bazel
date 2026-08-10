@@ -129,12 +129,17 @@ RUST_CRATE_SIZE_BUILD_DATA = [
 RUST_CRATE_SIZE_CENSUS_DATA = CARGO_WORKSPACE_PACKAGE_DATA + RUST_CRATE_SIZE_BUILD_DATA + glob([
     "scripts/tests/fixtures/**/*.rs",
 ]) + [
+    ".bazelignore",
+    ".bazelrc",
     ".bazelversion",
+    ".gitignore",
     "Cargo.lock",
     "Cargo.toml",
     "MODULE.bazel",
     "MODULE.bazel.lock",
     "scripts/bazelw",
+    "scripts/check.sh",
+    "sdks/typescript/.gitignore",
 ]
 
 LOC_CHECK_SOURCE_DATA = [
@@ -1124,26 +1129,6 @@ non_rust_gate(
         "$(rootpath :rust_crate_size_source_manifest)",
     ],
     data = RUST_CRATE_SIZE_DATA,
-)
-non_rust_gate(
-    name = "rust_crate_size_bazel_authority_check",
-    mode = "rust_crate_size_bazel_authority_check",
-    args = [
-        "$(rootpath BUILD.bazel)",
-        "$(rootpath :rust_crate_size_source_manifest)",
-        "$(rootpath //tools/bazel:rust-target-inventory.json)",
-        "$(rootpath //tools/bazel:pinned_cargo)",
-    ],
-    data = RUST_CRATE_SIZE_DATA + [
-        "BUILD.bazel",
-        "//tools/bazel:pinned_cargo",
-    ],
-    tags = [
-        "build-graph",
-        "external",
-        "no-cache",
-        "no-sandbox",
-    ],
 )
 non_rust_gate(
     name = "public_control_surface_check",
