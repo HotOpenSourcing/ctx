@@ -117,7 +117,7 @@ CTX_CLI_PRO_TEST_HOST_DEPS = [
 CTX_CLI_QUALIFICATION_DEPS = [
     "//crates/ctx-agent-integrations:lib",
     "//crates/ctx-client-observability:lib",
-    "//crates/ctx-daemon-runtime:lib",
+    "//crates/ctx-daemon-runtime:qualification_lib",
     "//crates/ctx-history-capture:lib",
     "//crates/ctx-history-core:lib",
     "//crates/ctx-history-index:lib",
@@ -225,6 +225,29 @@ ctx_rust_binary(
         "--cfg=ctx_release_qualification",
         "-Cdebug-assertions=yes",
     ],
+    stamp = -1,
+)
+
+# Hosted-uninstall release tests need a synchronization marker that remains
+# absent from the published binary. Compile that authority into this optimized
+# test-only host instead of depending on debug assertions.
+ctx_rust_binary(
+    name = "ctx_hosted_uninstall_test_host",
+    testonly = True,
+    srcs = PROD_SRCS,
+    crate_name = "ctx_hosted_uninstall_test_host",
+    crate_root = "src/main.rs",
+    edition = crate_edition(),
+    aliases = aliases(),
+    compile_data = CTX_CLI_COMPILE_DATA,
+    deps = all_crate_deps(normal = True) + CTX_CLI_QUALIFICATION_DEPS,
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    rustc_env = RELEASE_BUILD_RUSTC_ENV,
+    rustc_env_files = [
+        ":cargo_toml_env_vars",
+        "release-stamp.env",
+    ],
+    rustc_flags = CTX_CLI_RUSTC_FLAGS + ["--cfg=ctx_release_qualification"],
     stamp = -1,
 )
 
@@ -425,6 +448,7 @@ ctx_cli_integration_test(
 ctx_cli_integration_test(
     name = "hosted_uninstall_fence_tests",
     src = "tests/hosted_uninstall_fence.rs",
+    binary = ":ctx_hosted_uninstall_test_host",
     extra_crates = [
         "fs2",
         "sha2",
