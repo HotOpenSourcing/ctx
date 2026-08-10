@@ -7,7 +7,7 @@ struct BorrowedHostEnvelope<'a> {
     message: &'a HostMessage,
 }
 
-pub struct ProClient {
+pub(super) struct ProClient {
     pub(super) stdin: Option<ChildStdin>,
     pub(super) stdout: ChildStdout,
     pub(super) child: Arc<Mutex<Child>>,

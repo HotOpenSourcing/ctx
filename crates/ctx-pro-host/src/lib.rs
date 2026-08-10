@@ -26,7 +26,7 @@ pub use client::{
     smoke_helper_at_path, stable_error_code, start_materialization, status, status_for_core,
     sync_core_materialization, typed_blame_diagnostic, validate_core_finalization_generation_lease,
     BlameFreshnessPolicy, BlameResultFreshness, CoreMaterializationSyncOutcome, HelperSmoke,
-    HostedBlameResult, MaterializationFinalizationReceipt, MaterializationStartReceipt, ProClient,
+    HostedBlameResult, MaterializationFinalizationReceipt, MaterializationStartReceipt,
     ProSetupRepairability, ProStatus, RESOURCE_NOT_FOUND_DIAGNOSTIC,
 };
 pub use client::{default_helper_path, git_executable};
@@ -34,7 +34,7 @@ pub use host_port::{
     AuthorizationMode, AuthorizationReceipt, CoreGenerationHost, CoreGenerationPin,
     InstalledProHost,
 };
-pub use verified_executable::{PreparedHelperExecution, VerifiedHelperExecutable};
+pub use verified_executable::VerifiedHelperExecutable;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use client::status_with_helper_resolver;

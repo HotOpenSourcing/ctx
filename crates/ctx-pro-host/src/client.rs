@@ -134,7 +134,7 @@ pub use materialization::{
 pub use operations::blame;
 #[cfg(test)]
 use operations::*;
-pub use transport::ProClient;
+use transport::ProClient;
 
 impl ProClient {
     pub(super) fn helper_artifact_sha256(&self) -> Result<&str> {

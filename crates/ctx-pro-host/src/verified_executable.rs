@@ -19,16 +19,16 @@ use ctx_pro_host_protocol::ProFilesystemLayout;
 #[cfg(any(test, feature = "test-support"))]
 use sha2::{Digest as _, Sha256};
 
-pub struct PreparedHelperExecution {
+pub(crate) struct PreparedHelperExecution {
     program: PathBuf,
 }
 
 impl PreparedHelperExecution {
-    pub fn program(&self) -> &Path {
+    pub(crate) fn program(&self) -> &Path {
         &self.program
     }
 
-    pub fn configure_command(&self, command: &mut std::process::Command) {
+    pub(crate) fn configure_command(&self, command: &mut std::process::Command) {
         let _ = command;
     }
 }
@@ -153,7 +153,7 @@ impl VerifiedHelperExecutable {
         &self.path
     }
 
-    pub fn prepare_execution(&self) -> Result<PreparedHelperExecution> {
+    pub(crate) fn prepare_execution(&self) -> Result<PreparedHelperExecution> {
         self.verify_execution_identity()?;
         Ok(PreparedHelperExecution {
             program: self.path.clone(),
