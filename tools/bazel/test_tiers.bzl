@@ -181,6 +181,7 @@ CI_TESTS = [
     ":rust_toolchain_pin_mutation_tests",
     ":rustfmt_check",
     ":semantic_index_dependency_boundary_check",
+    ":semantic_index_boundary_mutation_tests",
     ":semantic_model_build_cfg_parity_check",
     ":semantic_model_dependency_boundary_check",
     ":semantic_release_smoke_tests",
