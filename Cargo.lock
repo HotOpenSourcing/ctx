@@ -744,6 +744,7 @@ dependencies = [
  "ctx-pro-host-protocol",
  "ctx-semantic-index",
  "ctx-semantic-model",
+ "ctx-upgrade-engine",
  "ed25519-dalek",
  "flate2",
  "fs2",
@@ -959,6 +960,31 @@ dependencies = [
  "uuid",
  "windows-sys 0.61.2",
  "xz2",
+]
+
+[[package]]
+name = "ctx-upgrade-engine"
+version = "0.26.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "ctx-history-core",
+ "flate2",
+ "fs2",
+ "libc",
+ "ring",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "url",
+ "uuid",
+ "windows-sys 0.61.2",
+ "xz2",
+ "zstd",
 ]
 
 [[package]]

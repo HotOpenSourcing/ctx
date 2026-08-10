@@ -104,6 +104,18 @@
       "native_unit": "//crates/ctx-semantic-model:unit_tests",
       "feature_variants": ["//crates/ctx-semantic-model:test_support_lib"]
     },
+    "ctx-upgrade-engine": {
+      "manifest": "crates/ctx-upgrade-engine/Cargo.toml",
+      "targets": {
+        "custom-build:build-script-build": "//:upgrade_engine_build_cfg_parity_check",
+        "lib:ctx_upgrade_engine": "//crates/ctx-upgrade-engine:lib"
+      },
+      "native_unit": "//crates/ctx-upgrade-engine:unit_tests",
+      "feature_variants": [
+        "//crates/ctx-upgrade-engine:qualification_lib",
+        "//crates/ctx-upgrade-engine:test_support_lib"
+      ]
+    },
     "ctx-pro-host-protocol": {
       "manifest": "crates/ctx-pro-host-protocol/Cargo.toml",
       "targets": {
