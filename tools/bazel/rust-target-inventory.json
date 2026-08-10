@@ -80,7 +80,8 @@
         "test:repository_shell_outcomes": "//crates/ctx-history-capture:repository_shell_outcomes_tests",
         "test:self_contained_core_final_locator_removal": "//crates/ctx-history-capture:self_contained_core_final_locator_removal_tests"
       },
-      "native_unit": "//crates/ctx-history-capture:unit_tests"
+      "native_unit": "//crates/ctx-history-capture:unit_tests",
+      "feature_variants": ["//crates/ctx-history-capture:qualification_lib"]
     },
     "ctx-history-core": {
       "manifest": "crates/ctx-history-core/Cargo.toml",
