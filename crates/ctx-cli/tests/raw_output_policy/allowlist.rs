@@ -828,7 +828,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         PRO_LIFECYCLE,
-        "run_manage_with_opener#1@79342920bb593fd0",
+        "run_manage_with_opener#1@e51526eec53cf83d",
         PrintMacro,
         MachineProtocol,
         JSON_PROTOCOL,
