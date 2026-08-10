@@ -742,6 +742,7 @@ dependencies = [
  "ctx-daemon-runtime",
  "ctx-daemon-service",
  "ctx-history-capture",
+ "ctx-history-capture-model",
  "ctx-history-core",
  "ctx-history-index",
  "ctx-history-query",
@@ -883,6 +884,7 @@ version = "0.26.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "ctx-history-capture-model",
  "ctx-history-core",
  "ctx-history-index",
  "ctx-history-jsonl",
@@ -906,6 +908,17 @@ dependencies = [
  "uuid",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "ctx-history-capture-model"
+version = "0.26.0"
+dependencies = [
+ "ctx-history-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "uuid",
 ]
 
 [[package]]
@@ -1036,6 +1049,7 @@ version = "0.26.0"
 dependencies = [
  "anyhow",
  "ctx-history-capture",
+ "ctx-history-capture-model",
  "ctx-history-core",
  "ctx-history-index",
  "ctx-history-refresh-execution",

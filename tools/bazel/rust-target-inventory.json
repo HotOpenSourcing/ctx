@@ -92,6 +92,11 @@
       "native_unit": "//crates/ctx-history-capture:unit_tests",
       "feature_variants": ["//crates/ctx-history-capture:qualification_lib"]
     },
+    "ctx-history-capture-model": {
+      "manifest": "crates/ctx-history-capture-model/Cargo.toml",
+      "targets": {"lib:ctx_history_capture_model": "//crates/ctx-history-capture-model:lib"},
+      "native_unit": "//crates/ctx-history-capture-model:unit_tests"
+    },
     "ctx-history-core": {
       "manifest": "crates/ctx-history-core/Cargo.toml",
       "targets": {"lib:ctx_history_core": "//crates/ctx-history-core:lib"},
