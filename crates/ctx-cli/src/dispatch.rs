@@ -920,6 +920,7 @@ mod tests {
 
     use super::*;
     use crate::cli::Cli;
+    use crate::operation_descriptor::LocalUsageOperation;
     use crate::ui::{ColorMode, RenderContext, StreamKind, TestContext};
 
     fn daemon_autostart_trigger(args: &[&str]) -> Option<DaemonTriggerCommandArg> {
@@ -950,7 +951,7 @@ mod tests {
     }
 
     #[test]
-    fn stats_is_excluded_from_local_and_remote_analytics() {
+    fn stats_is_excluded_from_remote_analytics() {
         for args in [
             &["stats"][..],
             &["stats", "--detail"][..],
@@ -966,7 +967,44 @@ mod tests {
                 .is_none(),
                 "{args:?}"
             );
+        }
+    }
+
+    #[test]
+    fn show_commands_are_typed_and_status_and_stats_are_excluded_from_local_usage() {
+        for (args, expected) in [
+            (&["show", "session", "abc"][..], "show_session"),
+            (&["show", "event", "abc"][..], "show_event"),
+            (&["list", "events"][..], "show_event"),
+        ] {
+            let cli = Cli::try_parse_from(std::iter::once("ctx").chain(args.iter().copied()))
+                .unwrap_or_else(|error| panic!("failed to parse {args:?}: {error}"));
             let descriptor = command_operation_descriptor(&cli.command);
+            let local_operation = match &descriptor {
+                OperationDescriptor::Cli(operation) => operation.local_usage_operation(),
+                _ => None,
+            };
+            assert_eq!(
+                local_operation.map(LocalUsageOperation::as_str),
+                Some(expected)
+            );
+            assert!(
+                local_usage::CliUsage::from_descriptor(&descriptor)
+                    .completed(true, std::time::Duration::ZERO)
+                    .is_some(),
+                "{args:?}"
+            );
+        }
+
+        for args in [&["status"][..], &["stats"][..]] {
+            let cli = Cli::try_parse_from(std::iter::once("ctx").chain(args.iter().copied()))
+                .unwrap_or_else(|error| panic!("failed to parse {args:?}: {error}"));
+            let descriptor = command_operation_descriptor(&cli.command);
+            let local_operation = match &descriptor {
+                OperationDescriptor::Cli(operation) => operation.local_usage_operation(),
+                _ => None,
+            };
+            assert!(local_operation.is_none(), "{args:?}");
             assert!(
                 local_usage::CliUsage::from_descriptor(&descriptor)
                     .completed(true, std::time::Duration::ZERO)

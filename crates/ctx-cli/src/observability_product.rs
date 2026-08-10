@@ -137,6 +137,14 @@ pub(crate) const fn blame_usage_target(target: &BlameTarget) -> TargetType {
     }
 }
 
+const fn blame_usage_outcome(attribution: BlameAttribution) -> ProOutcome {
+    match attribution {
+        BlameAttribution::Proven => ProOutcome::Produced,
+        BlameAttribution::Possible | BlameAttribution::Conflicting => ProOutcome::Possible,
+        BlameAttribution::None => ProOutcome::None,
+    }
+}
+
 pub(crate) fn blame_usage(result: &BlameResult) -> (usize, usize, ProOutcome) {
     let citations = result
         .evidence
@@ -144,11 +152,7 @@ pub(crate) fn blame_usage(result: &BlameResult) -> (usize, usize, ProOutcome) {
         .map(|evidence| evidence.number)
         .collect::<BTreeSet<_>>()
         .len();
-    let outcome = match result.outcome.attribution {
-        BlameAttribution::Proven => ProOutcome::Produced,
-        BlameAttribution::Possible | BlameAttribution::Conflicting => ProOutcome::Possible,
-        BlameAttribution::None => ProOutcome::None,
-    };
+    let outcome = blame_usage_outcome(result.outcome.attribution);
     (result.matches.len(), citations, outcome)
 }
 
@@ -282,5 +286,69 @@ pub(crate) fn mcp_completion_facts(
         pro_outcome,
         delivered_output_bytes,
         correlation,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn blame_attribution_policy_matches_cli_and_mcp_adapters() {
+        for (attribution, wire_attribution, expected) in [
+            (BlameAttribution::Proven, "proven", ProOutcome::Produced),
+            (BlameAttribution::Possible, "possible", ProOutcome::Possible),
+            (
+                BlameAttribution::Conflicting,
+                "conflicting",
+                ProOutcome::Possible,
+            ),
+            (BlameAttribution::None, "none", ProOutcome::None),
+        ] {
+            assert_eq!(blame_usage_outcome(attribution), expected);
+
+            let response = json!({
+                "result": {
+                    "structuredContent": {
+                        "outcome": {"attribution": wire_attribution},
+                        "matches": []
+                    }
+                }
+            });
+            assert_eq!(
+                mcp_completion_facts(
+                    crate::operation_descriptor::McpOperationKind::Blame,
+                    &response,
+                    0,
+                )
+                .pro_outcome,
+                Some(expected),
+            );
+        }
+
+        let missing_attribution = json!({
+            "result": {"structuredContent": {"outcome": {}, "matches": []}}
+        });
+        assert_eq!(
+            mcp_completion_facts(
+                crate::operation_descriptor::McpOperationKind::Blame,
+                &missing_attribution,
+                0,
+            )
+            .pro_outcome,
+            Some(ProOutcome::None),
+        );
+
+        let failed = json!({"error": {"code": -32603, "message": "failed"}});
+        assert_eq!(
+            mcp_completion_facts(
+                crate::operation_descriptor::McpOperationKind::Blame,
+                &failed,
+                0,
+            )
+            .pro_outcome,
+            None,
+        );
     }
 }

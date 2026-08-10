@@ -46,8 +46,8 @@ const UNIT: TestOwner = TestOwner::behavioral(
     ],
 );
 const ANALYTICS: TestOwner = TestOwner::behavioral(
-    "src/analytics/sender.rs::capability_ack_tracks_the_snapshot_bearing_chunk_not_later_chunks",
-    &["src/analytics/sender.rs"],
+    "crates/ctx-client-observability/src/analytics/sender.rs::capability_ack_tracks_the_snapshot_bearing_chunk_not_later_chunks",
+    &["src/analytics.rs"],
     &["post_event_chunks", "failure_on_post", "is_ok"],
 );
 const LIVE_OUTPUT: TestOwner = TestOwner::behavioral(
@@ -206,7 +206,7 @@ const MACHINE_BODY: &str = "command emits a preformatted protocol body verbatim"
 const CLI_BUILD: &str = "build.rs";
 const MODEL_BUILD: &str = "crates/ctx-semantic-model/build.rs";
 const ENGINE_BUILD: &str = "crates/ctx-upgrade-engine/build.rs";
-const ANALYTICS_SENDER: &str = "src/analytics/sender.rs";
+const ANALYTICS_SENDER: &str = "src/analytics.rs";
 const BLAME: &str = "src/commands/blame.rs";
 const INDEX_COMMAND: &str = "src/commands/index.rs";
 const LIST_EVENTS: &str = "src/commands/list/events.rs";
@@ -340,7 +340,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         ANALYTICS_SENDER,
-        "send_batch#1@b98cc5c167ea7850",
+        "send_batch#1@6be4e73f7b0749ad",
         PrintMacro,
         JustifiedPlainHuman,
         DEBUG_DIAGNOSTIC,

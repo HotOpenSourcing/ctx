@@ -310,6 +310,7 @@ ctx_rust_test(
     crate_root = "tests/raw_output_policy.rs",
     data = glob(["src/**/*.rs"]) + [
         "build.rs",
+        "//crates/ctx-client-observability:cargo_package_data",
         "//crates/ctx-daemon-runtime:cargo_package_data",
         "//crates/ctx-semantic-model:build.rs",
         "//crates/ctx-upgrade-engine:cargo_package_data",

@@ -13,43 +13,6 @@ mod migration_tests;
 mod persistence_tests;
 mod schema_tests;
 
-#[cfg(any())]
-#[test]
-fn blame_usage_consumes_authoritative_outcome_for_cli_and_mcp() {
-    for (attribution, expected) in [
-        (
-            ctx_pro_host_protocol::BlameAttribution::Proven,
-            ProOutcome::Produced,
-        ),
-        (
-            ctx_pro_host_protocol::BlameAttribution::Possible,
-            ProOutcome::Possible,
-        ),
-        (
-            ctx_pro_host_protocol::BlameAttribution::Conflicting,
-            ProOutcome::Possible,
-        ),
-        (
-            ctx_pro_host_protocol::BlameAttribution::None,
-            ProOutcome::None,
-        ),
-    ] {
-        assert_eq!(pro_outcome_from_attribution(attribution), expected);
-        let structured = serde_json::json!({
-            "outcome": {
-                "attribution": match attribution {
-                    ctx_pro_host_protocol::BlameAttribution::Proven => "proven",
-                    ctx_pro_host_protocol::BlameAttribution::Possible => "possible",
-                    ctx_pro_host_protocol::BlameAttribution::Conflicting => "conflicting",
-                    ctx_pro_host_protocol::BlameAttribution::None => "none",
-                }
-            },
-            "matches": []
-        });
-        assert_eq!(classify_blame_json(Some(&structured)), expected);
-    }
-}
-
 pub(super) fn private_tempdir() -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
     restrict_private_directory(root.path()).unwrap();
@@ -106,28 +69,6 @@ fn search_without_complete_adapter_is_unavailable_and_failures_discard_counts() 
         failed.context_metadata_for_test(),
         (ContextCoverage::NotApplicable, 0, 0)
     );
-}
-
-#[cfg(any())]
-#[test]
-fn cli_show_operations_are_typed_and_stats_status_are_excluded() {
-    for (args, expected) in [
-        (vec!["ctx", "show", "session", "abc"], "show_session"),
-        (vec!["ctx", "show", "event", "abc"], "show_event"),
-        (vec!["ctx", "list", "events"], "show_event"),
-    ] {
-        let cli = crate::Cli::try_parse_from(args).unwrap();
-        assert_eq!(
-            CliUsage::from_command(&cli.command)
-                .operation
-                .map(LocalUsageOperation::as_str),
-            Some(expected),
-        );
-    }
-    for args in [vec!["ctx", "status"], vec!["ctx", "stats"]] {
-        let cli = crate::Cli::try_parse_from(args).unwrap();
-        assert!(CliUsage::from_command(&cli.command).operation.is_none());
-    }
 }
 
 #[test]
