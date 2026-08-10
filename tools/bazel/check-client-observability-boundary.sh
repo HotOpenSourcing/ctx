@@ -37,6 +37,7 @@ if [[ -z "$(query 'somepath(//crates/ctx-cli:ctx, //crates/ctx-client-observabil
 fi
 for forbidden in \
   '//crates/ctx-cli:ctx' \
+  '//crates/ctx-daemon-service:lib' \
   '//crates/ctx-history-capture:lib' \
   '//crates/ctx-history-index:lib' \
   '//crates/ctx-history-refresh:lib' \
