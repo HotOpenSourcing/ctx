@@ -1,29 +1,32 @@
 use std::{path::PathBuf, time::Instant};
 
 use ctx_history_core::MAX_CORE_CONTENT_BYTES;
-use ctx_history_index::{CoreEventPageBudget, CoreEventRangeFilters};
+use ctx_history_index::{
+    CoreEventPageBudget, CoreEventRangeDirection, CoreEventRangeFilters, CoreEventRangeScope,
+    SearchContentScope,
+};
 use ctx_pro_host_protocol::{BlameTarget, LineRange};
 use serde_json::{json, Value};
 
 use super::{
     BlameRequest, CursorFailureKind, QueryEventsRequest, ShowEventRequest, ShowSessionRequest,
-    ToolBackend, ToolBackendError, ToolBlameTarget, ToolEventContent, ToolExecutionError,
-    ToolOperation, ToolOutcome, ToolProductObservation, ToolSearchBackend, ToolSearchRequest,
-    ToolSearchUsageFacts, ToolTranscriptMode, ToolUsageFacts,
+    StructuredToolError, ToolBackend, ToolBackendError, ToolBlameTarget, ToolEventContent,
+    ToolEventRangeDirection, ToolEventRangeScope, ToolExecutionError, ToolIntegrationReceipt,
+    ToolOperation, ToolOutcome, ToolSearchBackend, ToolSearchContentScope, ToolSearchRequest,
+    ToolSearchUsageFacts, ToolTranscriptMode, ToolTransportFacts, ToolUsageFacts,
 };
 use crate::{
-    analytics::{
-        pro_failure_bucket, pro_helper_connection_outcome, ProAccessStateV1, ProBlameTargetV1,
-        ProBlameTelemetryV1, ProFailureBucketV1, ProHelperConnectionOutcomeV1, ProHostOperationV1,
-        ProStatusTelemetryV1, ProSurfaceV1,
-    },
     commands::list::events::{
         decode_cursor, event_range_page_value, mcp_event_query_core_record_bytes, selection,
         validated_limit, EventContentProjection, EventQueryError, EventQueryWireRequest,
     },
     config,
     observability_composition::{local_usage_storage_authority, usage_control_snapshot},
+    ProviderArg,
 };
+
+type LocalToolOutcome = ToolOutcome;
+type LocalToolExecutionError = ToolExecutionError;
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalToolBackend {
@@ -35,7 +38,10 @@ impl LocalToolBackend {
         Self { data_root }
     }
 
-    fn execute_inner(&self, operation: ToolOperation) -> Result<ToolOutcome, ToolExecutionError> {
+    fn execute_inner(
+        &self,
+        operation: ToolOperation,
+    ) -> Result<LocalToolOutcome, LocalToolExecutionError> {
         match operation {
             ToolOperation::Status => self.status().map_err(Into::into),
             ToolOperation::Sources => self.sources().map_err(Into::into),
@@ -48,7 +54,7 @@ impl LocalToolBackend {
         }
     }
 
-    fn status(&self) -> Result<ToolOutcome, ToolBackendError> {
+    fn status(&self) -> Result<LocalToolOutcome, ToolBackendError> {
         let config =
             config::AppConfig::load(&self.data_root).map_err(classify_application_error)?;
         let storage = local_usage_storage_authority(&self.data_root);
@@ -64,7 +70,7 @@ impl LocalToolBackend {
         Ok(ToolOutcome::plain(value))
     }
 
-    fn sources(&self) -> Result<ToolOutcome, ToolBackendError> {
+    fn sources(&self) -> Result<LocalToolOutcome, ToolBackendError> {
         let report = crate::provider_sources::discovered_sources_report();
         let mut source_values = crate::sources_json(&report.sources);
         source_values.extend(
@@ -82,7 +88,7 @@ impl LocalToolBackend {
         })))
     }
 
-    fn search(&self, request: ToolSearchRequest) -> Result<ToolOutcome, ToolBackendError> {
+    fn search(&self, request: ToolSearchRequest) -> Result<LocalToolOutcome, ToolBackendError> {
         let request = crate::commands::source_index::SourceSearchRequest {
             query: request.query,
             terms: Vec::new(),
@@ -96,7 +102,12 @@ impl LocalToolBackend {
             since: request.since,
             primary_only: request.primary_only,
             include_subagents: request.include_subagents,
-            content_scope: request.content_scope,
+            content_scope: match request.content_scope {
+                ToolSearchContentScope::All => SearchContentScope::All,
+                ToolSearchContentScope::Transcript => SearchContentScope::Transcript,
+                ToolSearchContentScope::Calls => SearchContentScope::Calls,
+                ToolSearchContentScope::Outputs => SearchContentScope::Outputs,
+            },
             event_type: request.event_type,
             file: request.file,
             session: request.session,
@@ -145,7 +156,7 @@ impl LocalToolBackend {
                 search: Some(search),
                 blame_target: None,
             },
-            product_observation: None,
+            integration_receipt: None,
         })
     }
 
@@ -162,7 +173,10 @@ impl LocalToolBackend {
         );
     }
 
-    fn show_session(&self, request: ShowSessionRequest) -> Result<ToolOutcome, ToolBackendError> {
+    fn show_session(
+        &self,
+        request: ShowSessionRequest,
+    ) -> Result<LocalToolOutcome, ToolBackendError> {
         let mode = match request.mode {
             ToolTranscriptMode::Full => crate::TranscriptMode::Full,
             ToolTranscriptMode::Lite => crate::TranscriptMode::Lite,
@@ -180,7 +194,7 @@ impl LocalToolBackend {
         .map_err(classify_show_error)
     }
 
-    fn show_event(&self, request: ShowEventRequest) -> Result<ToolOutcome, ToolBackendError> {
+    fn show_event(&self, request: ShowEventRequest) -> Result<LocalToolOutcome, ToolBackendError> {
         crate::commands::source_index::mcp_show_event_application(
             &self.data_root,
             &request.selector,
@@ -193,7 +207,10 @@ impl LocalToolBackend {
         .map_err(classify_show_error)
     }
 
-    fn query_events(&self, request: QueryEventsRequest) -> Result<ToolOutcome, ToolBackendError> {
+    fn query_events(
+        &self,
+        request: QueryEventsRequest,
+    ) -> Result<LocalToolOutcome, ToolBackendError> {
         let filters = CoreEventRangeFilters {
             providers: request.filters.providers,
             source_identity: request.filters.source_identity,
@@ -210,9 +227,16 @@ impl LocalToolBackend {
             event_type: request.filters.event_type,
             role: request.filters.role,
             agent_type: request.filters.agent_type,
-            scope: request.filters.scope,
+            scope: match request.filters.scope {
+                ToolEventRangeScope::All => CoreEventRangeScope::All,
+                ToolEventRangeScope::Primary => CoreEventRangeScope::Primary,
+                ToolEventRangeScope::Subagent => CoreEventRangeScope::Subagent,
+            },
             file: request.filters.file,
-            direction: request.filters.direction,
+            direction: match request.filters.direction {
+                ToolEventRangeDirection::Ascending => CoreEventRangeDirection::Ascending,
+                ToolEventRangeDirection::Descending => CoreEventRangeDirection::Descending,
+            },
         };
         let selection = selection(request.since.as_deref(), request.until.as_deref(), filters)
             .map_err(event_query_failure)?;
@@ -243,14 +267,14 @@ impl LocalToolBackend {
         .map_err(event_query_failure)
     }
 
-    fn pro_status(&self) -> Result<ToolOutcome, ToolBackendError> {
+    fn pro_status(&self) -> Result<LocalToolOutcome, ToolBackendError> {
         let started = Instant::now();
         let mut value = crate::pro::lifecycle_status_json(&self.data_root);
+        let access_state = value
+            .get("access_state")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
         if let Some(object) = value.as_object_mut() {
-            let access_state = object
-                .get("access_state")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned);
             let storage = local_usage_storage_authority(&self.data_root);
             let control = config::AppConfig::load(&self.data_root)
                 .map(|config| usage_control_snapshot(config.local_usage.enabled))
@@ -278,34 +302,29 @@ impl LocalToolBackend {
                     .unwrap_or(Value::Null),
             );
         }
-        let error_code = value.get("error_code").and_then(Value::as_str);
-        let mut telemetry = ProStatusTelemetryV1::new(ProSurfaceV1::Mcp);
-        telemetry.access_state = value
-            .get("access_state")
+        let error_code = value
+            .get("error_code")
             .and_then(Value::as_str)
-            .and_then(ProAccessStateV1::from_safe_name);
-        telemetry.helper_connection = if value.get("helper_version").is_some_and(Value::is_string) {
-            ProHelperConnectionOutcomeV1::Connected
-        } else {
-            pro_helper_connection_outcome(error_code)
-        };
-        if error_code.is_some() {
-            telemetry.fail(error_code);
-        }
+            .map(ToOwned::to_owned);
+        let helper_connected = value.get("helper_version").is_some_and(Value::is_string);
         let success = error_code.is_none();
         Ok(ToolOutcome {
             structured: value,
             compact: None,
             usage: ToolUsageFacts::default(),
-            product_observation: Some(ToolProductObservation {
-                operation: ProHostOperationV1::Status(telemetry),
+            integration_receipt: Some(ToolIntegrationReceipt {
+                facts: ToolTransportFacts::ProStatus {
+                    access_state,
+                    helper_connected,
+                    error_code,
+                },
                 success,
                 duration: started.elapsed(),
             }),
         })
     }
 
-    fn blame(&self, request: BlameRequest) -> Result<ToolOutcome, ToolExecutionError> {
+    fn blame(&self, request: BlameRequest) -> Result<LocalToolOutcome, LocalToolExecutionError> {
         self.blame_with(
             request,
             crate::pro::blame,
@@ -326,14 +345,11 @@ impl LocalToolBackend {
             &std::path::Path,
             &ctx_pro_host_protocol::BlameResult,
         ) -> crate::pro::evidence_preview::EvidencePreviewModel,
-    ) -> Result<ToolOutcome, ToolExecutionError> {
+    ) -> Result<LocalToolOutcome, LocalToolExecutionError> {
         let started = Instant::now();
-        let target_kind = match request.target.kind() {
-            super::ToolBlameTargetKind::File => ProBlameTargetV1::File,
-            super::ToolBlameTargetKind::Commit => ProBlameTargetV1::Commit,
-            super::ToolBlameTargetKind::PullRequest => ProBlameTargetV1::PullRequest,
-        };
-        let mut telemetry = ProBlameTelemetryV1::new(Some(target_kind), ProSurfaceV1::Mcp);
+        let target_kind = request.target.kind();
+        let mut result_count = None;
+        let mut has_more = None;
         let result = (|| {
             let target = protocol_blame_target(request.target);
             target
@@ -348,7 +364,8 @@ impl LocalToolBackend {
             )
             .map_err(|error| crate::pro::blame_boundary_error(error, &target))
             .map_err(classify_application_error)?;
-            telemetry.complete(result.matches.len(), result.next.is_some());
+            result_count = Some(result.matches.len());
+            has_more = Some(result.next.is_some());
             let previews = matches!(
                 &result.target,
                 ctx_pro_host_protocol::ResolvedBlameTarget::File { .. }
@@ -356,17 +373,17 @@ impl LocalToolBackend {
             .then(|| hydrate(&self.data_root, &result.result));
             Ok(crate::pro::blame_result_json(&result, previews.as_ref()))
         })();
-        if let Err(error) = &result {
-            let code = match error {
-                ToolBackendError::Pro { code, .. } => Some(*code),
-                _ => None,
-            };
-            telemetry.failure = Some(code.map_or(ProFailureBucketV1::InvalidRequest, |code| {
-                pro_failure_bucket(Some(code))
-            }));
-        }
-        let product_observation = ToolProductObservation {
-            operation: ProHostOperationV1::Blame(telemetry),
+        let failure_code = result.as_ref().err().and_then(|error| match error {
+            ToolBackendError::Pro { code, .. } => Some(*code),
+            _ => None,
+        });
+        let integration_receipt = ToolIntegrationReceipt {
+            facts: ToolTransportFacts::Blame {
+                target: Some(target_kind),
+                result_count,
+                has_more,
+                failure_code,
+            },
             success: result.is_ok(),
             duration: started.elapsed(),
         };
@@ -375,12 +392,12 @@ impl LocalToolBackend {
                 structured,
                 compact: None,
                 usage: ToolUsageFacts::default(),
-                product_observation: Some(product_observation),
+                integration_receipt: Some(integration_receipt),
             }),
             Err(error) => Err(ToolExecutionError {
                 error,
                 usage: ToolUsageFacts::default(),
-                product_observation: Some(Box::new(product_observation)),
+                integration_receipt: Some(Box::new(integration_receipt)),
             }),
         }
     }
@@ -393,6 +410,24 @@ impl ToolBackend for LocalToolBackend {
             failure.usage.merge(usage);
             failure
         })
+    }
+
+    fn invalid_blame_request(&self) -> ToolBackendError {
+        classify_application_error(crate::pro::invalid_blame_request())
+    }
+
+    fn render_text(&self, value: &Value) -> String {
+        crate::mcp::text::render_tool_text(value)
+    }
+
+    fn parse_provider(&self, value: &str) -> Option<ctx_history_core::CaptureProvider> {
+        ProviderArg::parse_name(value)
+            .map(ProviderArg::capture_provider)
+            .filter(|provider| crate::provider_args::cli_supported_provider(*provider))
+    }
+
+    fn provider_names(&self) -> Vec<&'static str> {
+        ProviderArg::mcp_names()
     }
 }
 
@@ -422,7 +457,10 @@ fn protocol_blame_target(target: ToolBlameTarget) -> BlameTarget {
 }
 
 fn event_query_failure(error: EventQueryError) -> ToolBackendError {
-    ToolBackendError::EventQuery(error)
+    ToolBackendError::EventQuery(StructuredToolError {
+        structured: crate::commands::list::events::event_query_error_value(&error),
+        detail: error.to_string(),
+    })
 }
 
 fn classify_mcp_search_error(
@@ -448,7 +486,12 @@ fn classify_mcp_search_error(
             ToolBackendError::GenerationChanged
         }
         crate::commands::source_index::McpSearchError::GenerationAuthority(error) => {
-            ToolBackendError::GenerationAuthority(error)
+            ToolBackendError::GenerationAuthority(StructuredToolError {
+                structured: crate::commands::source_index::generation_query_authority_error_json(
+                    &error,
+                ),
+                detail: error.to_string(),
+            })
         }
         crate::commands::source_index::McpSearchError::Application { detail } => {
             ToolBackendError::internal(detail)
@@ -464,7 +507,12 @@ fn classify_show_error(
             ToolBackendError::GenerationChanged
         }
         crate::commands::source_index::ShowApplicationError::GenerationAuthority(error) => {
-            ToolBackendError::GenerationAuthority(error)
+            ToolBackendError::GenerationAuthority(StructuredToolError {
+                structured: crate::commands::source_index::generation_query_authority_error_json(
+                    &error,
+                ),
+                detail: error.to_string(),
+            })
         }
         crate::commands::source_index::ShowApplicationError::CursorStale { detail } => {
             ToolBackendError::Cursor {
@@ -548,7 +596,7 @@ mod tests {
             since: None,
             primary_only: false,
             include_subagents: false,
-            content_scope: ctx_history_index::SearchContentScope::All,
+            content_scope: ToolSearchContentScope::All,
             event_type: None,
             file: None,
             session: None,
@@ -593,7 +641,7 @@ mod tests {
         let backend = LocalToolBackend::new(root.path().to_path_buf());
         for operation in [
             LocalToolBackend::status
-                as fn(&LocalToolBackend) -> Result<ToolOutcome, ToolBackendError>,
+                as fn(&LocalToolBackend) -> Result<LocalToolOutcome, ToolBackendError>,
             LocalToolBackend::pro_status,
         ] {
             let ((result, metadata_reads), config_loads) =
@@ -648,9 +696,8 @@ mod tests {
         );
         assert!(matches!(
             mapped,
-            ToolBackendError::GenerationAuthority(
-                ctx_history_refresh::GenerationQueryAuthorityError::UncertifiedEmpty { .. }
-            )
+            ToolBackendError::GenerationAuthority(StructuredToolError { structured, .. })
+                if structured["error_code"] == "source_unavailable"
         ));
     }
 

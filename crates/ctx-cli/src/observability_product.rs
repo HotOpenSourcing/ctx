@@ -180,7 +180,7 @@ pub(crate) fn mcp_tool_usage(usage: crate::tool_backend::ToolUsageFacts) -> McpT
 }
 
 pub(crate) fn mcp_completion_facts(
-    operation: crate::operation_descriptor::McpOperationKind,
+    operation: crate::operation_descriptor::ObservedMcpProductOperation,
     response: &Value,
     delivered_output_bytes: usize,
 ) -> McpCompletionFacts {
@@ -189,12 +189,12 @@ pub(crate) fn mcp_completion_facts(
     let structured = response.pointer("/result/structuredContent");
     let result_count = structured.and_then(|structured| {
         let field = match operation {
-            crate::operation_descriptor::McpOperationKind::Sources => "sources",
-            crate::operation_descriptor::McpOperationKind::Search => "results",
-            crate::operation_descriptor::McpOperationKind::ShowSession
-            | crate::operation_descriptor::McpOperationKind::ShowEvent
-            | crate::operation_descriptor::McpOperationKind::QueryEvents => "events",
-            crate::operation_descriptor::McpOperationKind::Blame => "matches",
+            crate::operation_descriptor::ObservedMcpProductOperation::Sources => "sources",
+            crate::operation_descriptor::ObservedMcpProductOperation::Search => "results",
+            crate::operation_descriptor::ObservedMcpProductOperation::ShowSession
+            | crate::operation_descriptor::ObservedMcpProductOperation::ShowEvent
+            | crate::operation_descriptor::ObservedMcpProductOperation::QueryEvents => "events",
+            crate::operation_descriptor::ObservedMcpProductOperation::Blame => "matches",
             _ => return None,
         };
         structured
@@ -214,20 +214,21 @@ pub(crate) fn mcp_completion_facts(
         })
         .unwrap_or(0);
     let pro_outcome =
-        (operation == crate::operation_descriptor::McpOperationKind::Blame && !failed).then(|| {
-            match structured
-                .and_then(|value| value.pointer("/outcome/attribution"))
-                .and_then(Value::as_str)
-            {
-                Some("proven") => ProOutcome::Produced,
-                Some("possible" | "conflicting") => ProOutcome::Possible,
-                Some("none") | None | Some(_) => ProOutcome::None,
-            }
-        });
+        (operation == crate::operation_descriptor::ObservedMcpProductOperation::Blame && !failed)
+            .then(|| {
+                match structured
+                    .and_then(|value| value.pointer("/outcome/attribution"))
+                    .and_then(Value::as_str)
+                {
+                    Some("proven") => ProOutcome::Produced,
+                    Some("possible" | "conflicting") => ProOutcome::Possible,
+                    Some("none") | None | Some(_) => ProOutcome::None,
+                }
+            });
     let mut correlation = Vec::new();
     if !failed {
         match operation {
-            crate::operation_descriptor::McpOperationKind::Search => {
+            crate::operation_descriptor::ObservedMcpProductOperation::Search => {
                 if let Some(results) = structured
                     .and_then(|value| value.get("results"))
                     .and_then(Value::as_array)
@@ -255,7 +256,7 @@ pub(crate) fn mcp_completion_facts(
                     }
                 }
             }
-            crate::operation_descriptor::McpOperationKind::ShowSession => {
+            crate::operation_descriptor::ObservedMcpProductOperation::ShowSession => {
                 if let Some(target) = structured
                     .and_then(|value| value.get("ctx_session_id"))
                     .and_then(Value::as_str)
@@ -265,8 +266,8 @@ pub(crate) fn mcp_completion_facts(
                     correlation.push(McpCorrelationFact::Opened(target));
                 }
             }
-            crate::operation_descriptor::McpOperationKind::ShowEvent
-            | crate::operation_descriptor::McpOperationKind::QueryEvents => {
+            crate::operation_descriptor::ObservedMcpProductOperation::ShowEvent
+            | crate::operation_descriptor::ObservedMcpProductOperation::QueryEvents => {
                 if let Some(target) = structured
                     .and_then(|value| value.get("ctx_event_id"))
                     .and_then(Value::as_str)
@@ -318,7 +319,7 @@ mod tests {
             });
             assert_eq!(
                 mcp_completion_facts(
-                    crate::operation_descriptor::McpOperationKind::Blame,
+                    crate::operation_descriptor::ObservedMcpProductOperation::Blame,
                     &response,
                     0,
                 )
@@ -332,7 +333,7 @@ mod tests {
         });
         assert_eq!(
             mcp_completion_facts(
-                crate::operation_descriptor::McpOperationKind::Blame,
+                crate::operation_descriptor::ObservedMcpProductOperation::Blame,
                 &missing_attribution,
                 0,
             )
@@ -343,7 +344,7 @@ mod tests {
         let failed = json!({"error": {"code": -32603, "message": "failed"}});
         assert_eq!(
             mcp_completion_facts(
-                crate::operation_descriptor::McpOperationKind::Blame,
+                crate::operation_descriptor::ObservedMcpProductOperation::Blame,
                 &failed,
                 0,
             )

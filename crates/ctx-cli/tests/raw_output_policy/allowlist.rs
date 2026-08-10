@@ -119,13 +119,9 @@ const MCP: TestOwner = TestOwner::behavioral(
     ],
 );
 const MCP_SERVER: TestOwner = TestOwner::behavioral(
-    "src/mcp/response_bound/tests.rs::final_mcp_serialization_is_bounded_after_json_expansion",
+    "src/mcp/tests.rs::post_flush_observations_follow_one_local_commit_and_skip_it_on_output_failure",
     &["src/mcp.rs"],
-    &[
-        "bound_show_mcp_response",
-        "serialized_json_line_bytes",
-        "TEST_OUTPUT_LIMIT",
-    ],
+    &["run_one_status_response", "OutputFailure", "recorded"],
 );
 const PRO: TestOwner = TestOwner::behavioral(
     "src/pro/referral.rs::success_json_preserves_the_exact_machine_contract",
@@ -636,7 +632,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         MCP_OPERATION,
-        "run_install#1@476a66834d6d3fcd",
+        "run_install#1@cabf7e3360848959",
         PrintMacro,
         MachineProtocol,
         JSON_PROTOCOL,
@@ -644,7 +640,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         MCP_OPERATION,
-        "run_status#1@7e646bbdf5ed1d14",
+        "run_status#1@f440ab1655f0b975",
         PrintMacro,
         MachineProtocol,
         JSON_PROTOCOL,
@@ -652,7 +648,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         SLASH_COMMANDS,
-        "run_install#1@ae0247e1babb399b",
+        "run_install#1@deb5d9e6805d3d98",
         PrintMacro,
         MachineProtocol,
         JSON_PROTOCOL,
@@ -708,7 +704,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         MCP_MODULE,
-        "serve_stdio_loop_with_backend#1@0b1e1125489bffc5",
+        "serve_stdio_loop_with_backend#1@e5eaf5c92efc4e29",
         DirectWrite,
         MachineProtocol,
         "MCP JSON-RPC response framing",
@@ -940,7 +936,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         SKILL_INSTALL,
-        "run_install#1@eea45ab138d6f8e8",
+        "run_install#1@9b8f5426d48e4e24",
         PrintMacro,
         MachineProtocol,
         JSON_PROTOCOL,
@@ -948,7 +944,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         SKILL_INSTALL,
-        "run_status#1@80879dcf84b7283b",
+        "run_status#1@8bbdc2287d1a5bdf",
         PrintMacro,
         MachineProtocol,
         JSON_PROTOCOL,

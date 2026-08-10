@@ -737,6 +737,7 @@ dependencies = [
  "chrono",
  "clap",
  "clap_mangen",
+ "ctx-agent-integrations",
  "ctx-client-observability",
  "ctx-daemon-runtime",
  "ctx-history-capture",
@@ -784,6 +785,28 @@ dependencies = [
  "zbus",
  "zeroize",
  "zstd",
+]
+
+[[package]]
+name = "ctx-agent-integrations"
+version = "0.26.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "ctx-history-core",
+ "ctx-pro-host-protocol",
+ "fs2",
+ "jsonc-parser",
+ "libc",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "toml_edit 0.22.27",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

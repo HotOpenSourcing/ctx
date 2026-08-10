@@ -1,6 +1,7 @@
 """Canonical public format and ci/nightly test inventories."""
 
 RUST_FORMAT_TARGETS = [
+    "//crates/ctx-agent-integrations:unit_tests",
     "//crates/ctx-client-observability:unit_tests",
     "//crates/ctx-cli:analytics_identity_tests",
     "//crates/ctx-cli:analytics_tests",
@@ -91,6 +92,7 @@ _CI_PROVIDER_TESTS = [
 
 _CI_RUST_TESTS = [
     ":native_ctx_binary_smoke",
+    "//crates/ctx-agent-integrations:unit_tests",
     "//crates/ctx-client-observability:unit_tests",
     "//crates/ctx-cli:analytics_identity_tests",
     "//crates/ctx-cli:analytics_tests",
@@ -148,6 +150,7 @@ _CI_RUST_TESTS = [
 # contract, and bounded integration check. Keep these as direct targets so CI
 # has one aggregate graph instead of routing through overlapping aliases.
 CI_TESTS = [
+    ":agent_integrations_dependency_boundary_check",
     ":bazel_affected_mutation_tests",
     ":bazel_affected_script_tests",
     ":bazel_wrapper_tests",

@@ -1,50 +1,44 @@
 use std::time::Instant;
 
-use ctx_pro_host_protocol::{LineRange, MAX_BLAME_CURSOR_BYTES};
+use ctx_pro_host_protocol::{BlameTarget, LineRange, MAX_BLAME_CURSOR_BYTES};
 use serde_json::{json, Map, Value};
 
-use super::ParsedToolOperation;
-use super::{invalid_tool_request, object_schema, optional_usize};
-use crate::{
-    analytics::{
-        ProBlameTargetV1, ProBlameTelemetryV1, ProFailureBucketV1, ProHostOperationV1, ProSurfaceV1,
-    },
-    tool_backend::{
-        BlameRequest, ToolBackendError, ToolBlameTarget, ToolExecutionError, ToolLineRange,
-        ToolOperation, ToolProductObservation, ToolUsageFacts,
-    },
+use super::{
+    invalid_tool_request, object_schema, optional_usize, McpOperationParseError,
+    ParsedToolOperation,
+};
+use crate::tool_backend::{
+    BlameRequest, ToolBackendError, ToolBlameTarget, ToolIntegrationReceipt, ToolLineRange,
+    ToolOperation, ToolTransportFacts, ToolUsageFacts,
 };
 
 pub(super) const MCP_BLAME_LIMIT: usize = 8;
-pub(super) const MCP_BLAME_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 
+#[allow(
+    clippy::result_large_err,
+    reason = "raw typed receipts stay inline to avoid allocations in the MCP tool path"
+)]
 pub(super) fn blame_operation(
     arguments: &Value,
-) -> Result<ParsedToolOperation, ToolExecutionError> {
+    invalid_blame_error: impl Fn() -> ToolBackendError,
+) -> Result<ParsedToolOperation, McpOperationParseError> {
     let started = Instant::now();
     let target = required_blame_target(arguments).map_err(|_| {
-        rejected_blame_operation(
-            invalid_blame_backend_error(),
-            ToolUsageFacts::default(),
-            started,
-        )
+        rejected_blame_operation(invalid_blame_error(), ToolUsageFacts::default(), started)
     })?;
     let usage = ToolUsageFacts::for_blame(target.kind());
     let limit = optional_usize(arguments, "limit")
-        .map_err(|_| {
-            rejected_blame_operation(invalid_blame_backend_error(), usage.clone(), started)
-        })?
+        .map_err(|_| rejected_blame_operation(invalid_blame_error(), usage.clone(), started))?
         .unwrap_or(MCP_BLAME_LIMIT);
     if limit == 0 || limit > MCP_BLAME_LIMIT {
         return Err(rejected_blame_operation(
-            invalid_blame_backend_error(),
+            invalid_blame_error(),
             usage,
             started,
         ));
     }
-    let cursor = optional_cursor(arguments).map_err(|_| {
-        rejected_blame_operation(invalid_blame_backend_error(), usage.clone(), started)
-    })?;
+    let cursor = optional_cursor(arguments)
+        .map_err(|_| rejected_blame_operation(invalid_blame_error(), usage.clone(), started))?;
     Ok(ParsedToolOperation {
         operation: ToolOperation::Blame(BlameRequest {
             target,
@@ -55,43 +49,25 @@ pub(super) fn blame_operation(
     })
 }
 
-pub(super) fn invalid_blame_backend_error() -> ToolBackendError {
-    let error = crate::pro::invalid_blame_request();
-    let code = crate::pro::stable_error_code(&error).unwrap_or("invalid_request");
-    let diagnostic = error.to_string();
-    let mut encoded = Vec::new();
-    let structured = crate::pro::write_stable_error_json(&mut encoded, &error)
-        .ok()
-        .filter(|written| *written)
-        .and_then(|_| serde_json::from_slice(&encoded).ok())
-        .unwrap_or_else(|| json!({ "error": code, "error_code": code }));
-    ToolBackendError::Pro {
-        code,
-        diagnostic,
-        structured,
-    }
-}
-
 pub(super) fn rejected_blame_operation(
     error: ToolBackendError,
     usage: ToolUsageFacts,
     started: Instant,
-) -> ToolExecutionError {
-    let target_kind = usage.blame_target.map(|target| match target {
-        crate::tool_backend::ToolBlameTargetKind::File => ProBlameTargetV1::File,
-        crate::tool_backend::ToolBlameTargetKind::Commit => ProBlameTargetV1::Commit,
-        crate::tool_backend::ToolBlameTargetKind::PullRequest => ProBlameTargetV1::PullRequest,
-    });
-    let mut telemetry = ProBlameTelemetryV1::new(target_kind, ProSurfaceV1::Mcp);
-    telemetry.failure = Some(ProFailureBucketV1::InvalidRequest);
-    ToolExecutionError {
+) -> McpOperationParseError {
+    let target = usage.blame_target;
+    McpOperationParseError {
         error,
         usage,
-        product_observation: Some(Box::new(ToolProductObservation {
-            operation: ProHostOperationV1::Blame(telemetry),
+        integration_receipt: Some(ToolIntegrationReceipt {
+            facts: ToolTransportFacts::Blame {
+                target,
+                result_count: None,
+                has_more: None,
+                failure_code: Some("invalid_request"),
+            },
             success: false,
             duration: started.elapsed(),
-        })),
+        }),
     }
 }
 
@@ -138,7 +114,39 @@ pub(super) fn required_blame_target(
             ));
         }
     };
+    validate_tool_target(&result)?;
     Ok(result)
+}
+
+fn validate_tool_target(target: &ToolBlameTarget) -> Result<(), ToolBackendError> {
+    let target = match target {
+        ToolBlameTarget::File {
+            path,
+            repository,
+            lines,
+        } => BlameTarget::File {
+            path: path.clone(),
+            repository: repository.clone(),
+            lines: lines.map(|line| LineRange {
+                start: line.start,
+                end: line.end,
+            }),
+        },
+        ToolBlameTarget::Commit { oid, repository } => BlameTarget::Commit {
+            oid: oid.clone(),
+            repository: repository.clone(),
+        },
+        ToolBlameTarget::PullRequest {
+            selector,
+            repository,
+        } => BlameTarget::PullRequest {
+            selector: selector.clone(),
+            repository: repository.clone(),
+        },
+    };
+    target
+        .validate()
+        .map_err(|error| invalid_tool_request(error.message))
 }
 
 fn optional_cursor(arguments: &Value) -> Result<Option<String>, ToolBackendError> {
@@ -271,7 +279,7 @@ pub(super) fn pro_blame_tool() -> Value {
         ]
     });
     json!({
-        "name": "blame",
+        "name": super::McpToolKind::Blame.tool_name(),
         "title": "Agent Blame",
         "description": "Return complete cited provenance for committed file lines, a commit, or a pull request. PR activity and commit production remain separate. Blame may perform bounded local catch-up that updates the canonical Core index, writes the encrypted derived Pro graph, and writes the projection acknowledgement. It never writes provider history or repositories.",
         "inputSchema": object_schema(
@@ -376,37 +384,38 @@ mod tests {
 
     #[test]
     fn rejected_blame_preserves_only_the_safely_parsed_target_kind() {
-        let invalid_target = blame_operation(&json!({
-            "target": {"kind": "private-invalid-kind"}
-        }))
+        let invalid_target = blame_operation(
+            &json!({
+                "target": {"kind": "private-invalid-kind"}
+            }),
+            || invalid_tool_request("invalid blame"),
+        )
         .unwrap_err();
-        let invalid_target = *invalid_target.product_observation.unwrap();
-        let ProHostOperationV1::Blame(invalid_target) = invalid_target.operation else {
-            panic!("rejected blame should emit a blame observation");
-        };
-        assert_eq!(invalid_target.target, None);
-        assert_eq!(
-            invalid_target.failure,
-            Some(ProFailureBucketV1::InvalidRequest)
-        );
+        let invalid_target = invalid_target.integration_receipt.unwrap();
+        assert!(matches!(
+            invalid_target.facts,
+            ToolTransportFacts::Blame { target: None, .. }
+        ));
 
-        let invalid_limit = blame_operation(&json!({
-            "target": {"kind": "commit", "oid": "abc123"},
-            "limit": MCP_BLAME_LIMIT + 1,
-        }))
+        let invalid_limit = blame_operation(
+            &json!({
+                "target": {"kind": "commit", "oid": "abc123"},
+                "limit": MCP_BLAME_LIMIT + 1,
+            }),
+            || invalid_tool_request("invalid blame"),
+        )
         .unwrap_err();
         assert_eq!(
             invalid_limit.usage,
             ToolUsageFacts::for_blame(crate::tool_backend::ToolBlameTargetKind::Commit)
         );
-        let invalid_limit = *invalid_limit.product_observation.unwrap();
-        let ProHostOperationV1::Blame(invalid_limit) = invalid_limit.operation else {
-            panic!("rejected blame should emit a blame observation");
-        };
-        assert_eq!(invalid_limit.target, Some(ProBlameTargetV1::Commit));
-        assert_eq!(
-            invalid_limit.failure,
-            Some(ProFailureBucketV1::InvalidRequest)
-        );
+        let invalid_limit = invalid_limit.integration_receipt.unwrap();
+        assert!(matches!(
+            invalid_limit.facts,
+            ToolTransportFacts::Blame {
+                target: Some(crate::tool_backend::ToolBlameTargetKind::Commit),
+                ..
+            }
+        ));
     }
 }

@@ -265,7 +265,7 @@ mod tests {
             0,
             0,
             None,
-            crate::presentation_limit::MCP_PRESENTATION_MAX_OUTPUT_BYTES,
+            ctx_agent_integrations::mcp::MCP_PRESENTATION_MAX_OUTPUT_BYTES,
         )
         .unwrap_err();
         assert_query_authority_error(&mcp_error, "source_unavailable");
@@ -2001,7 +2001,7 @@ mod tests {
             TranscriptMode::Log,
             2,
             None,
-            crate::presentation_limit::MCP_PRESENTATION_MAX_OUTPUT_BYTES,
+            ctx_agent_integrations::mcp::MCP_PRESENTATION_MAX_OUTPUT_BYTES,
         )
         .unwrap();
         assert_eq!(first["pagination"]["limit"], 2);
@@ -2017,7 +2017,7 @@ mod tests {
             TranscriptMode::Log,
             2,
             Some(first_cursor),
-            crate::presentation_limit::MCP_PRESENTATION_MAX_OUTPUT_BYTES,
+            ctx_agent_integrations::mcp::MCP_PRESENTATION_MAX_OUTPUT_BYTES,
         )
         .unwrap();
         assert_eq!(second["pagination"]["returned"], 2);
@@ -2032,7 +2032,7 @@ mod tests {
             TranscriptMode::Log,
             2,
             Some(second_cursor),
-            crate::presentation_limit::MCP_PRESENTATION_MAX_OUTPUT_BYTES,
+            ctx_agent_integrations::mcp::MCP_PRESENTATION_MAX_OUTPUT_BYTES,
         )
         .unwrap();
         assert_eq!(terminal["pagination"]["returned"], 1);
@@ -2046,7 +2046,7 @@ mod tests {
             TranscriptMode::Log,
             2,
             Some("not-a-valid-cursor"),
-            crate::presentation_limit::MCP_PRESENTATION_MAX_OUTPUT_BYTES,
+            ctx_agent_integrations::mcp::MCP_PRESENTATION_MAX_OUTPUT_BYTES,
         )
         .unwrap_err();
         assert!(matches!(
