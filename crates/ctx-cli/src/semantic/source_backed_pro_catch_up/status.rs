@@ -211,37 +211,23 @@ pub(super) fn read_status(data_root: &Path) -> Option<SourceBackedProCatchUpStat
     read_status_json(data_root).and_then(|value| serde_json::from_value(value).ok())
 }
 
-enum DurableProCatchUpJobRead {
-    Missing,
-    Valid(SourceBackedProCatchUpStatus),
-    Malformed(anyhow::Error),
-}
-
-fn read_durable_status(data_root: &Path) -> DurableProCatchUpJobRead {
+pub(super) fn require_durable_status(
+    data_root: &Path,
+) -> Result<Option<SourceBackedProCatchUpStatus>> {
     let value = match read_daemon_job_status_strict(&status_path(data_root)) {
         Ok(Some(value)) => value,
-        Ok(None) => return DurableProCatchUpJobRead::Missing,
+        Ok(None) => return Ok(None),
         Err(error) => {
-            return DurableProCatchUpJobRead::Malformed(anyhow::anyhow!(
+            return Err(anyhow::anyhow!(
                 "invalid_response: durable source-backed Pro catch-up job is unreadable: {error:#}"
             ))
         }
     };
     match serde_json::from_value(value) {
-        Ok(status) => DurableProCatchUpJobRead::Valid(status),
-        Err(error) => DurableProCatchUpJobRead::Malformed(anyhow::anyhow!(
+        Ok(status) => Ok(Some(status)),
+        Err(error) => Err(anyhow::anyhow!(
             "invalid_response: durable source-backed Pro catch-up job is malformed: {error}"
         )),
-    }
-}
-
-pub(super) fn require_durable_status(
-    data_root: &Path,
-) -> Result<Option<SourceBackedProCatchUpStatus>> {
-    match read_durable_status(data_root) {
-        DurableProCatchUpJobRead::Missing => Ok(None),
-        DurableProCatchUpJobRead::Valid(status) => Ok(Some(status)),
-        DurableProCatchUpJobRead::Malformed(error) => Err(error),
     }
 }
 

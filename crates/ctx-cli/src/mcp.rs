@@ -509,9 +509,9 @@ fn handle_tools_call_with_backend<B: ToolBackend>(
             return (
                 Ok(McpHandled {
                     value: tool_error_result(failure.error),
-                    pro_event: failure
-                        .product_observation
-                        .map(crate::observability_composition::tool_product_event),
+                    pro_event: failure.product_observation.map(|observation| {
+                        crate::observability_composition::tool_product_event(*observation)
+                    }),
                 }),
                 usage_invocation,
             );
@@ -542,9 +542,9 @@ fn handle_tools_call_with_backend<B: ToolBackend>(
         return (
             Ok(McpHandled {
                 value: tool_error_result(failure.error),
-                pro_event: failure
-                    .product_observation
-                    .map(crate::observability_composition::tool_product_event),
+                pro_event: failure.product_observation.map(|observation| {
+                    crate::observability_composition::tool_product_event(*observation)
+                }),
             }),
             usage_invocation,
         );
@@ -558,9 +558,9 @@ fn handle_tools_call_with_backend<B: ToolBackend>(
             return (
                 Ok(McpHandled {
                     value: tool_error_result(failure.error),
-                    pro_event: failure
-                        .product_observation
-                        .map(crate::observability_composition::tool_product_event),
+                    pro_event: failure.product_observation.map(|observation| {
+                        crate::observability_composition::tool_product_event(*observation)
+                    }),
                 }),
                 usage_invocation,
             );
@@ -600,9 +600,9 @@ fn handle_tools_call_with_backend<B: ToolBackend>(
             (
                 Ok(McpHandled {
                     value: tool_error_result(failure.error),
-                    pro_event: failure
-                        .product_observation
-                        .map(crate::observability_composition::tool_product_event),
+                    pro_event: failure.product_observation.map(|observation| {
+                        crate::observability_composition::tool_product_event(*observation)
+                    }),
                 }),
                 usage_invocation,
             )

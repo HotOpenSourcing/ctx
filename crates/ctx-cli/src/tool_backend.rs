@@ -281,7 +281,9 @@ pub(crate) trait ToolBackend: Send + Sync {
 pub(crate) struct ToolExecutionError {
     pub(crate) error: ToolBackendError,
     pub(crate) usage: ToolUsageFacts,
-    pub(crate) product_observation: Option<ToolProductObservation>,
+    /// Kept indirect so telemetry-rich failures do not inflate every `Result`
+    /// return; allocation occurs only for failures that emit an observation.
+    pub(crate) product_observation: Option<Box<ToolProductObservation>>,
 }
 
 impl From<ToolBackendError> for ToolExecutionError {

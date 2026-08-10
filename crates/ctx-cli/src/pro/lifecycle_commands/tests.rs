@@ -1089,12 +1089,14 @@ fn manage_json_never_invokes_the_browser_opener() {
     let ((result, metadata_reads), config_loads) = crate::config::count_app_config_loads(|| {
         crate::observability_composition::count_usage_control_metadata_reads(|| {
             run_manage_with_opener(
-                root.path(),
+                ManageContext {
+                    data_root: root.path(),
+                    no_open: false,
+                    json_output: true,
+                    usage_storage: &usage_storage,
+                    usage_control: &usage_control,
+                },
                 &mut ManageService,
-                false,
-                true,
-                &usage_storage,
-                &usage_control,
                 &mut telemetry,
                 &mut ui,
                 &opener,
@@ -1163,12 +1165,14 @@ fn manage_no_open_routes_the_primary_result_to_ui_stdout_only() {
         crate::observability_composition::local_usage_storage_authority(root.path());
     let usage_control = crate::observability_composition::usage_control_snapshot(true);
     run_manage_with_opener(
-        root.path(),
+        ManageContext {
+            data_root: root.path(),
+            no_open: true,
+            json_output: false,
+            usage_storage: &usage_storage,
+            usage_control: &usage_control,
+        },
         &mut ManageService,
-        true,
-        false,
-        &usage_storage,
-        &usage_control,
         &mut telemetry,
         &mut ui,
         &opener,

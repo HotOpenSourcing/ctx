@@ -388,24 +388,28 @@ fn run_lifecycle_inner(
             #[cfg(ctx_pro_test_helper)]
             if let Some(mut service) = crate::pro::test_control::lifecycle_service()? {
                 return run_manage(
-                    data_root,
+                    ManageContext {
+                        data_root,
+                        no_open: args.no_open,
+                        json_output,
+                        usage_storage,
+                        usage_control,
+                    },
                     &mut service,
-                    args.no_open,
-                    json_output,
-                    usage_storage,
-                    usage_control,
                     telemetry,
                     ui,
                 );
             }
             let mut service = CommercialLifecycleService::production(data_root)?;
             run_manage(
-                data_root,
+                ManageContext {
+                    data_root,
+                    no_open: args.no_open,
+                    json_output,
+                    usage_storage,
+                    usage_control,
+                },
                 &mut service,
-                args.no_open,
-                json_output,
-                usage_storage,
-                usage_control,
                 telemetry,
                 ui,
             )
@@ -672,42 +676,37 @@ fn run_setup(
     )
 }
 
-fn run_manage(
-    data_root: &Path,
-    service: &mut dyn ProLifecycleService,
+struct ManageContext<'a> {
+    data_root: &'a Path,
     no_open: bool,
     json_output: bool,
-    usage_storage: &crate::local_usage::LocalUsageStorageAuthority,
-    usage_control: &crate::local_usage::UsageControlSnapshot,
+    usage_storage: &'a crate::local_usage::LocalUsageStorageAuthority,
+    usage_control: &'a crate::local_usage::UsageControlSnapshot,
+}
+
+fn run_manage(
+    context: ManageContext<'_>,
+    service: &mut dyn ProLifecycleService,
     telemetry: &mut ProLifecycleTelemetryV1,
     ui: &mut Ui,
 ) -> Result<()> {
-    run_manage_with_opener(
-        data_root,
-        service,
-        no_open,
-        json_output,
-        usage_storage,
-        usage_control,
-        telemetry,
-        ui,
-        &open_browser,
-    )
+    run_manage_with_opener(context, service, telemetry, ui, &open_browser)
 }
 
 fn run_manage_with_opener(
-    data_root: &Path,
+    context: ManageContext<'_>,
     service: &mut dyn ProLifecycleService,
-    no_open: bool,
-    json_output: bool,
-    usage_storage: &crate::local_usage::LocalUsageStorageAuthority,
-    usage_control: &crate::local_usage::UsageControlSnapshot,
     telemetry: &mut ProLifecycleTelemetryV1,
     ui: &mut Ui,
     opener: &dyn Fn(&str) -> Result<()>,
 ) -> Result<()> {
-    let plan = with_pro_initialization(data_root, || {
-        service.manage(data_root, ui, !json_output, !json_output && !no_open)
+    let plan = with_pro_initialization(context.data_root, || {
+        service.manage(
+            context.data_root,
+            ui,
+            !context.json_output,
+            !context.json_output && !context.no_open,
+        )
     })?;
     validate_portal_url(&plan.portal_url)?;
     validate_access_status(
@@ -717,10 +716,14 @@ fn run_manage_with_opener(
         plan.grace_deadline_unix,
     )?;
     telemetry.access_state = ProAccessStateV1::from_safe_name(&plan.access_state);
-    let browser_opened = !json_output && !no_open && opener(&plan.portal_url).is_ok();
+    let browser_opened =
+        !context.json_output && !context.no_open && opener(&plan.portal_url).is_ok();
     let mut value = manage_payload(&plan, browser_opened);
-    let usage_report =
-        crate::local_usage::read_report_authorized(usage_storage, usage_control, false);
+    let usage_report = crate::local_usage::read_report_authorized(
+        context.usage_storage,
+        context.usage_control,
+        false,
+    );
     let conversion_action =
         crate::local_usage::pro_conversion_action(Some(plan.access_state.as_str()));
     if let Some(object) = value.as_object_mut() {
@@ -733,7 +736,7 @@ fn run_manage_with_opener(
             conversion_action.clone().unwrap_or(serde_json::Value::Null),
         );
     }
-    if json_output {
+    if context.json_output {
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         let document = render_manage_human(
@@ -744,7 +747,7 @@ fn run_manage_with_opener(
             browser_opened,
         );
         ui.write_stdout(&document)?;
-        if !no_open {
+        if !context.no_open {
             let notice = render_browser_notice(
                 ui.stderr_context(),
                 browser_opened,

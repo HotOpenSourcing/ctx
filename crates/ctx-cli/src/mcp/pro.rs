@@ -87,11 +87,11 @@ pub(super) fn rejected_blame_operation(
     ToolExecutionError {
         error,
         usage,
-        product_observation: Some(ToolProductObservation {
+        product_observation: Some(Box::new(ToolProductObservation {
             operation: ProHostOperationV1::Blame(telemetry),
             success: false,
             duration: started.elapsed(),
-        }),
+        })),
     }
 }
 
@@ -380,7 +380,7 @@ mod tests {
             "target": {"kind": "private-invalid-kind"}
         }))
         .unwrap_err();
-        let invalid_target = invalid_target.product_observation.unwrap();
+        let invalid_target = *invalid_target.product_observation.unwrap();
         let ProHostOperationV1::Blame(invalid_target) = invalid_target.operation else {
             panic!("rejected blame should emit a blame observation");
         };
@@ -399,7 +399,7 @@ mod tests {
             invalid_limit.usage,
             ToolUsageFacts::for_blame(crate::tool_backend::ToolBlameTargetKind::Commit)
         );
-        let invalid_limit = invalid_limit.product_observation.unwrap();
+        let invalid_limit = *invalid_limit.product_observation.unwrap();
         let ProHostOperationV1::Blame(invalid_limit) = invalid_limit.operation else {
             panic!("rejected blame should emit a blame observation");
         };
