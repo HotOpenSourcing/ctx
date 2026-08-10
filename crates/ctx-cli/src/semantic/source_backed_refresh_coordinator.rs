@@ -12,10 +12,8 @@ pub(crate) use ctx_daemon_service::{
     SourceBackedRefreshPendingPublication,
 };
 #[cfg(test)]
-pub(crate) use ctx_history_refresh::count_verified_index_opens;
-pub(crate) use ctx_history_refresh::{
-    open_verified_index, source_backed_index_root, verified_generation_is_query_ready,
-};
+pub(crate) use ctx_history_refresh::{count_verified_index_opens, source_backed_index_root};
+pub(crate) use ctx_history_refresh::{open_verified_index, verified_generation_is_query_ready};
 
 pub(crate) fn coordinate_source_backed_refresh(
     data_root: &Path,
