@@ -900,10 +900,31 @@ name = "ctx-history-index"
 version = "0.26.0"
 dependencies = [
  "base64 0.22.1",
+ "crc32fast",
+ "ctx-history-core",
+ "ctx-history-index-format",
+ "ctx-history-index-generation",
+ "ctx-history-index-query",
+ "ctx-semantic-model",
+ "libc",
+ "memmap2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tantivy",
+ "tempfile",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
+name = "ctx-history-index-format"
+version = "0.26.0"
+dependencies = [
+ "base64 0.22.1",
  "ctx-history-core",
  "ctx-history-index-generation",
  "ctx-semantic-model",
- "libc",
  "memmap2",
  "serde",
  "serde_json",
@@ -930,6 +951,24 @@ dependencies = [
  "thiserror 1.0.69",
  "uuid",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "ctx-history-index-query"
+version = "0.26.0"
+dependencies = [
+ "base64 0.22.1",
+ "ctx-history-core",
+ "ctx-history-index",
+ "ctx-history-index-format",
+ "ctx-history-index-generation",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tantivy",
+ "tempfile",
+ "thiserror 1.0.69",
+ "uuid",
 ]
 
 [[package]]

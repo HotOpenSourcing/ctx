@@ -31,11 +31,14 @@ def manifest_dependencies(data: dict) -> set[str]:
             else:
                 dependencies.add(alias)
 
-    for name in ("dependencies", "build-dependencies", "dev-dependencies"):
+    # Test-only integration harnesses may depend back on a production consumer
+    # without adding a shipped-library edge. Keep the authority DAG scoped to
+    # normal and build dependencies, matching Cargo's production resolution.
+    for name in ("dependencies", "build-dependencies"):
         collect(data.get(name))
     for target in data.get("target", {}).values():
         if isinstance(target, dict):
-            for name in ("dependencies", "build-dependencies", "dev-dependencies"):
+            for name in ("dependencies", "build-dependencies"):
                 collect(target.get(name))
     return dependencies
 

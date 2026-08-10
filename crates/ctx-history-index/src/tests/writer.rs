@@ -1,4 +1,45 @@
 use super::*;
+
+#[test]
+fn cached_source_descriptor_preserves_core_record_and_active_source_faults() {
+    fn descriptor(source_format: &str) -> SourceKey {
+        SourceKey::derive(
+            "codex",
+            source_format,
+            "session",
+            1,
+            SourceAnchor::provider_native(
+                "session-file",
+                TypedKey::utf8("move-backed-document-test").unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    let active = descriptor("codex_session_jsonl");
+    let descriptor_alias = descriptor("codex_prompt_history_jsonl");
+    assert_eq!(active, descriptor_alias);
+    assert!(!active.exact_descriptor_eq(&descriptor_alias));
+
+    let directory = tempdir().unwrap();
+    let mut writer = GenerationWriter::open(directory.path(), WriterOptions::default())
+        .unwrap()
+        .into_writer()
+        .unwrap();
+    writer.begin_source(active.clone()).unwrap();
+
+    let mut mismatched_identity = document(&active, 1, "body");
+    mismatched_identity.event_id = mismatched_identity.session_id;
+    assert!(matches!(
+        writer.add_core_record(mismatched_identity),
+        Err(IndexError::CoreRecord(_))
+    ));
+    assert!(matches!(
+        writer.add_core_record(document(&descriptor_alias, 1, "body")),
+        Err(IndexError::DocumentSourceNotActive)
+    ));
+}
 use ctx_history_core::MAX_ENCODED_CORE_RECORD_BYTES;
 use std::{path::Path, sync::Arc};
 
@@ -303,10 +344,10 @@ fn replacement_reuses_missing_prior_repository_certificate_and_deletion_removes_
 }
 
 #[test]
-fn failed_certificate_preparation_is_read_only_for_a_forged_base() {
+fn forged_base_is_rejected_before_certificate_preparation() {
     use ctx_history_core::{
-        CoreRecordAnnotation, RepositoryAbstention, RepositoryAbstentionReason, RepositoryBinding,
-        RepositoryEvidence, RepositoryEvidenceConfidence, RepositoryEvidenceKind,
+        CoreRecordAnnotation, RepositoryBinding, RepositoryEvidence, RepositoryEvidenceConfidence,
+        RepositoryEvidenceKind,
     };
 
     let temp = tempdir().unwrap();
@@ -340,7 +381,7 @@ fn failed_certificate_preparation_is_read_only_for_a_forged_base() {
         ))
         .unwrap();
     initial.certify_source(certificate(&source, 1, 1)).unwrap();
-    let baseline = initial.commit(|_| true).unwrap();
+    initial.commit(|_| true).unwrap();
     let pointer_before = fs::read(temp.path().join("active-generation.json")).unwrap();
 
     let active_path = active_generation_path(temp.path());
@@ -384,52 +425,22 @@ fn failed_certificate_preparation_is_read_only_for_a_forged_base() {
     index_writer.wait_merging_threads().unwrap();
 
     crate::publication::reset_verification_activity();
-    let replacement = GenerationWriter::open(temp.path(), WriterOptions::default())
-        .unwrap()
-        .into_writer()
-        .unwrap();
-    let marker_path = temp.path().join("active-generation-rebuild-required.json");
-    assert!(!marker_path.exists());
-    assert!(replacement.pending.is_empty());
-    assert!(replacement.candidate_directory_name.is_none());
-    assert!(replacement.writer.is_none());
-    let candidate = with_annotation(
-        document(&source, 1, "trusted repository body"),
-        CoreRecordAnnotation {
-            repository_abstentions: vec![RepositoryAbstention {
-                evidence_kind: RepositoryEvidenceKind::DeclaredToolWorkdir,
-                reason: RepositoryAbstentionReason::CandidateMissingBeforeCertification,
-                detail: None,
-                association_policy_revision:
-                    ctx_history_core::CORE_REPOSITORY_ASSOCIATION_POLICY_REVISION,
-            }],
-            ..CoreRecordAnnotation::default()
-        },
-    );
-    let error = match replacement.core_record_preparer().prepare(candidate) {
-        Ok(_) => panic!("forged base unexpectedly supplied a reusable certificate"),
+    let error = match GenerationWriter::open(temp.path(), WriterOptions::default()) {
+        Ok(_) => panic!("forged base unexpectedly became a writer capability"),
         Err(error) => error,
     };
-    assert!(matches!(
-        error,
-        IndexError::ActiveGenerationNeedsRebuild {
-            generation_id,
-            detail,
-        } if generation_id == baseline.generation_id && !detail.is_empty()
-    ));
+    let marker_path = temp.path().join("active-generation-rebuild-required.json");
+    assert!(matches!(error, IndexError::ChecksumMismatch));
     assert_eq!(
         crate::publication::verification_activity(),
         (1, 0),
-        "forged base must fail one pointer-bound physical walk before reuse"
+        "forged base must fail one pointer-bound physical walk before pinning"
     );
     assert_eq!(
         fs::read(temp.path().join("active-generation.json")).unwrap(),
         pointer_before
     );
     assert!(!marker_path.exists());
-    assert!(replacement.pending.is_empty());
-    assert!(replacement.candidate_directory_name.is_none());
-    assert!(replacement.writer.is_none());
 }
 
 #[test]
