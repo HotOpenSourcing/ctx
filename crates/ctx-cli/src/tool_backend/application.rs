@@ -114,10 +114,26 @@ impl LocalToolBackend {
         };
         crate::commands::source_index::validate_explicit_semantic_scope(&request)
             .map_err(classify_mcp_search_error)?;
-        self.recover_enabled_daemon_before_search();
+        let config = config::AppConfig::load(&self.data_root);
+        if let Ok(config) = &config {
+            self.recover_enabled_daemon_before_search(config);
+        }
+        let config = match config {
+            Ok(config) => config,
+            Err(error) => {
+                let mut request = request;
+                crate::commands::source_index::normalize_mcp_search_request(&mut request)
+                    .map_err(classify_mcp_search_error)?;
+                return Err(classify_application_error(error));
+            }
+        };
         let (structured, observation, compact) =
-            crate::commands::source_index::mcp_search_with_compact(request, &self.data_root)
-                .map_err(classify_mcp_search_error)?;
+            crate::commands::source_index::mcp_search_with_compact(
+                request,
+                &self.data_root,
+                &config,
+            )
+            .map_err(classify_mcp_search_error)?;
         let search = observation
             .complete_byte_totals()
             .map(|(delivered, matched)| ToolSearchUsageFacts::complete(delivered, matched))
@@ -133,10 +149,7 @@ impl LocalToolBackend {
         })
     }
 
-    fn recover_enabled_daemon_before_search(&self) {
-        let Ok(config) = config::AppConfig::load(&self.data_root) else {
-            return;
-        };
+    fn recover_enabled_daemon_before_search(&self, config: &config::AppConfig) {
         if !config.daemon.enabled
             || crate::semantic::daemon_autostart_suppression_reason().is_some()
         {
@@ -144,7 +157,7 @@ impl LocalToolBackend {
         }
         let _ = crate::semantic::autostart_daemon_and_wait(
             &self.data_root,
-            &config,
+            config,
             crate::DaemonTriggerCommandArg::Search,
         );
     }
@@ -522,6 +535,30 @@ mod tests {
         root
     }
 
+    fn lexical_search_request() -> ToolSearchRequest {
+        ToolSearchRequest {
+            query: "config snapshot canary".to_owned(),
+            limit: 8,
+            provider: None,
+            history_source: None,
+            provider_key: None,
+            source_id: None,
+            source_format: None,
+            workspace: None,
+            since: None,
+            primary_only: false,
+            include_subagents: false,
+            content_scope: ctx_history_index::SearchContentScope::All,
+            event_type: None,
+            file: None,
+            session: None,
+            events: false,
+            include_current_session: true,
+            backend: Some(ToolSearchBackend::Lexical),
+            semantic_weight: 0.35,
+        }
+    }
+
     #[test]
     fn pro_status_usage_config_error_is_content_free() {
         let root = private_tempdir();
@@ -569,6 +606,19 @@ mod tests {
             assert_eq!(config_loads, 1);
             assert_eq!(metadata_reads, 0);
         }
+    }
+
+    #[test]
+    fn mcp_search_recovery_and_backend_selection_share_one_config_snapshot() {
+        let root = private_tempdir();
+        config::set_daemon_enabled(root.path(), false).unwrap();
+        let backend = LocalToolBackend::new(root.path().to_path_buf());
+
+        let (result, config_loads) =
+            crate::config::count_app_config_loads(|| backend.search(lexical_search_request()));
+
+        assert!(matches!(result, Err(ToolBackendError::SourceUnavailable)));
+        assert_eq!(config_loads, 1);
     }
 
     #[test]
