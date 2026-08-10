@@ -1,6 +1,8 @@
 use std::cell::{Cell, RefCell};
 
 use ctx_history_core::platform_security::{restrict_private_directory, restrict_private_file};
+use ctx_pro_host_protocol::installation_key_thumbprint;
+use ed25519_dalek::SigningKey;
 use tempfile::tempdir;
 
 use super::*;

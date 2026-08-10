@@ -5,7 +5,7 @@ use anyhow::{bail, Result};
 use super::{
     credential_vault::{
         CredentialRecordKind, CredentialVaultError, CredentialVaultNamespace,
-        PlatformCredentialVault,
+        PlatformCredentialVault, VaultScope,
     },
     graph_key_deletion,
     local_deletion::vault_error,
@@ -15,12 +15,21 @@ const ANONYMOUS_TRIAL_ANCHOR_ID: &str = "device-evidence-anchor/3d5657e0/v1";
 
 pub(super) fn delete_credentials(data_root: &Path) -> Result<()> {
     delete_anonymous_trial_anchor(data_root)?;
+    let installation_id = crate::identity::existing_installation_id(data_root)
+        .map_err(|_| vault_error(CredentialVaultError::InvalidDataRoot))?
+        .ok_or_else(|| vault_error(CredentialVaultError::NotFound))?;
     for namespace in [
         CredentialVaultNamespace::Production,
         CredentialVaultNamespace::Staging,
     ] {
-        let vault =
-            PlatformCredentialVault::production(data_root, namespace).map_err(vault_error)?;
+        let vault = PlatformCredentialVault::production(
+            VaultScope {
+                data_root,
+                installation_id: &installation_id,
+            },
+            namespace,
+        )
+        .map_err(vault_error)?;
         for kind in [
             CredentialRecordKind::WorkOsSession,
             CredentialRecordKind::AnonymousTrial,

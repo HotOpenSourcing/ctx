@@ -2,13 +2,11 @@ mod anonymous_trial;
 pub(crate) mod artifact_delivery;
 mod authorization;
 mod client;
-mod commercial_api;
 mod commercial_config;
 mod commercial_deletion;
 mod commercial_lifecycle;
 mod commercial_production_record;
 mod core_worker_budget;
-mod credential_vault;
 pub(crate) mod diagnostic;
 pub(crate) mod evidence_preview;
 mod graph_key_deletion;
@@ -17,16 +15,23 @@ mod lifecycle;
 mod local_deletion;
 mod pending_materialization;
 mod pricing;
-#[cfg(ctx_pro_qualification)]
-mod qualification_authorizer;
 mod referral;
 mod render;
-mod request_identity;
 mod setup_validation;
 #[cfg(ctx_pro_test_helper)]
 mod test_control;
 mod verified_executable;
-mod workos_device;
+pub(crate) mod commercial_api {
+    pub(crate) use ctx_pro_access::commercial_api::*;
+}
+
+pub(crate) mod credential_vault {
+    pub(crate) use ctx_pro_access::credential_vault::*;
+}
+
+pub(crate) mod workos_device {
+    pub(crate) use ctx_pro_access::workos_device::*;
+}
 use std::io;
 
 use crate::ui::{hint, outcome, Action, Document, Hint, Outcome, OutcomeState, RenderContext, Ui};

@@ -207,7 +207,7 @@ impl ControlManifest {
             bail!("invalid_request: unsupported Pro test control manifest schema");
         }
         validate_identifier(&self.fixture_id, MAX_FIXTURE_ID_BYTES, "fixture id")?;
-        commercial_config::EntitlementTrust::validate_test_control_identity(
+        commercial_config::test_control_entitlement_trust().validate_identity(
             &self.entitlement_trust.issuer,
             &self.entitlement_trust.key_id,
         )?;

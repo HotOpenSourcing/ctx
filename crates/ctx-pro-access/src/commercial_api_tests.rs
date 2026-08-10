@@ -9,6 +9,7 @@ use ctx_pro_host_protocol::{EntitlementAccessKind, EntitlementGrant, ENTITLEMENT
 fn test_client() -> CommercialApiClient {
     CommercialApiClient::new(
         CommercialApiConfig::new(Url::parse("https://pro.ctx.test/").unwrap(), None).unwrap(),
+        std::sync::Arc::new(SystemCommercialClock),
     )
     .unwrap()
 }
@@ -60,6 +61,9 @@ fn staging_access_pair_is_attached_only_to_the_exact_fixed_staging_origin() {
             ureq::get("https://example.test/v1/account"),
             &Url::parse("https://example.test/v1/account").unwrap(),
         )
+        .is_err());
+    assert!(config
+        .apply_transport_credentials(ureq::get("https://attacker.example/v1/account"), &url,)
         .is_err());
 }
 
@@ -182,6 +186,17 @@ fn accepts_url_less_pending_checkout_from_worker() {
     }))
     .unwrap();
     assert!(invalid.validate().is_err());
+}
+
+#[test]
+fn checkout_expiry_validation_is_bounded_at_extreme_injected_times() {
+    let checkout: CheckoutResult = serde_json::from_value(serde_json::json!({
+        "kind": "checkout_pending",
+        "expires_at_unix": i64::MAX
+    }))
+    .unwrap();
+    checkout.validate_at(i64::MAX - 1).unwrap();
+    assert!(checkout.validate_at(i64::MAX).is_err());
 }
 
 #[test]
@@ -848,7 +863,7 @@ fn anonymous_trial_response_debug_redacts_credentials() {
                 "{:?}",
                 TrialActivation {
                     disposition: "trial_started".to_owned(),
-                    entitlement: entitlement.clone(),
+                    entitlement: IssuedEntitlement(entitlement.clone()),
                     trial_access_token: activation_token.to_owned(),
                     trial_deadline_unix: 2_000_000_000,
                     referral_claim_token: None,
@@ -860,7 +875,7 @@ fn anonymous_trial_response_debug_redacts_credentials() {
             format!(
                 "{:?}",
                 TrialRefresh {
-                    entitlement,
+                    entitlement: IssuedEntitlement(entitlement),
                     trial_access_token: refresh_token.to_owned(),
                     trial_deadline_unix: 2_000_000_000,
                     referral_claim_token: None,

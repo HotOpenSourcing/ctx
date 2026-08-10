@@ -2,12 +2,16 @@ use anyhow::{bail, Context, Result};
 use std::ffi::OsString;
 use url::Url;
 
-use super::{
+use ctx_pro_access::{
+    authorization::EntitlementTrust,
     commercial_api::{CloudflareAccessCredentials, CommercialApiConfig},
-    commercial_production_record,
     credential_vault::CredentialVaultNamespace,
-    lifecycle::lifecycle_manifest::{release_trust, ReleaseChannel, ReleaseTrust},
     workos_device::WorkOsConfig,
+};
+
+use super::{
+    commercial_production_record,
+    lifecycle::lifecycle_manifest::{release_trust, ReleaseChannel, ReleaseTrust},
 };
 
 const STAGING_WORKOS_CLIENT_ID: &str = "client_01KQE1NZAXDDBNTV5HVB4N5CVC";
@@ -33,30 +37,6 @@ struct CommercialChannelRecord {
     entitlement_issuer: &'static str,
     entitlement_key_ids: &'static [&'static str],
     vault_namespace: CredentialVaultNamespace,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct EntitlementTrust {
-    issuer: &'static str,
-    key_ids: &'static [&'static str],
-}
-
-impl EntitlementTrust {
-    pub(super) fn validate_identity(self, issuer: &str, key_id: &str) -> Result<()> {
-        if issuer != self.issuer || !self.key_ids.contains(&key_id) {
-            bail!("invalid_response: entitlement does not match the selected commercial channel");
-        }
-        Ok(())
-    }
-
-    #[cfg(ctx_pro_test_helper)]
-    pub(super) fn validate_test_control_identity(issuer: &str, key_id: &str) -> Result<()> {
-        EntitlementTrust {
-            issuer: TEST_CONTROL_ENTITLEMENT_ISSUER,
-            key_ids: &[TEST_CONTROL_ENTITLEMENT_KEY_ID],
-        }
-        .validate_identity(issuer, key_id)
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -92,10 +72,10 @@ impl CommercialConfig {
                 access,
             )?,
             release_trust: release_trust(channel)?,
-            entitlement_trust: EntitlementTrust {
-                issuer: record.entitlement_issuer,
-                key_ids: record.entitlement_key_ids,
-            },
+            entitlement_trust: EntitlementTrust::new(
+                record.entitlement_issuer,
+                record.entitlement_key_ids,
+            ),
             vault_namespace: record.vault_namespace,
         })
     }
@@ -135,6 +115,14 @@ pub(super) fn reject_test_control_outside_test_host() -> Result<()> {
 #[cfg(ctx_pro_test_helper)]
 pub(super) fn test_control_release_trust() -> Result<ReleaseTrust> {
     release_trust(ReleaseChannel::Stable)
+}
+
+#[cfg(ctx_pro_test_helper)]
+pub(super) const fn test_control_entitlement_trust() -> EntitlementTrust {
+    EntitlementTrust::new(
+        TEST_CONTROL_ENTITLEMENT_ISSUER,
+        &[TEST_CONTROL_ENTITLEMENT_KEY_ID],
+    )
 }
 
 fn selected_channel_from_value(value: Option<OsString>) -> Result<ReleaseChannel> {
@@ -261,14 +249,10 @@ mod tests {
 
     #[test]
     fn entitlement_identity_is_bound_in_both_channel_directions() {
-        let production_fixture = EntitlementTrust {
-            issuer: PRODUCTION_ENTITLEMENT_ISSUER,
-            key_ids: &["production-fixture-v1"],
-        };
-        let staging = EntitlementTrust {
-            issuer: STAGING_ENTITLEMENT_ISSUER,
-            key_ids: STAGING_ENTITLEMENT_KEY_IDS,
-        };
+        let production_fixture =
+            EntitlementTrust::new(PRODUCTION_ENTITLEMENT_ISSUER, &["production-fixture-v1"]);
+        let staging =
+            EntitlementTrust::new(STAGING_ENTITLEMENT_ISSUER, STAGING_ENTITLEMENT_KEY_IDS);
         assert!(production_fixture
             .validate_identity(STAGING_ENTITLEMENT_ISSUER, STAGING_ENTITLEMENT_KEY_IDS[0])
             .is_err());

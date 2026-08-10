@@ -1,16 +1,13 @@
 use std::{
     path::Path,
     process::{Command, Stdio},
+    sync::Arc,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use ctx_pro_host_protocol::{
-    base64url, installation_key_thumbprint, EntitlementAccessKind, SignedEntitlement,
-    INSTALLATION_PUBLIC_KEY_BYTES,
-};
-use zeroize::Zeroize as _;
+use ctx_pro_host_protocol::{base64url, EntitlementAccessKind, INSTALLATION_PUBLIC_KEY_BYTES};
 
 mod render;
 
@@ -20,16 +17,16 @@ use super::{
     authorization::InstallationChallengeSigner,
     commercial_api::{
         checkout_retry_after, is_retryable_checkout_failure, validate_https_url, CheckoutResult,
-        CommercialApiClient, CommercialState,
+        CommercialApiClient, CommercialClock, CommercialState, IssuedEntitlement,
     },
     commercial_config::CommercialConfig,
     credential_vault::{
         AnonymousTrialMaterial, BoundedSignedEntitlement, CredentialRecord, CredentialRecordKind,
         CredentialVaultError, PlatformCredentialVault, VaultInstallationChallengeSigner,
-        WorkOsSessionMaterial,
+        VaultScope, WorkOsSessionMaterial,
     },
     lifecycle::{ProLifecycleService, ProManagePlan, ProSetupPlan},
-    workos_device::{WorkOsDeviceClient, WorkOsTokens},
+    workos_device::{WorkOsAccessToken, WorkOsDeviceClient, WorkOsTokens},
 };
 use crate::ui::Ui;
 use render::{
@@ -52,13 +49,31 @@ const CHECKOUT_POLL_MAX_INTERVAL_SECONDS: u64 = 15;
 const CHECKOUT_POLL_PROGRESS_SECONDS: u64 = 60;
 const CHECKOUT_POLL_MAX_SECONDS: u64 = 30 * 60;
 
+#[derive(Debug)]
+struct CliCommercialClock;
+
+impl CommercialClock for CliCommercialClock {
+    fn unix_time(&self) -> Result<i64> {
+        unix_time()
+    }
+}
+
 impl CommercialLifecycleService {
     pub(super) fn production(data_root: &Path) -> Result<Self> {
         let config = CommercialConfig::production()?;
         let workos = WorkOsDeviceClient::new(config.workos.clone())?;
-        let api = CommercialApiClient::new(config.api.clone())?;
-        let vault = PlatformCredentialVault::production(data_root, config.vault_namespace)
-            .map_err(vault_error)?;
+        let api = CommercialApiClient::new(config.api.clone(), Arc::new(CliCommercialClock))?;
+        let installation_id = crate::identity::existing_installation_id(data_root)
+            .map_err(|_| vault_error(CredentialVaultError::InvalidDataRoot))?
+            .ok_or_else(|| vault_error(CredentialVaultError::NotFound))?;
+        let vault = PlatformCredentialVault::production(
+            VaultScope {
+                data_root,
+                installation_id: &installation_id,
+            },
+            config.vault_namespace,
+        )
+        .map_err(vault_error)?;
         Ok(Self {
             config,
             workos,
@@ -70,7 +85,7 @@ impl CommercialLifecycleService {
     pub(super) fn refresh_entitlement_if_due(data_root: &Path) -> Result<()> {
         let service = Self::production(data_root)?;
         let current = match service.vault.load(CredentialRecordKind::SignedEntitlement) {
-            Ok(CredentialRecord::SignedEntitlement(value)) => value.as_inner().clone(),
+            Ok(CredentialRecord::SignedEntitlement(value)) => value,
             Ok(_) => bail!("key_store_unavailable: entitlement record mismatch"),
             Err(CredentialVaultError::NotFound) => {
                 bail!("entitlement_required: run `ctx pro`")
@@ -78,7 +93,7 @@ impl CommercialLifecycleService {
             Err(error) => return Err(vault_error(error)),
         };
         let now = unix_time()?;
-        if now < current.grant.refresh_after_unix {
+        if now < current.schedule().refresh_after_unix {
             return Ok(());
         }
         if matches!(
@@ -117,7 +132,7 @@ impl CommercialLifecycleService {
         ui: &mut Ui,
         human_output: bool,
         browser_enabled: bool,
-    ) -> Result<String> {
+    ) -> Result<WorkOsAccessToken> {
         match self.vault.load(CredentialRecordKind::WorkOsSession) {
             Ok(CredentialRecord::WorkOsSession(session)) => {
                 self.resume_session(session, ui, human_output, browser_enabled)
@@ -142,19 +157,16 @@ impl CommercialLifecycleService {
         ui: &mut Ui,
         human_output: bool,
         browser_enabled: bool,
-    ) -> Result<String> {
-        if session.access_expires_at_unix() > unix_time()?
-            && self
-                .workos
-                .validate_access_token(session.access_token())
-                .is_ok()
-        {
-            return Ok(session.access_token().to_owned());
+    ) -> Result<WorkOsAccessToken> {
+        if session.access_expires_at_unix() > unix_time()? {
+            if let Ok(access_token) = self.workos.session_access_token(&session) {
+                return Ok(access_token);
+            }
         }
-        let Some(refresh_token) = session.refresh_token() else {
+        if !session.has_refresh_token() {
             return self.device_sign_in(ui, human_output, browser_enabled);
-        };
-        match self.workos.refresh(refresh_token) {
+        }
+        match self.workos.refresh_session(&session) {
             Ok(tokens) => self.persist_tokens(tokens),
             Err(error) if error.to_string().starts_with("authentication_failed:") => {
                 self.device_sign_in(ui, human_output, browser_enabled)
@@ -163,7 +175,7 @@ impl CommercialLifecycleService {
         }
     }
 
-    pub(super) fn access_token_noninteractive(&self) -> Result<String> {
+    pub(super) fn access_token_noninteractive(&self) -> Result<WorkOsAccessToken> {
         let session = match self.vault.load(CredentialRecordKind::WorkOsSession) {
             Ok(CredentialRecord::WorkOsSession(session)) => session,
             Ok(_) => bail!("key_store_unavailable: WorkOS session record mismatch"),
@@ -172,24 +184,18 @@ impl CommercialLifecycleService {
             }
             Err(error) => return Err(vault_error(error)),
         };
-        if session.access_expires_at_unix() > unix_time()?
-            && self
-                .workos
-                .validate_access_token(session.access_token())
-                .is_ok()
-        {
-            return Ok(session.access_token().to_owned());
+        if session.access_expires_at_unix() > unix_time()? {
+            if let Ok(access_token) = self.workos.session_access_token(&session) {
+                return Ok(access_token);
+            }
         }
-        let refresh_token = session
-            .refresh_token()
-            .ok_or_else(|| anyhow!("authentication_required: run `ctx pro`"))?;
-        self.persist_tokens(self.workos.refresh(refresh_token)?)
+        self.persist_tokens(self.workos.refresh_session(&session)?)
     }
 
     fn refresh_rejected_access_token_noninteractive(
         &self,
-        rejected_access_token: &str,
-    ) -> Result<String> {
+        rejected_access_token: &WorkOsAccessToken,
+    ) -> Result<WorkOsAccessToken> {
         let session = match self.vault.load(CredentialRecordKind::WorkOsSession) {
             Ok(CredentialRecord::WorkOsSession(session)) => session,
             Ok(_) => bail!("key_store_unavailable: WorkOS session record mismatch"),
@@ -198,19 +204,14 @@ impl CommercialLifecycleService {
             }
             Err(error) => return Err(vault_error(error)),
         };
-        if session.access_token() != rejected_access_token
+        if !session.matches_access_token(rejected_access_token)
             && session.access_expires_at_unix() > unix_time()?
-            && self
-                .workos
-                .validate_access_token(session.access_token())
-                .is_ok()
         {
-            return Ok(session.access_token().to_owned());
+            if let Ok(access_token) = self.workos.session_access_token(&session) {
+                return Ok(access_token);
+            }
         }
-        let refresh_token = session
-            .refresh_token()
-            .ok_or_else(|| anyhow!("authentication_required: run `ctx pro`"))?;
-        self.persist_tokens(self.workos.refresh(refresh_token)?)
+        self.persist_tokens(self.workos.refresh_session(&session)?)
     }
 
     fn device_sign_in(
@@ -218,7 +219,7 @@ impl CommercialLifecycleService {
         ui: &mut Ui,
         human_output: bool,
         browser_enabled: bool,
-    ) -> Result<String> {
+    ) -> Result<WorkOsAccessToken> {
         let authorization = self.workos.begin()?;
         if human_output {
             let document = render_device_sign_in(
@@ -239,28 +240,19 @@ impl CommercialLifecycleService {
         self.complete_device_sign_in(self.workos.poll(&authorization)?)
     }
 
-    fn complete_device_sign_in(&self, tokens: WorkOsTokens) -> Result<String> {
+    fn complete_device_sign_in(&self, tokens: WorkOsTokens) -> Result<WorkOsAccessToken> {
         if !self.workos.bootstrap_pending(&tokens)? {
             return self.persist_tokens(tokens);
         }
-        let organization_id = self
-            .api
-            .bootstrap_workos_personal_organization(&tokens.access_token)?;
+        let organization_id = self.api.bootstrap_workos_personal_organization(&tokens)?;
         let refreshed = self
             .workos
-            .refresh_for_organization(&tokens.refresh_token, &organization_id)?;
+            .refresh_for_organization(&tokens, &organization_id)?;
         self.persist_tokens(refreshed)
     }
 
-    fn persist_tokens(&self, tokens: WorkOsTokens) -> Result<String> {
-        let expires_at = self.workos.access_token_expiration(&tokens.access_token)?;
-        let access_token = tokens.access_token.clone();
-        let session = WorkOsSessionMaterial::new(
-            tokens.access_token.clone(),
-            Some(tokens.refresh_token.clone()),
-            expires_at,
-        )
-        .map_err(vault_error)?;
+    fn persist_tokens(&self, tokens: WorkOsTokens) -> Result<WorkOsAccessToken> {
+        let (session, access_token) = self.workos.persistable_session(tokens)?;
         self.vault
             .store(&CredentialRecord::WorkOsSession(session))
             .map_err(vault_error)?;
@@ -269,8 +261,8 @@ impl CommercialLifecycleService {
 
     fn active_state(
         &self,
-        access_token: &mut String,
-        referral_claim_token: Option<&str>,
+        access_token: &mut WorkOsAccessToken,
+        anonymous_trial: Option<&AnonymousTrialMaterial>,
         ui: &mut Ui,
         human_output: bool,
         browser_enabled: bool,
@@ -278,7 +270,7 @@ impl CommercialLifecycleService {
         resolve_active_state(
             access_token,
             |access_token| self.api.account(access_token),
-            |access_token| self.api.checkout(access_token, referral_claim_token),
+            |access_token| self.api.checkout(access_token, anonymous_trial),
             |access_token, state, checkout| {
                 self.await_checkout_access(
                     access_token,
@@ -294,7 +286,7 @@ impl CommercialLifecycleService {
 
     fn await_checkout_access(
         &self,
-        access_token: &mut String,
+        access_token: &mut WorkOsAccessToken,
         initial_state: &CommercialState,
         checkout: CheckoutResult,
         ui: &mut Ui,
@@ -380,45 +372,21 @@ impl CommercialLifecycleService {
 
     fn store_entitlement(
         &self,
-        entitlement: SignedEntitlement,
+        entitlement: IssuedEntitlement,
         public_key: &[u8; INSTALLATION_PUBLIC_KEY_BYTES],
     ) -> Result<()> {
-        let entitlement = self.bound_entitlement(entitlement, public_key)?;
+        let entitlement =
+            BoundedSignedEntitlement::bind(entitlement, public_key, self.config.entitlement_trust)?;
         self.vault
             .store(&CredentialRecord::SignedEntitlement(entitlement))
             .map_err(vault_error)
     }
 
-    fn bound_entitlement(
-        &self,
-        entitlement: SignedEntitlement,
-        public_key: &[u8; INSTALLATION_PUBLIC_KEY_BYTES],
-    ) -> Result<BoundedSignedEntitlement> {
-        self.config
-            .entitlement_trust
-            .validate_identity(&entitlement.grant.issuer, &entitlement.grant.key_id)?;
-        if entitlement.grant.installation_key_thumbprint != installation_key_thumbprint(public_key)
-        {
-            bail!("invalid_response: entitlement is bound to another installation");
-        }
-        BoundedSignedEntitlement::new(entitlement).map_err(vault_error)
-    }
-
     pub(super) fn store_anonymous_state(
         &self,
-        entitlement: SignedEntitlement,
-        public_key: &[u8; INSTALLATION_PUBLIC_KEY_BYTES],
-        trial_deadline_unix: i64,
+        entitlement: BoundedSignedEntitlement,
         trial: AnonymousTrialMaterial,
     ) -> Result<()> {
-        if entitlement.grant.access_kind != EntitlementAccessKind::Trial
-            || entitlement.grant.access_deadline_unix != trial_deadline_unix
-            || entitlement.grant.grace_deadline_unix != trial_deadline_unix
-            || entitlement.grant.expires_at_unix > trial_deadline_unix
-        {
-            bail!("invalid_response: anonymous entitlement exceeds the authoritative trial");
-        }
-        let entitlement = self.bound_entitlement(entitlement, public_key)?;
         self.vault
             .store_anonymous_trial_state(entitlement, trial)
             .map_err(|error| match error {
@@ -430,8 +398,8 @@ impl CommercialLifecycleService {
     }
 
     fn refresh_entitlement_noninteractive(&self) -> Result<()> {
-        let mut access_token = self.access_token_noninteractive()?;
-        let result = (|| {
+        let access_token = self.access_token_noninteractive()?;
+        (|| {
             let state = self.api.account(&access_token)?;
             if !state.grants_access() {
                 bail!("commercial_access_locked: an active trial or subscription is required");
@@ -442,17 +410,13 @@ impl CommercialLifecycleService {
             let entitlement = self
                 .api
                 .entitlement(&access_token, &base64url(&public_key))?;
-            if entitlement.grant.subject != state.subject
-                || entitlement.grant.account_id != state.account_id
-            {
+            if !entitlement.matches_account(&state) {
                 bail!("invalid_response: entitlement identity does not match commercial account");
             }
             self.store_entitlement(entitlement, &public_key)?;
             self.clear_refresh_backoff();
             Ok(())
-        })();
-        access_token.zeroize();
-        result
+        })()
     }
 
     fn clear_refresh_backoff(&self) {
@@ -508,9 +472,7 @@ impl ProLifecycleService for CommercialLifecycleService {
         // prove that this installation already consumed or converted its Pro
         // trial. The anonymous-trial authority remains the source of truth.
         let stored_access_kind = match self.vault.load(CredentialRecordKind::SignedEntitlement) {
-            Ok(CredentialRecord::SignedEntitlement(entitlement)) => {
-                Some(entitlement.as_inner().grant.access_kind)
-            }
+            Ok(CredentialRecord::SignedEntitlement(entitlement)) => Some(entitlement.access_kind()),
             Ok(_) => bail!("key_store_unavailable: entitlement record mismatch"),
             Err(CredentialVaultError::NotFound) => None,
             Err(error) => return Err(vault_error(error)),
@@ -544,8 +506,8 @@ impl ProLifecycleService for CommercialLifecycleService {
         human_output: bool,
         browser_enabled: bool,
     ) -> Result<ProManagePlan> {
-        let mut access_token = self.access_token(ui, human_output, browser_enabled)?;
-        let result = (|| {
+        let access_token = self.access_token(ui, human_output, browser_enabled)?;
+        (|| {
             let state = self.api.account(&access_token)?;
             let portal = self.api.portal(&access_token)?;
             let (refresh_after_unix, access_deadline_unix, grace_deadline_unix) =
@@ -564,9 +526,7 @@ impl ProLifecycleService for CommercialLifecycleService {
                 access_deadline_unix,
                 grace_deadline_unix,
             })
-        })();
-        access_token.zeroize();
-        result
+        })()
     }
 }
 
@@ -616,11 +576,11 @@ impl CommercialLifecycleService {
         browser_enabled: bool,
     ) -> Result<ProSetupPlan> {
         let mut access_token = self.access_token(ui, human_output, browser_enabled)?;
-        let mut referral_claim_token = self.checkout_referral_claim_token()?;
-        let result = (|| {
+        let anonymous_trial = self.checkout_anonymous_trial()?;
+        (|| {
             let state = self.active_state(
                 &mut access_token,
-                referral_claim_token.as_deref(),
+                anonymous_trial.as_ref(),
                 ui,
                 human_output,
                 browser_enabled,
@@ -629,9 +589,7 @@ impl CommercialLifecycleService {
             let entitlement = self
                 .api
                 .entitlement(&access_token, &base64url(&public_key))?;
-            if entitlement.grant.subject != state.subject
-                || entitlement.grant.account_id != state.account_id
-            {
+            if !entitlement.matches_account(&state) {
                 bail!("invalid_response: entitlement identity does not match commercial account");
             }
             self.store_entitlement(entitlement, &public_key)?;
@@ -644,10 +602,7 @@ impl CommercialLifecycleService {
                 artifact: Some(artifact),
                 account_state: state.access_state,
             })
-        })();
-        referral_claim_token.zeroize();
-        access_token.zeroize();
-        result
+        })()
     }
 }
 
@@ -673,11 +628,9 @@ fn anonymous_trial_precedes_paid_conversion(
 }
 
 impl CommercialLifecycleService {
-    fn checkout_referral_claim_token(&self) -> Result<Option<String>> {
+    fn checkout_anonymous_trial(&self) -> Result<Option<AnonymousTrialMaterial>> {
         match self.vault.load(CredentialRecordKind::AnonymousTrial) {
-            Ok(CredentialRecord::AnonymousTrial(trial)) => {
-                Ok(trial.referral_claim_token().map(ToOwned::to_owned))
-            }
+            Ok(CredentialRecord::AnonymousTrial(trial)) => Ok(Some(trial)),
             Ok(_) => bail!("key_store_unavailable: anonymous trial record mismatch"),
             Err(CredentialVaultError::NotFound) => Ok(None),
             Err(error) => Err(vault_error(error)),
@@ -693,14 +646,14 @@ impl CommercialLifecycleService {
         }
         match self.vault.load(CredentialRecordKind::SignedEntitlement) {
             Ok(CredentialRecord::SignedEntitlement(entitlement)) => {
-                let grant = &entitlement.as_inner().grant;
-                if grant.subject != state.subject || grant.account_id != state.account_id {
+                if !entitlement.matches_account(&state.subject, &state.account_id) {
                     bail!("key_store_unavailable: entitlement identity mismatch");
                 }
+                let schedule = entitlement.schedule();
                 Ok((
-                    Some(grant.refresh_after_unix),
-                    Some(grant.access_deadline_unix),
-                    Some(grant.grace_deadline_unix),
+                    Some(schedule.refresh_after_unix),
+                    Some(schedule.access_deadline_unix),
+                    Some(schedule.grace_deadline_unix),
                 ))
             }
             Ok(_) => bail!("key_store_unavailable: entitlement record mismatch"),
@@ -738,11 +691,11 @@ fn resolve_active_state<C>(
     bail!("commercial_access_locked: an active trial or subscription is required")
 }
 
-fn poll_checkout_account(
-    access_token: &mut String,
+fn poll_checkout_account<C>(
+    access_token: &mut C,
     initial_state: &CommercialState,
-    mut account: impl FnMut(&str) -> Result<CommercialState>,
-    mut refresh: impl FnMut(&str) -> Result<String>,
+    mut account: impl FnMut(&C) -> Result<CommercialState>,
+    mut refresh: impl FnMut(&C) -> Result<C>,
 ) -> CheckoutPoll<CommercialState> {
     match account(access_token) {
         Ok(state) => classify_checkout_account_state(initial_state, state),
@@ -754,7 +707,7 @@ fn poll_checkout_account(
                 }
                 Err(error) => return CheckoutPoll::Fatal(error),
             };
-            replace_access_token(access_token, refreshed_access_token);
+            *access_token = refreshed_access_token;
             match account(access_token) {
                 Ok(state) => classify_checkout_account_state(initial_state, state),
                 Err(error) if is_retryable_checkout_failure(&error) => {
@@ -787,11 +740,6 @@ fn classify_checkout_account_state(
 
 fn is_checkout_authentication_failure(error: &anyhow::Error) -> bool {
     error.to_string().starts_with("authentication_required:")
-}
-
-fn replace_access_token(access_token: &mut String, refreshed_access_token: String) {
-    let mut rejected_access_token = std::mem::replace(access_token, refreshed_access_token);
-    rejected_access_token.zeroize();
 }
 
 enum CheckoutPoll<T> {
@@ -927,8 +875,8 @@ pub(super) fn vault_error(error: CredentialVaultError) -> anyhow::Error {
     anyhow!("{code}: {error}")
 }
 
-fn entitlement_still_usable(entitlement: &SignedEntitlement, now: i64) -> Result<()> {
-    if now <= entitlement.grant.grace_deadline_unix {
+fn entitlement_still_usable(entitlement: &BoundedSignedEntitlement, now: i64) -> Result<()> {
+    if now <= entitlement.schedule().grace_deadline_unix {
         Ok(())
     } else {
         bail!("entitlement_expired: run `ctx pro manage` to restore access")

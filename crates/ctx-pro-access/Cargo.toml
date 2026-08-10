@@ -1,0 +1,51 @@
+[package]
+name = "ctx-pro-access"
+version = "0.26.0"
+description = "Headless commercial access, entitlement, and credential custody for ctx Pro"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+default = []
+qualification = []
+test-support = []
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+ctx-history-core = { path = "../ctx-history-core" }
+ctx-pro-host-protocol = { path = "../ctx-pro-host-protocol" }
+ed25519-dalek.workspace = true
+fs2 = "0.4.3"
+ring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+ureq.workspace = true
+url.workspace = true
+uuid.workspace = true
+zeroize = { workspace = true, features = ["derive"] }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+secret-service = { version = "5.1", default-features = false, features = ["rt-async-io-crypto-rust"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5", default-features = false, features = ["blocking-api"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = { version = "3.7", default-features = false }
+security-framework-sys = { version = "2.17", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading"] }
+
+[dev-dependencies]
+tempfile.workspace = true

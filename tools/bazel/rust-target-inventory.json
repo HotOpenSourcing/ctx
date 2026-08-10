@@ -133,6 +133,16 @@
         "//crates/ctx-upgrade-engine:test_support_lib"
       ]
     },
+    "ctx-pro-access": {
+      "manifest": "crates/ctx-pro-access/Cargo.toml",
+      "targets": {"lib:ctx_pro_access": "//crates/ctx-pro-access:lib"},
+      "native_unit": "//crates/ctx-pro-access:unit_tests",
+      "feature_variants": [
+        "//crates/ctx-pro-access:qualification_lib",
+        "//crates/ctx-pro-access:test_support_lib"
+      ],
+      "focused_tests": ["//crates/ctx-pro-access:qualification_authorizer_tests"]
+    },
     "ctx-pro-host-protocol": {
       "manifest": "crates/ctx-pro-host-protocol/Cargo.toml",
       "targets": {

@@ -50,7 +50,7 @@ pub(super) fn commercial_error_message(error: &ApiError) -> &'static str {
     }
 }
 
-pub(in crate::pro) fn commercial_http_error(error: ureq::Error, operation: &str) -> anyhow::Error {
+pub fn commercial_http_error(error: ureq::Error, operation: &str) -> anyhow::Error {
     match error {
         ureq::Error::Status(status, response) => commercial_status_failure(status, response).into(),
         ureq::Error::Transport(_) => CommercialApiFailure::Transport {
@@ -80,7 +80,7 @@ pub(super) fn commercial_retry_after(error: &anyhow::Error) -> Option<Duration> 
         .and_then(CommercialApiFailure::retry_after)
 }
 
-pub(in crate::pro) fn is_retryable_checkout_failure(error: &anyhow::Error) -> bool {
+pub fn is_retryable_checkout_failure(error: &anyhow::Error) -> bool {
     if let Some(failure) = error.downcast_ref::<CommercialApiFailure>() {
         return failure.is_retryable();
     }

@@ -92,6 +92,50 @@ impl SecretServiceAdapter for ProductionSecretService {
     }
 }
 
+#[cfg(all(any(test, feature = "test-support"), target_os = "linux"))]
+#[derive(Debug, Clone, Copy)]
+struct UnavailableSecretService;
+
+#[cfg(all(any(test, feature = "test-support"), target_os = "linux"))]
+impl SecretServiceAdapter for UnavailableSecretService {
+    fn probe(&self) -> Result<(), CredentialVaultError> {
+        Err(CredentialVaultError::Unavailable {
+            platform: "test-linux",
+        })
+    }
+
+    fn load(&self, _record_id: &str) -> Result<SecretBytes, CredentialVaultError> {
+        self.probe().and(Err(CredentialVaultError::Backend))
+    }
+
+    fn load_or_store(
+        &self,
+        _record_id: &str,
+        _candidate: &[u8],
+    ) -> Result<SecretBytes, CredentialVaultError> {
+        self.probe().and(Err(CredentialVaultError::Backend))
+    }
+
+    fn store(&self, _record_id: &str, _value: &[u8]) -> Result<(), CredentialVaultError> {
+        self.probe()
+    }
+
+    fn delete(&self, _record_id: &str) -> Result<(), CredentialVaultError> {
+        self.probe()
+    }
+}
+
+#[cfg(all(any(test, feature = "test-support"), target_os = "linux"))]
+pub(super) fn store_file_fallback_record_for_test(
+    data_root: &Path,
+    record_id: &str,
+    value: &[u8],
+) -> Result<(), CredentialVaultError> {
+    let backend = LinuxBackend::new(data_root, UnavailableSecretService);
+    drop(backend.load_or_store(record_id, value)?);
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 pub(super) struct PlatformBackend(LinuxBackend<ProductionSecretService>);
 
@@ -983,9 +1027,6 @@ fn effective_uid() -> u32 {
     // SAFETY: geteuid has no arguments and no failure mode on Linux.
     unsafe { libc::geteuid() }
 }
-
-#[cfg(all(test, target_os = "linux"))]
-pub(super) use tests::store_file_fallback_record_for_test;
 
 #[cfg(all(test, target_os = "linux"))]
 #[path = "linux_tests.rs"]

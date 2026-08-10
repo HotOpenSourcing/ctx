@@ -1,291 +1,52 @@
 use std::path::Path;
+
+use anyhow::Result;
+use ctx_pro_access::{
+    authorization::VaultAuthorizationProvider,
+    credential_vault::{vault_error, CredentialVaultError, VaultScope},
+};
+use ctx_pro_host_protocol::{AuthorizationRequest, AUTHORIZATION_CHALLENGE_BYTES};
+
 #[cfg(ctx_pro_qualification)]
-use std::{
-    io::{Read as _, Write as _},
-    process::{Child, ExitStatus, Stdio},
-    thread,
-    time::{Duration, Instant},
+pub(crate) use ctx_pro_access::authorization::QualificationAuthorizationProvider;
+pub(crate) use ctx_pro_access::authorization::{
+    AuthorizationProvider, EntitlementSchedule, InstallationChallengeSigner,
 };
 
-#[cfg(ctx_pro_qualification)]
-use anyhow::Context as _;
-use anyhow::{anyhow, bail, Result};
-use ctx_pro_host_protocol::{
-    base64url, installation_key_thumbprint, installation_proof_bytes, AuthorizationRequest,
-    SignedEntitlement, AUTHORIZATION_CHALLENGE_BYTES, ED25519_SIGNATURE_BYTES,
-    INSTALLATION_PUBLIC_KEY_BYTES,
+use super::{
+    commercial_config::CommercialConfig, commercial_lifecycle::CommercialLifecycleService,
 };
 
-use super::commercial_config::CommercialConfig;
-use super::commercial_lifecycle::{vault_error, CommercialLifecycleService};
-use super::credential_vault::{
-    CredentialRecord, CredentialRecordKind, PlatformCredentialVault,
-    VaultInstallationChallengeSigner,
-};
-#[cfg(ctx_pro_qualification)]
-use super::qualification_authorizer::QualificationAuthorizerCommand;
-
-#[cfg(ctx_pro_qualification)]
-const QUALIFICATION_AUTHORIZER_MAX_RESPONSE_BYTES: usize = 256 * 1024;
-#[cfg(ctx_pro_qualification)]
-const QUALIFICATION_AUTHORIZER_TIMEOUT: Duration = Duration::from_secs(3);
-
-/// Supplies a challenge-bound authorization request to the Pro helper.
-///
-/// Implementations obtain the signed grant and installation key through the
-/// selected secure credential backend. The native platform vault is preferred;
-/// a pristine installation may durably select the owner-private local vault
-/// when the native adapter is genuinely unavailable. Environment-supplied,
-/// universal, and ephemeral keys are never accepted.
-pub(crate) trait AuthorizationProvider {
-    fn authorization_for_challenge(
-        &self,
-        challenge: &[u8; AUTHORIZATION_CHALLENGE_BYTES],
-    ) -> Result<AuthorizationRequest>;
-}
-
-#[cfg(ctx_pro_qualification)]
-pub(crate) struct QualificationAuthorizationProvider {
-    command: QualificationAuthorizerCommand,
-}
-
-#[cfg(ctx_pro_qualification)]
-impl QualificationAuthorizationProvider {
-    pub(crate) fn from_process_environment() -> Result<Option<Self>> {
-        QualificationAuthorizerCommand::from_process_environment()
-            .map(|command| command.map(|command| Self { command }))
-    }
-}
-
-#[cfg(ctx_pro_qualification)]
-impl AuthorizationProvider for QualificationAuthorizationProvider {
-    fn authorization_for_challenge(
-        &self,
-        challenge: &[u8; AUTHORIZATION_CHALLENGE_BYTES],
-    ) -> Result<AuthorizationRequest> {
-        #[derive(serde::Serialize)]
-        struct AuthorizerRequest<'a> {
-            schema_version: u8,
-            challenge_base64url: &'a str,
-        }
-
-        let challenge_base64url = base64url(challenge);
-        let input = serde_json::to_vec(&AuthorizerRequest {
-            schema_version: 1,
-            challenge_base64url: &challenge_base64url,
-        })
-        .context("authorization_failed: encode qualification authorizer request")?;
-
-        let prepared = self.command.prepare_execution()?;
-        let mut command = std::process::Command::new(prepared.program());
-        prepared.configure_command(&mut command);
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt as _;
-            command.process_group(0);
-        }
-
-        let mut child = command
-            .spawn()
-            .context("authorization_failed: start qualification authorizer")?;
-        drop(prepared);
-        let Some(stdout) = child.stdout.take() else {
-            terminate_qualification_authorizer(&mut child);
-            let _ = child.wait();
-            bail!("authorization_failed: qualification authorizer stdout was unavailable");
-        };
-        let reader = thread::spawn(move || -> std::io::Result<Vec<u8>> {
-            let mut output = Vec::new();
-            stdout
-                .take((QUALIFICATION_AUTHORIZER_MAX_RESPONSE_BYTES + 1) as u64)
-                .read_to_end(&mut output)?;
-            Ok(output)
-        });
-
-        let write_result = child
-            .stdin
-            .take()
-            .ok_or_else(|| {
-                anyhow!("authorization_failed: qualification authorizer stdin was unavailable")
-            })
-            .and_then(|mut stdin| {
-                stdin
-                    .write_all(&input)
-                    .context("authorization_failed: write qualification authorizer request")
-            });
-        if let Err(error) = write_result {
-            terminate_qualification_authorizer(&mut child);
-            let _ = child.wait();
-            let _ = reader.join();
-            return Err(error);
-        }
-
-        let status = match wait_for_qualification_authorizer(&mut child) {
-            Ok(status) => status,
-            Err(error) => {
-                let _ = reader.join();
-                return Err(error);
-            }
-        };
-        let output = reader
-            .join()
-            .map_err(|_| anyhow!("authorization_failed: qualification authorizer reader failed"))?
-            .context("authorization_failed: read qualification authorizer response")?;
-        if output.is_empty() || output.len() > QUALIFICATION_AUTHORIZER_MAX_RESPONSE_BYTES {
-            bail!("invalid_response: qualification authorizer response size is invalid");
-        }
-        if !status.success() {
-            bail!("authorization_failed: qualification authorizer failed");
-        }
-        let request: AuthorizationRequest = serde_json::from_slice(&output)
-            .context("invalid_response: qualification authorizer returned malformed JSON")?;
-        if request.challenge_base64url != challenge_base64url {
-            bail!("invalid_response: qualification authorizer returned the wrong challenge");
-        }
-        Ok(request)
-    }
-}
-
-#[cfg(ctx_pro_qualification)]
-fn wait_for_qualification_authorizer(child: &mut Child) -> Result<ExitStatus> {
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Ok(status),
-            Ok(None) if started.elapsed() < QUALIFICATION_AUTHORIZER_TIMEOUT => {
-                thread::sleep(Duration::from_millis(10));
-            }
-            Ok(None) => {
-                terminate_qualification_authorizer(child);
-                let _ = child.wait();
-                bail!("authorization_failed: qualification authorizer timed out");
-            }
-            Err(error) => {
-                terminate_qualification_authorizer(child);
-                let _ = child.wait();
-                return Err(error)
-                    .context("authorization_failed: wait for qualification authorizer");
-            }
-        }
-    }
-}
-
-#[cfg(ctx_pro_qualification)]
-fn terminate_qualification_authorizer(child: &mut Child) {
-    #[cfg(unix)]
-    {
-        if let Ok(process_group) = i32::try_from(child.id()).map(|pid| -pid) {
-            if unsafe { libc::kill(process_group, libc::SIGKILL) } == 0 {
-                return;
-            }
-        }
-    }
-    let _ = child.kill();
-}
-/// Signs one helper challenge with an installation-bound platform key.
-pub(crate) trait InstallationChallengeSigner {
-    fn public_key(&self) -> Result<[u8; INSTALLATION_PUBLIC_KEY_BYTES]>;
-
-    fn sign_installation_proof(&self, proof: &[u8]) -> Result<[u8; ED25519_SIGNATURE_BYTES]>;
-}
-
-/// Composes a stored issuer-signed grant with a platform-vault key signer.
-pub(crate) struct SignedGrantAuthorizationProvider<'a, S> {
-    entitlement: &'a SignedEntitlement,
-    signer: &'a S,
-}
-
-impl<'a, S> SignedGrantAuthorizationProvider<'a, S> {
-    pub(crate) const fn new(entitlement: &'a SignedEntitlement, signer: &'a S) -> Self {
-        Self {
-            entitlement,
-            signer,
-        }
-    }
-}
-
-impl<S: InstallationChallengeSigner> AuthorizationProvider
-    for SignedGrantAuthorizationProvider<'_, S>
-{
-    fn authorization_for_challenge(
-        &self,
-        challenge: &[u8; AUTHORIZATION_CHALLENGE_BYTES],
-    ) -> Result<AuthorizationRequest> {
-        let public_key = self.signer.public_key()?;
-        let thumbprint = installation_key_thumbprint(&public_key);
-        if thumbprint != self.entitlement.grant.installation_key_thumbprint {
-            bail!("entitlement_invalid: signed grant is bound to a different installation key");
-        }
-        let proof = installation_proof_bytes(&self.entitlement.grant, challenge);
-        let signature = self
-            .signer
-            .sign_installation_proof(&proof)
-            .map_err(|_| anyhow!("entitlement_invalid: installation proof signing failed"))?;
-        Ok(AuthorizationRequest {
-            entitlement: self.entitlement.clone(),
-            installation_public_key_base64url: base64url(&public_key),
-            challenge_base64url: base64url(challenge),
-            proof_signature_base64url: base64url(&signature),
-        })
-    }
-}
-
-/// Loads the installation-bound grant and signer only from the native key store.
+/// Host refresh-policy wrapper around the access crate's vault-backed grant.
+/// Normal helper use refreshes first; passive status reads deliberately do not.
 pub(crate) struct StoredAuthorizationProvider {
-    vault: PlatformCredentialVault,
-    entitlement: SignedEntitlement,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct EntitlementSchedule {
-    pub(crate) refresh_after_unix: i64,
-    pub(crate) access_deadline_unix: i64,
-    pub(crate) grace_deadline_unix: i64,
+    inner: VaultAuthorizationProvider,
 }
 
 impl StoredAuthorizationProvider {
     pub(crate) fn load(data_root: &Path) -> Result<Self> {
         CommercialLifecycleService::refresh_entitlement_if_due(data_root)?;
-        Self::load_without_refresh(data_root)
+        Self::load_for_status(data_root)
     }
 
     pub(crate) fn load_for_status(data_root: &Path) -> Result<Self> {
-        Self::load_without_refresh(data_root)
+        let installation_id = crate::identity::existing_installation_id(data_root)
+            .map_err(|_| vault_error(CredentialVaultError::InvalidDataRoot))?
+            .ok_or_else(|| vault_error(CredentialVaultError::NotFound))?;
+        let config = CommercialConfig::production()?;
+        let inner = VaultAuthorizationProvider::load(
+            VaultScope {
+                data_root,
+                installation_id: &installation_id,
+            },
+            config.vault_namespace,
+            config.entitlement_trust,
+        )?;
+        Ok(Self { inner })
     }
 
-    fn load_without_refresh(data_root: &Path) -> Result<Self> {
-        let config = CommercialConfig::production()?;
-        let vault = PlatformCredentialVault::production(data_root, config.vault_namespace)
-            .map_err(vault_error)?;
-        let record = match vault.load(CredentialRecordKind::SignedEntitlement) {
-            Ok(record) => record,
-            Err(super::credential_vault::CredentialVaultError::NotFound) => {
-                bail!("entitlement_required: run `ctx pro`")
-            }
-            Err(error) => return Err(vault_error(error)),
-        };
-        let CredentialRecord::SignedEntitlement(entitlement) = record else {
-            bail!("key_store_unavailable: entitlement record mismatch");
-        };
-        config.entitlement_trust.validate_identity(
-            &entitlement.as_inner().grant.issuer,
-            &entitlement.as_inner().grant.key_id,
-        )?;
-        Ok(Self {
-            vault,
-            entitlement: entitlement.as_inner().clone(),
-        })
-    }
     pub(crate) fn entitlement_schedule(&self) -> EntitlementSchedule {
-        EntitlementSchedule {
-            refresh_after_unix: self.entitlement.grant.refresh_after_unix,
-            access_deadline_unix: self.entitlement.grant.access_deadline_unix,
-            grace_deadline_unix: self.entitlement.grant.grace_deadline_unix,
-        }
+        self.inner.entitlement_schedule()
     }
 }
 
@@ -294,89 +55,6 @@ impl AuthorizationProvider for StoredAuthorizationProvider {
         &self,
         challenge: &[u8; AUTHORIZATION_CHALLENGE_BYTES],
     ) -> Result<AuthorizationRequest> {
-        let signer = VaultInstallationChallengeSigner::new(&self.vault);
-        SignedGrantAuthorizationProvider::new(&self.entitlement, &signer)
-            .authorization_for_challenge(challenge)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::BTreeSet;
-
-    use ctx_pro_host_protocol::{
-        EntitlementAccessKind, EntitlementCapability, EntitlementGrant, ENTITLEMENT_SCHEMA_VERSION,
-    };
-
-    use super::*;
-
-    struct RecordingSigner {
-        public_key: [u8; INSTALLATION_PUBLIC_KEY_BYTES],
-    }
-
-    impl InstallationChallengeSigner for RecordingSigner {
-        fn public_key(&self) -> Result<[u8; INSTALLATION_PUBLIC_KEY_BYTES]> {
-            Ok(self.public_key)
-        }
-
-        fn sign_installation_proof(&self, proof: &[u8]) -> Result<[u8; ED25519_SIGNATURE_BYTES]> {
-            let mut signature = [0_u8; ED25519_SIGNATURE_BYTES];
-            signature[..32].copy_from_slice(&proof[..32]);
-            signature[32..].copy_from_slice(&proof[..32]);
-            Ok(signature)
-        }
-    }
-
-    fn entitlement(public_key: &[u8; INSTALLATION_PUBLIC_KEY_BYTES]) -> SignedEntitlement {
-        SignedEntitlement {
-            grant: EntitlementGrant {
-                schema_version: ENTITLEMENT_SCHEMA_VERSION,
-                issuer: "https://pro-staging.ctx.rs".to_owned(),
-                key_id: "staging-2026-07-v1".to_owned(),
-                grant_id: "grant-1".to_owned(),
-                subject: "user-1".to_owned(),
-                account_id: "account-1".to_owned(),
-                product: "ctx-pro".to_owned(),
-                access_kind: EntitlementAccessKind::Active,
-                issued_at_unix: 1_800_000_000,
-                not_before_unix: 1_800_000_000,
-                expires_at_unix: 1_800_604_800,
-                refresh_after_unix: 1_800_345_600,
-                access_deadline_unix: 1_802_592_000,
-                grace_deadline_unix: 1_803_196_800,
-                installation_key_thumbprint: installation_key_thumbprint(public_key),
-                capabilities: BTreeSet::from([EntitlementCapability::GraphRead]),
-                minimum_helper_protocol: ctx_pro_host_protocol::PROTOCOL_VERSION,
-                revocation_epoch: 0,
-            },
-            signature_base64url: base64url(&[9_u8; ED25519_SIGNATURE_BYTES]),
-        }
-    }
-
-    #[test]
-    fn composes_challenge_bound_request_without_loading_key_material() {
-        let public_key = [7_u8; INSTALLATION_PUBLIC_KEY_BYTES];
-        let entitlement = entitlement(&public_key);
-        let signer = RecordingSigner { public_key };
-        let request = SignedGrantAuthorizationProvider::new(&entitlement, &signer)
-            .authorization_for_challenge(&[11_u8; AUTHORIZATION_CHALLENGE_BYTES])
-            .unwrap();
-        assert_eq!(request.entitlement, entitlement);
-        assert_eq!(
-            request.installation_public_key_base64url,
-            base64url(&public_key)
-        );
-    }
-
-    #[test]
-    fn rejects_a_grant_bound_to_another_installation() {
-        let entitlement = entitlement(&[7_u8; INSTALLATION_PUBLIC_KEY_BYTES]);
-        let signer = RecordingSigner {
-            public_key: [8_u8; INSTALLATION_PUBLIC_KEY_BYTES],
-        };
-        let error = SignedGrantAuthorizationProvider::new(&entitlement, &signer)
-            .authorization_for_challenge(&[11_u8; AUTHORIZATION_CHALLENGE_BYTES])
-            .unwrap_err();
-        assert!(error.to_string().starts_with("entitlement_invalid:"));
+        self.inner.authorization_for_challenge(challenge)
     }
 }

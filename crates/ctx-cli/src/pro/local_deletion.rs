@@ -10,18 +10,16 @@ use ctx_history_core::platform_security::{
     restrict_private_file, verify_private_directory, verify_private_file,
 };
 use ctx_pro_host_protocol::{
-    decode_base64url, installation_key_thumbprint, is_pro_graph_artifact_file_name,
-    pro_graph_record_id, valid_pro_installation_id, ProFilesystemLayout,
-    INSTALLATION_PUBLIC_KEY_BYTES,
+    decode_base64url, is_pro_graph_artifact_file_name, pro_graph_record_id,
+    valid_pro_installation_id, ProFilesystemLayout, INSTALLATION_PUBLIC_KEY_BYTES,
 };
-use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 
 use super::{
     commercial_deletion,
     credential_vault::{
         CredentialRecord, CredentialRecordKind, CredentialVaultError, CredentialVaultNamespace,
-        PlatformCredentialVault,
+        PlatformCredentialVault, VaultScope,
     },
     graph_key_deletion,
     lifecycle::{replace_file, sync_parent_directory, ProDeletionService},
@@ -424,12 +422,18 @@ impl DeletionBackend for PlatformDeletionBackend {
         data_root: &Path,
     ) -> Result<BTreeSet<GraphKeyDeletionTarget>> {
         let mut targets = BTreeSet::new();
+        let installation_id = crate::identity::existing_installation_id(data_root)
+            .map_err(|_| vault_error(CredentialVaultError::InvalidDataRoot))?
+            .ok_or_else(|| vault_error(CredentialVaultError::NotFound))?;
         for namespace in [
             GraphKeyCredentialNamespace::Production,
             GraphKeyCredentialNamespace::Staging,
         ] {
             let vault = PlatformCredentialVault::production(
-                data_root,
+                VaultScope {
+                    data_root,
+                    installation_id: &installation_id,
+                },
                 namespace.credential_vault_namespace(),
             )
             .map_err(vault_error)?;
@@ -457,12 +461,21 @@ impl DeletionBackend for PlatformDeletionBackend {
 }
 
 fn delete_partial_bootstrap_credentials(data_root: &Path) -> Result<()> {
+    let installation_id = crate::identity::existing_installation_id(data_root)
+        .map_err(|_| vault_error(CredentialVaultError::InvalidDataRoot))?
+        .ok_or_else(|| vault_error(CredentialVaultError::NotFound))?;
     for namespace in [
         CredentialVaultNamespace::Production,
         CredentialVaultNamespace::Staging,
     ] {
-        let vault =
-            PlatformCredentialVault::production(data_root, namespace).map_err(vault_error)?;
+        let vault = PlatformCredentialVault::production(
+            VaultScope {
+                data_root,
+                installation_id: &installation_id,
+            },
+            namespace,
+        )
+        .map_err(vault_error)?;
         for kind in [
             CredentialRecordKind::WorkOsSession,
             CredentialRecordKind::AnonymousTrial,
@@ -509,24 +522,15 @@ fn recorded_graph_key_targets(
 ) -> Result<BTreeSet<GraphKeyDeletionTarget>> {
     let installation_key_thumbprint =
         match vault.load_record(CredentialRecordKind::InstallationSigningKey) {
-            Ok(CredentialRecord::InstallationSigningKey(seed)) => {
-                let public_key = SigningKey::from_bytes(seed.expose())
-                    .verifying_key()
-                    .to_bytes();
-                Some(installation_key_thumbprint(&public_key))
-            }
+            Ok(CredentialRecord::InstallationSigningKey(seed)) => Some(seed.key_thumbprint()),
             Ok(_) => bail!("key_store_unavailable: installation key record has the wrong type"),
             Err(CredentialVaultError::NotFound) => None,
             Err(error) => return Err(vault_error(error)),
         };
     let entitlement_thumbprint = match vault.load_record(CredentialRecordKind::SignedEntitlement) {
-        Ok(CredentialRecord::SignedEntitlement(entitlement)) => Some(
-            entitlement
-                .as_inner()
-                .grant
-                .installation_key_thumbprint
-                .clone(),
-        ),
+        Ok(CredentialRecord::SignedEntitlement(entitlement)) => {
+            Some(entitlement.installation_key_thumbprint().to_owned())
+        }
         Ok(_) => bail!("key_store_unavailable: signed entitlement record has the wrong type"),
         Err(CredentialVaultError::NotFound) => None,
         Err(error) => return Err(vault_error(error)),

@@ -55,6 +55,7 @@ ctx-client-observability = { path = "../ctx-client-observability" }
 ctx-history-core = { path = "../ctx-history-core" }
 ctx-history-index = { path = "../ctx-history-index" }
 ctx-history-refresh = { path = "../ctx-history-refresh" }
+ctx-pro-access = { path = "../ctx-pro-access" }
 ctx-pro-host-protocol = { path = "../ctx-pro-host-protocol" }
 ctx-semantic-index = { path = "../ctx-semantic-index" }
 ctx-semantic-model = { path = "../ctx-semantic-model" }
@@ -82,6 +83,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 [dev-dependencies]
 assert_cmd.workspace = true
 ctx-client-observability = { path = "../ctx-client-observability", features = ["test-support"] }
+ctx-pro-access = { path = "../ctx-pro-access", features = ["test-support"] }
 ctx-upgrade-engine = { path = "../ctx-upgrade-engine", features = ["test-support"] }
 ctx-history-refresh = { path = "../ctx-history-refresh", features = ["test-support"] }
 ctx-semantic-index = { path = "../ctx-semantic-index", features = ["test-support"] }
