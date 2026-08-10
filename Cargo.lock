@@ -835,9 +835,26 @@ name = "ctx-history-index"
 version = "0.26.0"
 dependencies = [
  "base64 0.22.1",
+ "ctx-history-core",
+ "ctx-history-index-generation",
+ "ctx-semantic-model",
+ "libc",
+ "memmap2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tantivy",
+ "tempfile",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
+name = "ctx-history-index-generation"
+version = "0.26.0"
+dependencies = [
  "crc32fast",
  "ctx-history-core",
- "ctx-semantic-model",
  "libc",
  "memmap2",
  "serde",
