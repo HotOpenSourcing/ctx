@@ -649,6 +649,7 @@ sh_binary(
         "scripts/public-cli-release-targets.py",
         "scripts/public-cli-runtime-authority.sh",
         "scripts/release/linux-bazel-release.Dockerfile",
+        "scripts/release/macos_llvm_authority.py",
         "scripts/release/detached-debug-symbols.py",
         "scripts/release/public-cli-bazel-build-info.py",
         "scripts/release-sbom.py",
@@ -956,6 +957,19 @@ sh_test(
         "//tools/bazel/patches:rules-rust-windows-gnu-dlltool-path.patch",
     ],
     tags = ["release-gate"],
+)
+
+py_test(
+    name = "macos_llvm_authority_tests",
+    srcs = [
+        "scripts/release/macos_llvm_authority.py",
+        "scripts/tests/macos-llvm-authority-test.py",
+    ],
+    main = "scripts/tests/macos-llvm-authority-test.py",
+    tags = [
+        "release-gate",
+        "security",
+    ],
 )
 
 py_test(

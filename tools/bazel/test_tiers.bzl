@@ -182,6 +182,7 @@ CI_TESTS = [
     ":linux_bazel_release_publication_tests",
     ":linux_release_construction_tests",
     ":loc_check",
+    ":macos_llvm_authority_tests",
     ":macos_release_signing_tests",
     ":native_bazel_packaging_contract_tests",
     ":native_candidate_smoke_tests",
