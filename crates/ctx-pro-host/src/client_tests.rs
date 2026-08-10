@@ -256,6 +256,24 @@ fn receipt(generation: char) -> CoreMaterializationReceipt {
     }
 }
 
+#[test]
+fn materialization_finalization_receipt_preserves_exact_output_bytes() {
+    let receipt = MaterializationFinalizationReceipt {
+        schema_version: 1,
+        payload_type: "pro_core_materialization",
+        core_generation_id: "abc".to_owned(),
+        source_count: 2,
+        batches: 1,
+        observations: 2,
+        replayed_batches: 0,
+    };
+
+    assert_eq!(
+        serde_json::to_vec(&receipt).unwrap(),
+        br#"{"schema_version":1,"payload_type":"pro_core_materialization","core_generation_id":"abc","source_count":2,"batches":1,"observations":2,"replayed_batches":0}"#
+    );
+}
+
 fn status(coverage: MaterializedCoverage) -> StatusResult {
     let supported_operations = BTreeSet::from([
         ProOperation::FileBlame,
