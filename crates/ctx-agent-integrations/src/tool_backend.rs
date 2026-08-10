@@ -225,14 +225,14 @@ impl ToolOutcome {
 
 #[derive(Debug)]
 pub struct ToolIntegrationReceipt {
-    pub receipt: IntegrationProductFacts,
+    pub facts: ToolTransportFacts,
     pub success: bool,
     pub duration: Duration,
 }
 
-/// Content-free integration facts for retained application observability composition.
+/// Raw transport facts for retained application-layer policy and presentation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IntegrationProductFacts {
+pub enum ToolTransportFacts {
     ProStatus {
         access_state: Option<String>,
         helper_connected: bool,

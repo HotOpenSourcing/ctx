@@ -1,6 +1,11 @@
 {
   "schema_version": 1,
   "packages": {
+    "ctx-agent-integrations": {
+      "manifest": "crates/ctx-agent-integrations/Cargo.toml",
+      "targets": {"lib:ctx_agent_integrations": "//crates/ctx-agent-integrations:lib"},
+      "native_unit": "//crates/ctx-agent-integrations:unit_tests"
+    },
     "ctx": {
       "manifest": "crates/ctx-cli/Cargo.toml",
       "targets": {

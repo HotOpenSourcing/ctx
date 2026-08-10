@@ -43,6 +43,7 @@ const MCP_MAX_SESSION_PAGE_LIMIT: usize = 4_096;
 const MCP_MAX_SESSION_CURSOR_BYTES: usize = 4_096;
 const MAX_SEARCH_LIMIT: usize = 200;
 const MAX_EVENT_WINDOW: usize = 50;
+const MCP_MIN_EVENT_QUERY_LIMIT: u64 = 1;
 const MCP_DEFAULT_EVENT_QUERY_LIMIT: u64 = 10_000;
 const MCP_MAX_EVENT_QUERY_LIMIT: u64 = 10_000_000;
 
@@ -411,6 +412,10 @@ fn negotiate_protocol_version(params: &Value) -> &'static str {
         .unwrap_or(MCP_PROTOCOL_VERSION)
 }
 
+#[allow(
+    clippy::result_large_err,
+    reason = "MCP responses and raw receipts stay inline to avoid transport-path allocations"
+)]
 fn handle_tools_call_with_backend<B: ToolBackend>(
     params: Value,
     operation: McpToolKind,
@@ -510,6 +515,10 @@ fn parse_failure_result(failure: McpOperationParseError, mut usage: McpUsage) ->
     }
 }
 
+#[allow(
+    clippy::result_large_err,
+    reason = "raw typed receipts stay inline to avoid allocations in the MCP tool path"
+)]
 fn parse_operation<B: ToolBackend>(
     operation: McpToolKind,
     arguments: &Value,
@@ -747,7 +756,7 @@ fn tool_definitions(provider_names: Vec<&'static str>) -> Vec<Value> {
                 "cursor": { "type": "string", "description": "Opaque next_cursor from the preceding page of this exact selection and generation." },
                 "limit": {
                     "type": "integer",
-                    "minimum": 1,
+                    "minimum": MCP_MIN_EVENT_QUERY_LIMIT,
                     "maximum": MCP_MAX_EVENT_QUERY_LIMIT,
                     "default": MCP_DEFAULT_EVENT_QUERY_LIMIT
                 },

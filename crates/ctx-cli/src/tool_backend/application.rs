@@ -9,11 +9,11 @@ use ctx_pro_host_protocol::{BlameTarget, LineRange};
 use serde_json::{json, Value};
 
 use super::{
-    BlameRequest, CursorFailureKind, IntegrationProductFacts, QueryEventsRequest, ShowEventRequest,
-    ShowSessionRequest, StructuredToolError, ToolBackend, ToolBackendError, ToolBlameTarget,
-    ToolEventContent, ToolEventRangeDirection, ToolEventRangeScope, ToolExecutionError,
-    ToolIntegrationReceipt, ToolOperation, ToolOutcome, ToolSearchBackend, ToolSearchContentScope,
-    ToolSearchRequest, ToolSearchUsageFacts, ToolTranscriptMode, ToolUsageFacts,
+    BlameRequest, CursorFailureKind, QueryEventsRequest, ShowEventRequest, ShowSessionRequest,
+    StructuredToolError, ToolBackend, ToolBackendError, ToolBlameTarget, ToolEventContent,
+    ToolEventRangeDirection, ToolEventRangeScope, ToolExecutionError, ToolIntegrationReceipt,
+    ToolOperation, ToolOutcome, ToolSearchBackend, ToolSearchContentScope, ToolSearchRequest,
+    ToolSearchUsageFacts, ToolTranscriptMode, ToolTransportFacts, ToolUsageFacts,
 };
 use crate::{
     commands::list::events::{
@@ -313,7 +313,7 @@ impl LocalToolBackend {
             compact: None,
             usage: ToolUsageFacts::default(),
             integration_receipt: Some(ToolIntegrationReceipt {
-                receipt: IntegrationProductFacts::ProStatus {
+                facts: ToolTransportFacts::ProStatus {
                     access_state,
                     helper_connected,
                     error_code,
@@ -378,7 +378,7 @@ impl LocalToolBackend {
             _ => None,
         });
         let integration_receipt = ToolIntegrationReceipt {
-            receipt: IntegrationProductFacts::Blame {
+            facts: ToolTransportFacts::Blame {
                 target: Some(target_kind),
                 result_count,
                 has_more,

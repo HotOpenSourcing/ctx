@@ -8,13 +8,17 @@ use super::{
     ParsedToolOperation,
 };
 use crate::tool_backend::{
-    BlameRequest, IntegrationProductFacts, ToolBackendError, ToolBlameTarget,
-    ToolIntegrationReceipt, ToolLineRange, ToolOperation, ToolUsageFacts,
+    BlameRequest, ToolBackendError, ToolBlameTarget, ToolIntegrationReceipt, ToolLineRange,
+    ToolOperation, ToolTransportFacts, ToolUsageFacts,
 };
 
 pub(super) const MCP_BLAME_LIMIT: usize = 8;
 pub(super) const MCP_BLAME_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 
+#[allow(
+    clippy::result_large_err,
+    reason = "raw typed receipts stay inline to avoid allocations in the MCP tool path"
+)]
 pub(super) fn blame_operation(
     arguments: &Value,
     invalid_blame_error: impl Fn() -> ToolBackendError,
@@ -56,7 +60,7 @@ pub(super) fn rejected_blame_operation(
         error,
         usage,
         integration_receipt: Some(ToolIntegrationReceipt {
-            receipt: IntegrationProductFacts::Blame {
+            facts: ToolTransportFacts::Blame {
                 target,
                 result_count: None,
                 has_more: None,
@@ -390,8 +394,8 @@ mod tests {
         .unwrap_err();
         let invalid_target = invalid_target.integration_receipt.unwrap();
         assert!(matches!(
-            invalid_target.receipt,
-            IntegrationProductFacts::Blame { target: None, .. }
+            invalid_target.facts,
+            ToolTransportFacts::Blame { target: None, .. }
         ));
 
         let invalid_limit = blame_operation(
@@ -408,8 +412,8 @@ mod tests {
         );
         let invalid_limit = invalid_limit.integration_receipt.unwrap();
         assert!(matches!(
-            invalid_limit.receipt,
-            IntegrationProductFacts::Blame {
+            invalid_limit.facts,
+            ToolTransportFacts::Blame {
                 target: Some(crate::tool_backend::ToolBlameTargetKind::Commit),
                 ..
             }
