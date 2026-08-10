@@ -1005,12 +1005,27 @@ dependencies = [
  "ctx-history-capture",
  "ctx-history-core",
  "ctx-history-index",
- "rusqlite",
+ "ctx-history-refresh-execution",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "uuid",
+]
+
+[[package]]
+name = "ctx-history-refresh-execution"
+version = "0.26.0"
+dependencies = [
+ "anyhow",
+ "ctx-history-capture",
+ "ctx-history-core",
+ "ctx-history-index",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]

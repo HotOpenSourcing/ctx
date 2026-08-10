@@ -11,7 +11,7 @@ publish = false
 
 [features]
 default = []
-test-support = []
+test-support = ["ctx-history-refresh-execution/test-support"]
 
 [dependencies]
 anyhow.workspace = true
@@ -22,7 +22,8 @@ uuid.workspace = true
 ctx-history-capture = { path = "../ctx-history-capture" }
 ctx-history-core = { path = "../ctx-history-core" }
 ctx-history-index = { path = "../ctx-history-index" }
+ctx-history-refresh-execution = { path = "../ctx-history-refresh-execution" }
 
 [dev-dependencies]
-rusqlite.workspace = true
+ctx-history-refresh-execution = { path = "../ctx-history-refresh-execution", features = ["test-support"] }
 tempfile.workspace = true
