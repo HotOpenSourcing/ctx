@@ -76,6 +76,24 @@ rust_library(
     rustc_env = COMMON_RUSTC_ENV,
 )
 
+rust_library(
+    name = "qualification_lib",
+    testonly = True,
+    srcs = PROD_SRCS,
+    crate_name = "ctx_history_capture",
+    crate_root = "src/lib.rs",
+    edition = crate_edition(),
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + CTX_HISTORY_CAPTURE_DEPS,
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    rustc_env = COMMON_RUSTC_ENV,
+    rustc_flags = [
+        "--check-cfg=cfg(ctx_codex_causal_qualification)",
+        "--check-cfg=cfg(test)",
+        "--cfg=ctx_codex_causal_qualification",
+    ],
+)
+
 ctx_rust_test(
     name = "unit_tests",
     srcs = RUST_SRCS,

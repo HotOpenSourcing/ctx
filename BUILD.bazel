@@ -1054,6 +1054,7 @@ sh_test(
     data = [
         "//crates/ctx-history-capture:BUILD.bazel",
         "//crates/ctx-history-capture:build.rs",
+        "//crates/ctx-history-capture:qualification_lib",
     ],
 )
 
