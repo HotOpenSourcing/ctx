@@ -12,6 +12,7 @@ impl CodexNativeScanner {
     pub(super) fn process_record(
         &mut self,
         record: &[u8],
+        raw_ordinal: u64,
         start_byte: u64,
         end_byte: u64,
         record_digest: [u8; 32],
@@ -93,8 +94,7 @@ impl CodexNativeScanner {
                     return Ok(CodexRecordProjection::default());
                 };
                 let mut built =
-                    match build_source_backed_event_row(self.raw_ordinal, kind, &retained, record)?
-                    {
+                    match build_source_backed_event_row(raw_ordinal, kind, &retained, record)? {
                         Ok(built) => built,
                         Err(CodexRetainedNonMaterialized::ValidUnmaterializable) => {
                             self.counters.ignored_records =
@@ -146,12 +146,8 @@ impl CodexNativeScanner {
                     .saturating_add(u64::try_from(lexical_bytes).unwrap_or(u64::MAX));
                 let insert_context = built.tool_context.map(|(call_id, mut context)| {
                     context.session_cwd = owner.cwd.clone();
-                    let authority = CodexPendingToolAuthority::new(
-                        &call_id,
-                        start_byte,
-                        end_byte,
-                        self.raw_ordinal,
-                    );
+                    let authority =
+                        CodexPendingToolAuthority::new(&call_id, start_byte, end_byte, raw_ordinal);
                     (call_id, context, authority)
                 });
                 Ok(CodexRecordProjection {
@@ -168,6 +164,7 @@ impl CodexNativeScanner {
                 record,
                 &probe,
                 result_kind,
+                raw_ordinal,
                 start_byte,
                 end_byte,
                 record_digest,
@@ -196,6 +193,7 @@ impl CodexNativeScanner {
         record: &[u8],
         probe: &CodexRecordProbe<'_>,
         result_kind: CodexResultKind,
+        raw_ordinal: u64,
         start_byte: u64,
         end_byte: u64,
         record_digest: [u8; 32],
@@ -370,7 +368,7 @@ impl CodexNativeScanner {
         }
         let mcp_exchange = projected_mcp_exchange.map(|exchange| exchange.into_content());
         let core_row = build_source_backed_sparse_output_row(
-            self.raw_ordinal,
+            raw_ordinal,
             provider_event_identity(&decoded.payload),
             occurred_at,
             result_kind,
