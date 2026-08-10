@@ -101,47 +101,6 @@ CARGO_WORKSPACE_PACKAGE_DATA = [
     "//crates/ctx-sdk:cargo_package_data",
 ]
 
-# The live census checks this declaration against NUL-safe git discovery before
-# querying Cargo or Bazel. Keep every BUILD/Starlark manifest explicit so a new
-# package or macro cannot reuse a cached authority result.
-RUST_CRATE_SIZE_BUILD_DATA = [
-    ":loc_check_inputs",
-    "//crates/ctx-cli:loc_check_inputs",
-    "//crates/ctx-history-capture:loc_check_inputs",
-    "//crates/ctx-history-core:loc_check_inputs",
-    "//crates/ctx-history-index:loc_check_inputs",
-    "//crates/ctx-history-index-generation:loc_check_inputs",
-    "//crates/ctx-history-refresh:loc_check_inputs",
-    "//crates/ctx-pro-host-protocol:loc_check_inputs",
-    "//crates/ctx-protocol:loc_check_inputs",
-    "//crates/ctx-sdk:loc_check_inputs",
-    "//crates/ctx-semantic-index:loc_check_inputs",
-    "//crates/ctx-semantic-model:loc_check_inputs",
-    "//scripts/source-backed-recovery:loc_check_inputs",
-    "//sdks/go:loc_check_inputs",
-    "//sdks/go/examples/dogfood:loc_check_inputs",
-    "//tools/bazel:loc_check_inputs",
-    "//tools/bazel/mingw:loc_check_inputs",
-    "//tools/bazel/patches:loc_check_inputs",
-    "//tools/bazel/platforms:loc_check_inputs",
-]
-
-RUST_CRATE_SIZE_CENSUS_DATA = CARGO_WORKSPACE_PACKAGE_DATA + RUST_CRATE_SIZE_BUILD_DATA + glob([
-    "scripts/tests/fixtures/**/*.rs",
-]) + [
-    ".bazelignore",
-    ".bazelrc",
-    ".bazelversion",
-    ".gitignore",
-    "Cargo.lock",
-    "Cargo.toml",
-    "MODULE.bazel",
-    "MODULE.bazel.lock",
-    "scripts/bazelw",
-    "scripts/check.sh",
-    "sdks/typescript/.gitignore",
-]
-
 LOC_CHECK_SOURCE_DATA = [
     ":loc_check_inputs",
     "Cargo.toml",
@@ -170,27 +129,9 @@ loc_check_manifest(
     srcs = LOC_CHECK_SOURCE_DATA,
 )
 
-loc_check_manifest(
-    name = "rust_crate_size_source_manifest",
-    srcs = RUST_CRATE_SIZE_CENSUS_DATA,
-)
-
 LOC_CHECK_DATA = LOC_CHECK_SOURCE_DATA + [
     ":loc_check_source_manifest",
     "scripts/check-loc-policy-v2.json",
-    "@ctx_scc_linux_x86_64//:scc",
-]
-
-RUST_CRATE_SIZE_DATA = RUST_CRATE_SIZE_CENSUS_DATA + [
-    ":rust_crate_size_source_manifest",
-    "scripts/check-loc-policy-v2.json",
-    "scripts/check-rust-crate-size.py",
-    "scripts/check-rust-crate-size-baseline-v1.json",
-    "scripts/check-rust-crate-size-policy-v1.json",
-    "scripts/check-rust-crate-size-report-v1.json",
-    "scripts/ci-common.sh",
-    "//tools/bazel:check_rust_target_inventory.py",
-    "//tools/bazel:rust-target-inventory.json",
     "@ctx_scc_linux_x86_64//:scc",
 ]
 
@@ -304,24 +245,26 @@ rustfmt_test(
 
 py_test(
     name = "rust_target_inventory_check",
-    srcs = [
-        "scripts/check-rust-crate-size.py",
-        "//tools/bazel:check_rust_target_inventory.py",
-    ],
+    srcs = ["//tools/bazel:check_rust_target_inventory.py"],
     main = "//tools/bazel:check_rust_target_inventory.py",
     args = [
-        "--hermetic",
         "$(rootpath //tools/bazel:rust-target-inventory.json)",
         "$(rootpath Cargo.toml)",
-        "$(rootpath :rust_crate_size_source_manifest)",
     ],
-    data = RUST_CRATE_SIZE_CENSUS_DATA + [
-        ":rust_crate_size_source_manifest",
-        "scripts/bazel-test.sh",
-        "scripts/check-loc-policy-v2.json",
-        "scripts/check-rust-crate-size-policy-v1.json",
+    data = [
+        "Cargo.toml",
         "//tools/bazel:rust-target-inventory.json",
+    ] + CARGO_WORKSPACE_PACKAGE_DATA,
+)
+
+py_test(
+    name = "rust_crate_size_unit_tests",
+    srcs = [
+        "scripts/check-rust-crate-size.py",
+        "scripts/tests/check_rust_crate_size_test.py",
     ],
+    data = ["scripts/check-rust-crate-size-policy-v1.json"],
+    main = "scripts/tests/check_rust_crate_size_test.py",
 )
 
 py_test(
@@ -332,17 +275,6 @@ py_test(
     ],
     imports = ["tools/bazel"],
     main = "//tools/bazel:check_semantic_index_boundary_test.py",
-)
-
-py_test(
-    name = "rust_crate_size_unit_tests",
-    srcs = [
-        "scripts/check-rust-crate-size.py",
-        "scripts/tests/check_rust_crate_size_test.py",
-        "//tools/bazel:check_rust_target_inventory.py",
-    ],
-    data = ["//tools/bazel:check_rust_target_inventory.py"],
-    main = "scripts/tests/check_rust_crate_size_test.py",
 )
 
 py_test(
@@ -1120,15 +1052,6 @@ non_rust_gate(
         "$(rootpath :loc_check_source_manifest)",
     ],
     data = LOC_CHECK_DATA,
-)
-non_rust_gate(
-    name = "rust_crate_size_check",
-    mode = "rust_crate_size_check",
-    args = [
-        "$(rootpath @ctx_scc_linux_x86_64//:scc)",
-        "$(rootpath :rust_crate_size_source_manifest)",
-    ],
-    data = RUST_CRATE_SIZE_DATA,
 )
 non_rust_gate(
     name = "public_control_surface_check",

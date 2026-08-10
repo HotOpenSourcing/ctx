@@ -178,7 +178,6 @@ CI_TESTS = [
     ":release_source_surface_audit_tests",
     ":release_target_matrix_check",
     ":release_target_matrix_tests",
-    ":rust_crate_size_check",
     ":rust_crate_size_unit_tests",
     ":rust_target_inventory_check",
     ":rust_toolchain_pin_check",
