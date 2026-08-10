@@ -20,8 +20,8 @@ use super::client::default_helper_path;
 use super::commercial_config::CommercialConfig;
 use ctx_pro_host::{
     installed_helper::{
-        inspect_pair_at, load_pair_at, read_candidate, validate_pair_bytes, PairIdentity,
-        PairInspection, ValidatedPair,
+        inspect_pair_at, installation_artifacts_present, load_pair_at, read_candidate,
+        setup_repair_required, validate_pair_bytes, PairIdentity, PairInspection, ValidatedPair,
     },
     VerifiedHelperExecutable,
 };
@@ -98,72 +98,6 @@ struct InstallTransaction {
 enum TransactionState {
     Preparing,
     Committed,
-}
-
-#[derive(Debug)]
-struct SetupRepairRequiredError {
-    message: &'static str,
-}
-
-impl std::fmt::Display for SetupRepairRequiredError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.message)
-    }
-}
-
-impl std::error::Error for SetupRepairRequiredError {}
-
-fn setup_repair_required(message: &'static str) -> anyhow::Error {
-    anyhow::Error::new(SetupRepairRequiredError { message })
-}
-
-pub(in crate::pro) fn is_setup_repair_required_error(error: &anyhow::Error) -> bool {
-    error.downcast_ref::<SetupRepairRequiredError>().is_some()
-}
-
-pub(in crate::pro) fn installation_artifacts_present(data_root: &Path) -> bool {
-    let target = default_helper_path(data_root);
-    let Some(bin) = target.parent() else {
-        return true;
-    };
-    let Some(pro) = bin.parent() else {
-        return true;
-    };
-    for directory in [
-        data_root.to_path_buf(),
-        pro.to_path_buf(),
-        bin.to_path_buf(),
-    ] {
-        match fs::symlink_metadata(directory) {
-            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
-            Ok(_) => return true,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return true,
-        }
-    }
-    let paths = [
-        Ok(target.clone()),
-        install_marker_path(&target),
-        previous_helper_path(&target),
-        previous_marker_path(&target),
-        transaction_journal_path(&target),
-        transaction_journal_next_path(&target),
-        transaction_helper_path(&target),
-        transaction_marker_path(&target),
-        publish_helper_path(&target),
-        publish_marker_path(&target),
-        rollback_helper_stage_path(&target),
-        rollback_marker_stage_path(&target),
-    ];
-    paths.into_iter().any(|path| {
-        let Ok(path) = path else {
-            return true;
-        };
-        match fs::symlink_metadata(path) {
-            Ok(_) => true,
-            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
-        }
-    })
 }
 
 #[derive(Debug)]

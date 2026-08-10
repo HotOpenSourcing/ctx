@@ -1,5 +1,15 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(unix)]
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt as _,
+    path::PathBuf,
+    sync::{atomic::AtomicBool, Arc},
+    thread,
+    time::Duration,
+};
+
 use super::*;
 use crate::{AuthorizationMode, AuthorizationReceipt, CoreGenerationPin};
 use ctx_pro_host_protocol::{
@@ -47,10 +57,6 @@ impl InstalledProHost for MissingPinHost {
         bail!("authentication_denied: test host does not authorize")
     }
 
-    fn setup_repair_required(&self, _error: &anyhow::Error) -> bool {
-        false
-    }
-
     fn unix_time(&self) -> Result<i64> {
         Ok(0)
     }
@@ -62,6 +68,181 @@ impl CoreGenerationHost for MissingPinHost {
     fn pin_active_core_generation(&self, _data_root: &Path) -> Result<Self::Pin> {
         bail!("source_unavailable: active verified Core generation is missing")
     }
+}
+
+#[cfg(unix)]
+struct DropTrackedPin {
+    generation_id: String,
+    dropped: Arc<AtomicBool>,
+}
+
+#[cfg(unix)]
+impl CoreGenerationPin for DropTrackedPin {
+    fn generation_id(&self) -> &str {
+        &self.generation_id
+    }
+}
+
+#[cfg(unix)]
+impl Drop for DropTrackedPin {
+    fn drop(&mut self) {
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
+
+#[cfg(unix)]
+struct PinLifetimeHost {
+    helper_path: PathBuf,
+    pin_dropped: Arc<AtomicBool>,
+}
+
+#[cfg(unix)]
+impl InstalledProHost for PinLifetimeHost {
+    fn host_version(&self) -> &str {
+        "1.0.0"
+    }
+
+    fn existing_installation_id(&self, _data_root: &Path) -> Result<Option<String>> {
+        Ok(Some("00000000-0000-4000-8000-000000000000".to_owned()))
+    }
+
+    fn helper_override(&self) -> Result<Option<PathBuf>> {
+        Ok(Some(self.helper_path.clone()))
+    }
+
+    fn validated_installed_helper(&self, _data_root: &Path) -> Result<VerifiedHelperExecutable> {
+        unreachable!("the test host always selects its developer helper")
+    }
+
+    fn release_trust(&self) -> Result<crate::lifecycle_manifest::ReleaseTrust> {
+        crate::lifecycle_manifest::release_trust(crate::lifecycle_manifest::ReleaseChannel::Stable)
+    }
+
+    fn authorization_for_challenge(
+        &self,
+        _data_root: &Path,
+        _challenge: &[u8; ctx_pro_host_protocol::AUTHORIZATION_CHALLENGE_BYTES],
+        _mode: AuthorizationMode,
+    ) -> Result<AuthorizationReceipt> {
+        unreachable!("the status-only helper does not select authorization")
+    }
+
+    fn unix_time(&self) -> Result<i64> {
+        Ok(0)
+    }
+}
+
+#[cfg(unix)]
+impl CoreGenerationHost for PinLifetimeHost {
+    type Pin = DropTrackedPin;
+
+    fn pin_active_core_generation(&self, _data_root: &Path) -> Result<Self::Pin> {
+        Ok(DropTrackedPin {
+            generation_id: "a".repeat(64),
+            dropped: Arc::clone(&self.pin_dropped),
+        })
+    }
+}
+
+#[cfg(unix)]
+fn python3_interpreter() -> PathBuf {
+    [
+        "/usr/bin/python3",
+        "/usr/local/bin/python3",
+        "/usr/local/bin/python3.14",
+        "/usr/local/bin/python3.13",
+        "/opt/homebrew/bin/python3",
+    ]
+    .into_iter()
+    .filter_map(|candidate| fs::canonicalize(candidate).ok())
+    .find(|candidate| {
+        fs::metadata(candidate)
+            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+    })
+    .expect("status pin lifetime test requires an executable Python 3")
+}
+
+#[cfg(unix)]
+fn write_blocking_status_helper(
+    helper_path: &Path,
+    request_path: &Path,
+    release_path: &Path,
+) {
+    const HELPER: &str = r#"
+import json, pathlib, struct, sys, time
+
+REQUEST = pathlib.Path(__REQUEST_PATH__)
+RELEASE = pathlib.Path(__RELEASE_PATH__)
+RESPONSE = json.loads(__RESPONSE__)
+FINGERPRINT = __PROTOCOL_FINGERPRINT__
+
+def receive():
+    header = sys.stdin.buffer.read(12)
+    if len(header) != 12 or header[:6] != b'CTXPRO' or struct.unpack('>H', header[6:8])[0] != 3:
+        sys.exit(20)
+    size = struct.unpack('>I', header[8:12])[0]
+    payload = sys.stdin.buffer.read(size)
+    if len(payload) != size:
+        sys.exit(21)
+    return json.loads(payload)
+
+def send(request, kind, body):
+    envelope = {
+        'sequence': request['sequence'],
+        'request_id': request['request_id'],
+        'message': {'kind': kind, 'body': body},
+    }
+    payload = json.dumps(envelope, separators=(',', ':')).encode()
+    sys.stdout.buffer.write(b'CTXPRO' + struct.pack('>H', 3) + struct.pack('>I', len(payload)) + payload)
+    sys.stdout.buffer.flush()
+
+hello = receive()
+if hello['message']['kind'] != 'hello':
+    sys.exit(22)
+send(hello, 'hello', {
+    'protocol_version': 3,
+    'protocol_fingerprint': FINGERPRINT,
+    'helper_version': 'status-pin-lifetime-fixture-v1',
+    'capabilities': ['status'],
+    'authorization_challenge_base64url': '',
+})
+
+request = receive()
+if request['message']['kind'] != 'status':
+    sys.exit(23)
+requested_generation = request['message']['body'].get('requested_core_generation_id')
+REQUEST.write_text(requested_generation)
+while not RELEASE.exists():
+    time.sleep(0.001)
+send(request, 'status', RESPONSE)
+"#;
+    let helper = HELPER
+        .replace(
+            "__REQUEST_PATH__",
+            &serde_json::to_string(&request_path.to_string_lossy()).unwrap(),
+        )
+        .replace(
+            "__RELEASE_PATH__",
+            &serde_json::to_string(&release_path.to_string_lossy()).unwrap(),
+        )
+        .replace(
+            "__RESPONSE__",
+            &serde_json::to_string(
+                &serde_json::to_string(&status(MaterializedCoverage::Abstained)).unwrap(),
+            )
+            .unwrap(),
+        )
+        .replace(
+            "__PROTOCOL_FINGERPRINT__",
+            &serde_json::to_string(PROTOCOL_FINGERPRINT).unwrap(),
+        );
+    let interpreter = python3_interpreter();
+    fs::write(
+        helper_path,
+        format!("#!{}\n{helper}", interpreter.display()),
+    )
+    .unwrap();
+    fs::set_permissions(helper_path, fs::Permissions::from_mode(0o700)).unwrap();
 }
 
 fn receipt(generation: char) -> CoreMaterializationReceipt {
@@ -439,6 +620,66 @@ fn installed_status_fails_closed_when_active_core_cannot_be_pinned() {
     assert!(status.materialized_coverage.is_none());
     assert!(status.supported_operations.is_none());
     assert!(status.available_operations.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn active_core_pin_lifetime_covers_the_complete_status_exchange() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_root = temp.path().join("data");
+    fs::create_dir(&data_root).unwrap();
+    let helper_path = temp.path().join("status-helper.py");
+    let request_path = temp.path().join("status-requested");
+    let release_path = temp.path().join("release-status");
+    write_blocking_status_helper(&helper_path, &request_path, &release_path);
+
+    let pin_dropped = Arc::new(AtomicBool::new(false));
+    let host = Arc::new(PinLifetimeHost {
+        helper_path: helper_path.clone(),
+        pin_dropped: Arc::clone(&pin_dropped),
+    });
+    let status_thread = {
+        let host = Arc::clone(&host);
+        let data_root = data_root.clone();
+        thread::spawn(move || {
+            super::client_status::status_with_helper_resolver(
+                host.as_ref(),
+                &data_root,
+                |_| Ok(helper_path),
+            )
+        })
+    };
+
+    for _ in 0..300 {
+        if request_path.exists() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let request_received = request_path.exists();
+    if request_received {
+        assert_eq!(fs::read_to_string(&request_path).unwrap(), "a".repeat(64));
+    }
+    let pin_live_during_request = !pin_dropped.load(Ordering::SeqCst);
+    fs::write(&release_path, b"release").unwrap();
+    let result = status_thread.join().unwrap();
+    assert!(
+        request_received,
+        "helper never received the status request: {result:?}"
+    );
+    assert!(
+        pin_live_during_request,
+        "active Core generation pin dropped while the helper held the status request"
+    );
+    assert!(result.materialized);
+    assert_eq!(
+        result.projection_currentness,
+        Some(CoreProjectionCurrentness::Current)
+    );
+    assert!(
+        pin_dropped.load(Ordering::SeqCst),
+        "active Core generation pin was not released after status completed"
+    );
 }
 
 #[test]

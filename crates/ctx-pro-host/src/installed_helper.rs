@@ -1,6 +1,7 @@
 use std::{fs, path::Path};
 
 use anyhow::{bail, Context, Result};
+use ctx_pro_host_protocol::ProFilesystemLayout;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -61,6 +62,79 @@ impl PairInspection {
     pub fn is_untrusted(&self) -> bool {
         matches!(self, Self::Untrusted)
     }
+}
+
+#[derive(Debug)]
+struct SetupRepairRequiredError {
+    message: &'static str,
+}
+
+impl std::fmt::Display for SetupRepairRequiredError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.message)
+    }
+}
+
+impl std::error::Error for SetupRepairRequiredError {}
+
+#[must_use]
+pub fn setup_repair_required(message: &'static str) -> anyhow::Error {
+    anyhow::Error::new(SetupRepairRequiredError { message })
+}
+
+#[must_use]
+pub fn is_setup_repair_required_error(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<SetupRepairRequiredError>().is_some()
+}
+
+/// Conservatively reports whether any installed-helper lifecycle artifact or
+/// unsafe layout component is present beneath `data_root`.
+#[must_use]
+pub fn installation_artifacts_present(data_root: &Path) -> bool {
+    if !data_root.is_absolute()
+        || data_root.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::CurDir | std::path::Component::ParentDir
+            )
+        })
+    {
+        return true;
+    }
+
+    let layout = ProFilesystemLayout::new(data_root);
+    for directory in [
+        data_root.to_path_buf(),
+        layout.pro_root(),
+        layout.bin_dir(),
+    ] {
+        match fs::symlink_metadata(directory) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => return true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return true,
+        }
+    }
+
+    [
+        layout.helper_path(),
+        layout.helper_marker_path(),
+        layout.previous_helper_path(),
+        layout.previous_marker_path(),
+        layout.transaction_journal_path(),
+        layout.transaction_journal_next_path(),
+        layout.transaction_helper_path(),
+        layout.transaction_marker_path(),
+        layout.publish_helper_path(),
+        layout.publish_marker_path(),
+        layout.rollback_helper_path(),
+        layout.rollback_marker_path(),
+    ]
+    .into_iter()
+    .any(|path| match fs::symlink_metadata(path) {
+        Ok(_) => true,
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    })
 }
 
 pub fn load_pair_at(
@@ -130,4 +204,54 @@ pub fn read_candidate(path: &Path, maximum: u64) -> Result<Option<Vec<u8>>> {
     fs::read(path)
         .map(Some)
         .context("invalid_request: read Pro transaction file")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repair_required_errors_retain_their_typed_classification() {
+        let error = setup_repair_required("repair required");
+        assert!(is_setup_repair_required_error(&error));
+        assert!(!is_setup_repair_required_error(&anyhow::anyhow!(
+            "repair required"
+        )));
+    }
+
+    #[test]
+    fn installed_artifact_presence_covers_every_transaction_path() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(!installation_artifacts_present(temp.path()));
+
+        let layout = ProFilesystemLayout::new(temp.path());
+        for path in [
+            layout.helper_path(),
+            layout.helper_marker_path(),
+            layout.previous_helper_path(),
+            layout.previous_marker_path(),
+            layout.transaction_journal_path(),
+            layout.transaction_journal_next_path(),
+            layout.transaction_helper_path(),
+            layout.transaction_marker_path(),
+            layout.publish_helper_path(),
+            layout.publish_marker_path(),
+            layout.rollback_helper_path(),
+            layout.rollback_marker_path(),
+        ] {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, b"fixture").unwrap();
+            assert!(installation_artifacts_present(temp.path()), "{path:?}");
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn unsafe_or_non_directory_layout_is_conservatively_present() {
+        assert!(installation_artifacts_present(Path::new("relative-root")));
+
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("pro"), b"not a directory").unwrap();
+        assert!(installation_artifacts_present(temp.path()));
+    }
 }

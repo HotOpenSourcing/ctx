@@ -46,8 +46,6 @@ pub trait InstalledProHost {
         mode: AuthorizationMode,
     ) -> Result<AuthorizationReceipt>;
 
-    fn setup_repair_required(&self, error: &anyhow::Error) -> bool;
-
     fn unix_time(&self) -> Result<i64>;
 }
 

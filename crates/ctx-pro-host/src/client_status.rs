@@ -12,7 +12,10 @@ use ctx_pro_host_protocol::{
 };
 use serde::Serialize;
 
-use crate::{CoreGenerationHost, CoreGenerationPin as _, InstalledProHost};
+use crate::{
+    installed_helper::is_setup_repair_required_error, CoreGenerationHost,
+    CoreGenerationPin, InstalledProHost,
+};
 
 use super::{
     default_helper_path, helper_status, protocol_error, support, AuthorizationProvider, ProClient,
@@ -132,7 +135,7 @@ pub fn status_for_core(
         |data_root| support::helper_path(host, data_root),
         || {
             active_core
-                .map(|index| index.generation_id().to_owned())
+                .map(BorrowedCoreGeneration)
                 .ok_or_else(|| {
                     anyhow::anyhow!(
                         "source_unavailable: active verified Core generation is missing"
@@ -149,21 +152,28 @@ pub fn status_with_helper_resolver<H: CoreGenerationHost + ?Sized>(
 ) -> ProStatus {
     status_with_helper_resolver_and_core(host, data_root, resolve_helper, || {
         host.pin_active_core_generation(data_root)
-            .map(|index| index.generation_id().to_owned())
     })
 }
 
-fn status_with_helper_resolver_and_core(
+struct BorrowedCoreGeneration<'a>(&'a VerifiedIndex);
+
+impl CoreGenerationPin for BorrowedCoreGeneration<'_> {
+    fn generation_id(&self) -> &str {
+        self.0.generation_id()
+    }
+}
+
+fn status_with_helper_resolver_and_core<P: CoreGenerationPin>(
     host: &(impl InstalledProHost + ?Sized),
     data_root: &Path,
     resolve_helper: impl FnOnce(&Path) -> Result<PathBuf>,
-    resolve_core: impl FnOnce() -> Result<String>,
+    resolve_core: impl FnOnce() -> Result<P>,
 ) -> ProStatus {
     let helper_path = match resolve_helper(data_root) {
         Ok(path) => path,
         Err(error) => {
             let error_code = support::error_code(&error);
-            let setup_repairability = if host.setup_repair_required(&error) {
+            let setup_repairability = if is_setup_repair_required_error(&error) {
                 ProSetupRepairability::Automated
             } else if error_code == "pro_not_installed" {
                 ProSetupRepairability::NotNeeded
@@ -223,7 +233,7 @@ fn status_with_helper_resolver_and_core(
             };
         }
     };
-    let active_core_generation_id = active_core.as_str();
+    let active_core_generation_id = active_core.generation_id();
     match ProClient::connect_for_status(host, data_root, &BTreeSet::from([Capability::Status])) {
         Ok(mut client) => {
             let helper_version = Some(client.helper_version.clone());

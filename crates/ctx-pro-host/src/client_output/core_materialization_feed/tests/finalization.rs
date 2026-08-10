@@ -43,10 +43,6 @@ impl crate::InstalledProHost for ProcessTestHost {
         bail!("authentication_denied: process test supplies an explicit provider")
     }
 
-    fn setup_repair_required(&self, _error: &anyhow::Error) -> bool {
-        false
-    }
-
     fn unix_time(&self) -> Result<i64> {
         Ok(0)
     }

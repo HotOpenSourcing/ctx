@@ -86,10 +86,6 @@ impl InstalledProHost for CtxInstalledProHost {
         })
     }
 
-    fn setup_repair_required(&self, error: &anyhow::Error) -> bool {
-        lifecycle::is_setup_repair_required_error(error)
-    }
-
     fn unix_time(&self) -> Result<i64> {
         commercial_lifecycle::unix_time()
     }
