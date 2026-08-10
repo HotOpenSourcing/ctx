@@ -163,11 +163,7 @@ fn python3_interpreter() -> PathBuf {
 }
 
 #[cfg(unix)]
-fn write_blocking_status_helper(
-    helper_path: &Path,
-    request_path: &Path,
-    release_path: &Path,
-) {
+fn write_blocking_status_helper(helper_path: &Path, request_path: &Path, release_path: &Path) {
     const HELPER: &str = r#"
 import json, pathlib, struct, sys, time
 
@@ -660,11 +656,9 @@ fn active_core_pin_lifetime_covers_the_complete_status_exchange() {
         let host = Arc::clone(&host);
         let data_root = data_root.clone();
         thread::spawn(move || {
-            super::client_status::status_with_helper_resolver(
-                host.as_ref(),
-                &data_root,
-                |_| Ok(helper_path),
-            )
+            super::client_status::status_with_helper_resolver(host.as_ref(), &data_root, |_| {
+                Ok(helper_path)
+            })
         })
     };
 

@@ -1331,6 +1331,7 @@ fn production_source_paths(root: &Path) -> Vec<PathBuf> {
         .expect("ctx-cli package belongs to the workspace crates directory");
     let integrations_root = workspace_root.join("crates/ctx-agent-integrations");
     let daemon_runtime_root = workspace_root.join("crates/ctx-daemon-runtime");
+    let pro_host_root = workspace_root.join("crates/ctx-pro-host");
     let engine_root = workspace_root.join("crates/ctx-upgrade-engine");
     let mut paths = vec![
         root.join("build.rs"),
@@ -1340,6 +1341,7 @@ fn production_source_paths(root: &Path) -> Vec<PathBuf> {
     visit_production_source_files(&integrations_root.join("src"), &mut paths);
     visit_production_source_files(&root.join("src"), &mut paths);
     visit_production_source_files(&daemon_runtime_root.join("src"), &mut paths);
+    visit_production_source_files(&pro_host_root.join("src"), &mut paths);
     visit_production_source_files(&engine_root.join("src"), &mut paths);
     paths.sort();
     paths
@@ -1370,6 +1372,7 @@ fn scan_package() -> Vec<Site> {
     let model_build = workspace_root.join("crates/ctx-semantic-model/build.rs");
     let integrations_root = workspace_root.join("crates/ctx-agent-integrations");
     let daemon_runtime_root = workspace_root.join("crates/ctx-daemon-runtime");
+    let pro_host_root = workspace_root.join("crates/ctx-pro-host");
     let engine_root = workspace_root.join("crates/ctx-upgrade-engine");
     let mut sources = Vec::new();
     for path in production_source_paths(&root) {
@@ -1383,6 +1386,11 @@ fn scan_package() -> Vec<Site> {
         } else if let Ok(relative) = path.strip_prefix(&daemon_runtime_root) {
             format!(
                 "crates/ctx-daemon-runtime/{}",
+                relative.to_string_lossy().replace('\\', "/")
+            )
+        } else if let Ok(relative) = path.strip_prefix(&pro_host_root) {
+            format!(
+                "crates/ctx-pro-host/{}",
                 relative.to_string_lossy().replace('\\', "/")
             )
         } else if let Ok(relative) = path.strip_prefix(&engine_root) {

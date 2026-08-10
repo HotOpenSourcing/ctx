@@ -58,6 +58,7 @@ ctx-history-index = { path = "../ctx-history-index" }
 ctx-history-query = { path = "../ctx-history-query" }
 ctx-history-refresh = { path = "../ctx-history-refresh" }
 ctx-pro-access = { path = "../ctx-pro-access" }
+ctx-pro-host = { path = "../ctx-pro-host" }
 ctx-pro-host-protocol = { path = "../ctx-pro-host-protocol" }
 ctx-semantic-index = { path = "../ctx-semantic-index" }
 ctx-semantic-model = { path = "../ctx-semantic-model" }
@@ -86,6 +87,7 @@ assert_cmd.workspace = true
 ctx-client-observability = { path = "../ctx-client-observability", features = ["test-support"] }
 ctx-daemon-service = { path = "../ctx-daemon-service", features = ["test-support"] }
 ctx-pro-access = { path = "../ctx-pro-access", features = ["test-support"] }
+ctx-pro-host = { path = "../ctx-pro-host", features = ["test-support"] }
 ctx-upgrade-engine = { path = "../ctx-upgrade-engine", features = ["test-support"] }
 ctx-history-refresh = { path = "../ctx-history-refresh", features = ["test-support"] }
 ctx-semantic-index = { path = "../ctx-semantic-index", features = ["test-support"] }

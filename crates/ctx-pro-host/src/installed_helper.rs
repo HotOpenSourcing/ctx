@@ -103,11 +103,7 @@ pub fn installation_artifacts_present(data_root: &Path) -> bool {
     }
 
     let layout = ProFilesystemLayout::new(data_root);
-    for directory in [
-        data_root.to_path_buf(),
-        layout.pro_root(),
-        layout.bin_dir(),
-    ] {
+    for directory in [data_root.to_path_buf(), layout.pro_root(), layout.bin_dir()] {
         match fs::symlink_metadata(directory) {
             Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
             Ok(_) => return true,

@@ -17,6 +17,7 @@ members = [
     "crates/ctx-history-query",
     "crates/ctx-history-refresh",
     "crates/ctx-history-refresh-execution",
+    "crates/ctx-pro-host",
     "crates/ctx-semantic-index",
     "crates/ctx-semantic-model",
     "crates/ctx-pro-host-protocol",

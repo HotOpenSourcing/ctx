@@ -88,6 +88,7 @@ fn parse_identity(identity: &str) -> Result<(String, String), String> {
         && !path.starts_with("src/")
         && !path.starts_with("crates/ctx-agent-integrations/src/")
         && !path.starts_with("crates/ctx-client-observability/src/")
+        && !path.starts_with("crates/ctx-pro-host/src/")
         && !path.starts_with("crates/ctx-upgrade-engine/src/")
     {
         return Err("owning test source is outside the source-checked test roots".to_owned());

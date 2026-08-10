@@ -42,7 +42,17 @@ HOST_TEST_DEPS = [
     "//crates/ctx-history-index-query:test_support_lib",
     "//crates/ctx-history-index:test_support_lib",
     "//crates/ctx-history-refresh:lib",
-    "//crates/ctx-pro-access:lib",
+    "//crates/ctx-pro-access:test_support_lib",
+    "//crates/ctx-pro-host-protocol:lib",
+]
+
+HOST_TEST_SUPPORT_DEPS = [
+    "//crates/ctx-history-core:lib",
+    "//crates/ctx-history-index-format:lib",
+    "//crates/ctx-history-index-generation:lib",
+    "//crates/ctx-history-index-query:lib",
+    "//crates/ctx-history-refresh:lib",
+    "//crates/ctx-pro-access:test_support_lib",
     "//crates/ctx-pro-host-protocol:lib",
 ]
 
@@ -72,7 +82,7 @@ rust_library(
     crate_root = "src/lib.rs",
     edition = crate_edition(),
     aliases = aliases(),
-    deps = all_crate_deps(normal = True) + HOST_DEPS,
+    deps = all_crate_deps(normal = True) + HOST_TEST_SUPPORT_DEPS,
     proc_macro_deps = all_crate_deps(proc_macro = True),
     rustc_env = COMMON_RUSTC_ENV,
     rustc_flags = HOST_RUSTC_FLAGS + ['--cfg=feature="test-support"'],
@@ -100,6 +110,9 @@ rust_library(
     rustc_flags = HOST_RUSTC_FLAGS + ['--cfg=feature="qualification"'],
 )
 
+# The optimized CLI protocol fixture needs both the qualification authorizer
+# and the explicit developer-helper seam. Cargo unifies those two dev features;
+# keep the equivalent Bazel capability test-only and named explicitly.
 rust_library(
     name = "qualification_test_support_lib",
     testonly = True,

@@ -13,8 +13,8 @@ use ctx_pro_host_protocol::{
 use serde::Serialize;
 
 use crate::{
-    installed_helper::is_setup_repair_required_error, CoreGenerationHost,
-    CoreGenerationPin, InstalledProHost,
+    installed_helper::is_setup_repair_required_error, CoreGenerationHost, CoreGenerationPin,
+    InstalledProHost,
 };
 
 use super::{
@@ -134,13 +134,9 @@ pub fn status_for_core(
         data_root,
         |data_root| support::helper_path(host, data_root),
         || {
-            active_core
-                .map(BorrowedCoreGeneration)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "source_unavailable: active verified Core generation is missing"
-                    )
-                })
+            active_core.map(BorrowedCoreGeneration).ok_or_else(|| {
+                anyhow::anyhow!("source_unavailable: active verified Core generation is missing")
+            })
         },
     )
 }

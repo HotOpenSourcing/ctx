@@ -12,7 +12,7 @@ publish = false
 [features]
 default = []
 qualification = ["ctx-pro-access/qualification"]
-test-support = []
+test-support = ["ctx-pro-access/test-support"]
 
 [dependencies]
 anyhow.workspace = true

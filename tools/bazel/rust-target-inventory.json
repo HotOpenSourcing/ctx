@@ -186,6 +186,16 @@
       ],
       "focused_tests": ["//crates/ctx-pro-access:qualification_authorizer_tests"]
     },
+    "ctx-pro-host": {
+      "manifest": "crates/ctx-pro-host/Cargo.toml",
+      "targets": {"lib:ctx_pro_host": "//crates/ctx-pro-host:lib"},
+      "native_unit": "//crates/ctx-pro-host:unit_tests",
+      "feature_variants": [
+        "//crates/ctx-pro-host:qualification_lib",
+        "//crates/ctx-pro-host:qualification_test_support_lib",
+        "//crates/ctx-pro-host:test_support_lib"
+      ]
+    },
     "ctx-pro-host-protocol": {
       "manifest": "crates/ctx-pro-host-protocol/Cargo.toml",
       "targets": {
