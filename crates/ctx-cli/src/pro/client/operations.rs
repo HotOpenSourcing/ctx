@@ -2,11 +2,10 @@ use super::*;
 
 pub(crate) fn blame(
     data_root: &Path,
-    target: BlameTarget,
+    target: &BlameTarget,
     limit: u32,
     cursor: Option<String>,
 ) -> Result<HostedBlameResult> {
-    let diagnostic_target = target.clone();
     blame_with_policy(
         data_root,
         target,
@@ -14,12 +13,12 @@ pub(crate) fn blame(
         cursor,
         DEFAULT_BLAME_FRESHNESS_POLICY,
     )
-    .map_err(|error| errors::blame_boundary_error(error, &diagnostic_target))
+    .map_err(|error| errors::blame_boundary_error(error, target))
 }
 
 pub(super) fn blame_with_policy(
     data_root: &Path,
-    target: BlameTarget,
+    target: &BlameTarget,
     limit: u32,
     cursor: Option<String>,
     policy: BlameFreshnessPolicy,
@@ -115,12 +114,12 @@ struct BlameAttempt {
 
 fn blame_once(
     data_root: &Path,
-    target: BlameTarget,
+    target: &BlameTarget,
     limit: u32,
     cursor: Option<String>,
     expected_active_core_generation_id: Option<&str>,
 ) -> Result<BlameAttempt> {
-    let capabilities = required_blame_capabilities(&target);
+    let capabilities = required_blame_capabilities(target);
     let mut client = ProClient::connect(data_root, &capabilities)?;
     let status = helper_status(&mut client)?;
     let expected_core_generation_id =
@@ -129,7 +128,7 @@ fn blame_once(
         anyhow!("not_materialized: Pro helper has no completed Core materialization receipt")
     })?;
     let request = support::current_blame_request(
-        target,
+        target.clone(),
         limit,
         cursor,
         &status,

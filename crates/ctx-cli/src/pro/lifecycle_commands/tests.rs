@@ -1083,16 +1083,27 @@ fn manage_json_never_invokes_the_browser_opener() {
     };
     let mut telemetry = ProLifecycleTelemetryV1::new(ProLifecycleOperationV1::Manage);
     let (mut ui, stdout, stderr) = test_ui(80);
-    run_manage_with_opener(
-        root.path(),
-        &mut ManageService,
-        false,
-        true,
-        &mut telemetry,
-        &mut ui,
-        &opener,
-    )
-    .unwrap();
+    let usage_storage =
+        crate::observability_composition::local_usage_storage_authority(root.path());
+    let usage_control = crate::observability_composition::usage_control_snapshot(true);
+    let ((result, metadata_reads), config_loads) = crate::config::count_app_config_loads(|| {
+        crate::observability_composition::count_usage_control_metadata_reads(|| {
+            run_manage_with_opener(
+                root.path(),
+                &mut ManageService,
+                false,
+                true,
+                &usage_storage,
+                &usage_control,
+                &mut telemetry,
+                &mut ui,
+                &opener,
+            )
+        })
+    });
+    result.unwrap();
+    assert_eq!(config_loads, 0);
+    assert_eq!(metadata_reads, 0);
     assert_eq!(calls.get(), 0);
     assert!(stdout.text().is_empty());
     assert!(stderr.text().is_empty());
@@ -1148,11 +1159,16 @@ fn manage_no_open_routes_the_primary_result_to_ui_stdout_only() {
     };
     let mut telemetry = ProLifecycleTelemetryV1::new(ProLifecycleOperationV1::Manage);
     let (mut ui, stdout, stderr) = test_ui(80);
+    let usage_storage =
+        crate::observability_composition::local_usage_storage_authority(root.path());
+    let usage_control = crate::observability_composition::usage_control_snapshot(true);
     run_manage_with_opener(
         root.path(),
         &mut ManageService,
         true,
         false,
+        &usage_storage,
+        &usage_control,
         &mut telemetry,
         &mut ui,
         &opener,

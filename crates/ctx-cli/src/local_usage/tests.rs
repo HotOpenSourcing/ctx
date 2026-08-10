@@ -8,6 +8,7 @@ use super::{
     ContextCoverage, McpInvocation, ProOutcome, ResultObservationAction, SearchContextObservation,
     ValueClass,
 };
+use crate::operation_descriptor::LocalUsageOperation;
 
 mod mcp_tests;
 mod migration_tests;
@@ -57,7 +58,12 @@ pub(super) fn private_tempdir() -> tempfile::TempDir {
 }
 
 pub(super) fn operation(name: &'static str) -> CompletedOperation {
-    let mut operation = CompletedOperation::cli(name, true, Duration::from_millis(4));
+    let operation_kind = match name {
+        "doctor" => LocalUsageOperation::Doctor,
+        "search" => LocalUsageOperation::Search,
+        _ => panic!("unsupported test operation {name}"),
+    };
+    let mut operation = CompletedOperation::cli(operation_kind, true, Duration::from_millis(4));
     operation.delivered_output_bytes = 1;
     operation
 }
@@ -65,7 +71,7 @@ pub(super) fn operation(name: &'static str) -> CompletedOperation {
 #[test]
 fn cli_definition_two_search_uses_only_dedicated_exact_context_observation() {
     let mut usage = CliUsage::excluded();
-    usage.operation = Some("search");
+    usage.operation = Some(LocalUsageOperation::Search);
     usage.set_result_observation(ResultObservationAction::Search, 3, 99, 8_000);
     usage.set_search_context_observation(SearchContextObservation::complete(320, 1_000).unwrap());
     usage.set_measured_output_bytes(701);
@@ -84,7 +90,7 @@ fn cli_definition_two_search_uses_only_dedicated_exact_context_observation() {
 #[test]
 fn search_without_complete_adapter_is_unavailable_and_failures_discard_counts() {
     let mut usage = CliUsage::excluded();
-    usage.operation = Some("search");
+    usage.operation = Some(LocalUsageOperation::Search);
     usage.set_result_observation(ResultObservationAction::Search, 2, 0, 400);
     let completed = usage.completed(true, Duration::ZERO).unwrap();
     assert_eq!(
@@ -112,8 +118,10 @@ fn cli_show_operations_are_typed_and_stats_status_are_excluded() {
     ] {
         let cli = crate::Cli::try_parse_from(args).unwrap();
         assert_eq!(
-            CliUsage::from_command(&cli.command).operation,
-            Some(expected)
+            CliUsage::from_command(&cli.command)
+                .operation
+                .map(LocalUsageOperation::as_str),
+            Some(expected),
         );
     }
     for args in [vec!["ctx", "status"], vec!["ctx", "stats"]] {
@@ -144,7 +152,7 @@ fn cli_and_mcp_use_identical_duration_bucket_boundaries() {
         (Duration::from_nanos(29_999_999_999), "5_to_29_s"),
         (Duration::from_secs(30), "30_s_or_more"),
     ] {
-        let cli = CompletedOperation::cli("doctor", true, duration);
+        let cli = CompletedOperation::cli(LocalUsageOperation::Doctor, true, duration);
         let mcp = McpInvocation::recognized("status")
             .unwrap()
             .completed(&response, duration, 1);

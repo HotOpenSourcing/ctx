@@ -1,9 +1,12 @@
 use std::{
     io::{self, IsTerminal as _},
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, Stdio},
     time::Instant,
 };
+
+#[cfg(test)]
+use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
@@ -194,15 +197,19 @@ impl ProArgs {
         }
     }
 
-    pub(crate) fn local_usage_operation(&self) -> &'static str {
+    pub(crate) fn operation_descriptor(&self) -> crate::operation_descriptor::CliOperation {
         match &self.command {
-            Some(ProCommand::Manage(_)) => "pro_manage",
-            Some(ProCommand::Uninstall(_)) => "pro_uninstall",
+            Some(ProCommand::Manage(_)) => crate::operation_descriptor::CliOperation::ProManage,
+            Some(ProCommand::Uninstall(_)) => {
+                crate::operation_descriptor::CliOperation::ProUninstall
+            }
             #[cfg(ctx_pro_test_helper)]
             Some(ProCommand::TestPublishHelperRecheck(_) | ProCommand::TestWakeHelperRecheck) => {
-                "pro_setup"
+                crate::operation_descriptor::CliOperation::ProSetup
             }
-            None | Some(ProCommand::Setup(_)) => "pro_setup",
+            None | Some(ProCommand::Setup(_)) => {
+                crate::operation_descriptor::CliOperation::ProSetup
+            }
         }
     }
 }
@@ -254,15 +261,29 @@ pub(crate) trait ProDeletionService {
     fn finish_deletion(&mut self, data_root: &Path) -> Result<()>;
 }
 
-pub(crate) fn run_lifecycle(args: ProArgs, data_root: PathBuf, ui: &mut Ui) -> Result<()> {
+pub(crate) fn run_lifecycle(
+    args: ProArgs,
+    data_root: &Path,
+    usage_storage: &crate::local_usage::LocalUsageStorageAuthority,
+    usage_control: &crate::local_usage::UsageControlSnapshot,
+    ui: &mut Ui,
+) -> Result<()> {
     let started = Instant::now();
     let human_output = !args.json_output();
     let retry_command = render::human_retry_command(&args);
     let mut telemetry = ProLifecycleTelemetryV1::new(args.telemetry_operation());
     let control_validation = crate::pro::commercial_config::reject_test_control_outside_test_host();
     let emit_telemetry = control_validation.is_ok();
-    let result =
-        control_validation.and_then(|()| run_lifecycle_inner(args, &data_root, &mut telemetry, ui));
+    let result = control_validation.and_then(|()| {
+        run_lifecycle_inner(
+            args,
+            data_root,
+            usage_storage,
+            usage_control,
+            &mut telemetry,
+            ui,
+        )
+    });
     #[cfg(ctx_pro_test_helper)]
     let result = crate::pro::test_control::finish(result);
     if let Err(error) = &result {
@@ -270,7 +291,7 @@ pub(crate) fn run_lifecycle(args: ProArgs, data_root: PathBuf, ui: &mut Ui) -> R
     }
     if emit_telemetry {
         send_pro_operation(
-            &data_root,
+            data_root,
             ProHostOperationV1::Lifecycle(telemetry),
             if result.is_ok() {
                 Outcome::Success
@@ -286,6 +307,8 @@ pub(crate) fn run_lifecycle(args: ProArgs, data_root: PathBuf, ui: &mut Ui) -> R
 fn run_lifecycle_inner(
     args: ProArgs,
     data_root: &Path,
+    usage_storage: &crate::local_usage::LocalUsageStorageAuthority,
+    usage_control: &crate::local_usage::UsageControlSnapshot,
     telemetry: &mut ProLifecycleTelemetryV1,
     ui: &mut Ui,
 ) -> Result<()> {
@@ -369,6 +392,8 @@ fn run_lifecycle_inner(
                     &mut service,
                     args.no_open,
                     json_output,
+                    usage_storage,
+                    usage_control,
                     telemetry,
                     ui,
                 );
@@ -379,6 +404,8 @@ fn run_lifecycle_inner(
                 &mut service,
                 args.no_open,
                 json_output,
+                usage_storage,
+                usage_control,
                 telemetry,
                 ui,
             )
@@ -650,6 +677,8 @@ fn run_manage(
     service: &mut dyn ProLifecycleService,
     no_open: bool,
     json_output: bool,
+    usage_storage: &crate::local_usage::LocalUsageStorageAuthority,
+    usage_control: &crate::local_usage::UsageControlSnapshot,
     telemetry: &mut ProLifecycleTelemetryV1,
     ui: &mut Ui,
 ) -> Result<()> {
@@ -658,6 +687,8 @@ fn run_manage(
         service,
         no_open,
         json_output,
+        usage_storage,
+        usage_control,
         telemetry,
         ui,
         &open_browser,
@@ -669,6 +700,8 @@ fn run_manage_with_opener(
     service: &mut dyn ProLifecycleService,
     no_open: bool,
     json_output: bool,
+    usage_storage: &crate::local_usage::LocalUsageStorageAuthority,
+    usage_control: &crate::local_usage::UsageControlSnapshot,
     telemetry: &mut ProLifecycleTelemetryV1,
     ui: &mut Ui,
     opener: &dyn Fn(&str) -> Result<()>,
@@ -686,9 +719,8 @@ fn run_manage_with_opener(
     telemetry.access_state = ProAccessStateV1::from_safe_name(&plan.access_state);
     let browser_opened = !json_output && !no_open && opener(&plan.portal_url).is_ok();
     let mut value = manage_payload(&plan, browser_opened);
-    let usage_report = crate::config::AppConfig::load(data_root)
-        .map(|config| crate::local_usage::read_report(data_root, config.local_usage.enabled, false))
-        .unwrap_or_else(|_| crate::local_usage::UsageReport::config_error());
+    let usage_report =
+        crate::local_usage::read_report_authorized(usage_storage, usage_control, false);
     let conversion_action =
         crate::local_usage::pro_conversion_action(Some(plan.access_state.as_str()));
     if let Some(object) = value.as_object_mut() {

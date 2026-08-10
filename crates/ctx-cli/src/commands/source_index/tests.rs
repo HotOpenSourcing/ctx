@@ -444,6 +444,7 @@ mod tests {
         .err()
         .expect("oversized query must be rejected");
 
+        let error = error.into_anyhow();
         assert!(matches!(
             error.downcast_ref::<IndexError>(),
             Some(IndexError::LexicalQueryBytesTooLarge { actual, maximum })
@@ -472,6 +473,7 @@ mod tests {
         .err()
         .expect("repeated terms must be rejected");
 
+        let error = error.into_anyhow();
         assert!(matches!(
             error.downcast_ref::<IndexError>(),
             Some(IndexError::LexicalQueryAlternativesTooMany { observed, maximum })
@@ -1644,12 +1646,13 @@ mod tests {
         semantic.backend = Some(SearchBackendArg::Semantic);
         let error = mcp_search(semantic, temp.path())
             .expect_err("MCP semantic-only must fail when the daemon is disabled");
-        assert_eq!(
-            error
-                .downcast_ref::<SemanticNotReady>()
-                .map(SemanticNotReady::code),
-            Some("semantic_daemon_disabled")
-        );
+        assert!(matches!(
+            error,
+            McpSearchError::SemanticNotReady {
+                code: "semantic_daemon_disabled",
+                ..
+            }
+        ));
     }
 
     #[test]

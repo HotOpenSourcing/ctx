@@ -480,12 +480,12 @@ fn commit_and_pr_results_skip_hydration_for_text_and_json() {
                         commit: ResourceRef {
                             id: format!("commit:{oid}"),
                             kind: ResourceKind::Commit,
-                            display: oid,
+                            display: oid.clone(),
                         },
                         repository,
                     },
                     BlameTarget::PullRequest { selector, .. } => ResolvedBlameTarget::PullRequest {
-                        selector,
+                        selector: selector.clone(),
                         pull_request: ResourceRef {
                             id: "pull_request:ctxrs-ctx:42".to_owned(),
                             kind: ResourceKind::PullRequest,

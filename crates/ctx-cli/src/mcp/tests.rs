@@ -28,12 +28,109 @@ fn query_authority_errors_remain_typed_in_mcp_results() {
             false,
         ),
     ] {
-        let result = tool_error_result(anyhow::Error::new(error));
+        let result = tool_error_result(ToolBackendError::GenerationAuthority(error));
         assert_eq!(result["isError"], true);
         assert_eq!(result["structuredContent"]["error_code"], code);
         assert_eq!(result["structuredContent"]["retryable"], retryable);
         assert!(result["structuredContent"]["detail"].is_string());
     }
+}
+
+#[derive(Default)]
+struct RecordingBackend {
+    operations: Mutex<Vec<ToolOperation>>,
+    error: Mutex<Option<ToolBackendError>>,
+}
+
+impl ToolBackend for RecordingBackend {
+    fn execute(
+        &self,
+        operation: ToolOperation,
+    ) -> std::result::Result<ToolOutcome, ToolExecutionError> {
+        self.operations.lock().unwrap().push(operation);
+        if let Some(error) = self.error.lock().unwrap().take() {
+            return Err(error.into());
+        }
+        Ok(ToolOutcome::plain(json!({"ok": true})))
+    }
+}
+
+#[test]
+fn transport_validates_then_calls_typed_backend_once() {
+    let backend = RecordingBackend::default();
+    let (handled, invocation) = handle_tools_call_with_backend(
+        json!({
+            "name": "show_event",
+            "arguments": {"ctx_event_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "window": 3},
+        }),
+        McpOperationKind::ShowEvent,
+        &backend,
+    );
+
+    assert_eq!(handled.unwrap().value["structuredContent"]["ok"], true);
+    assert!(invocation.is_some());
+    let operations = backend.operations.lock().unwrap();
+    assert!(matches!(
+        operations.as_slice(),
+        [ToolOperation::ShowEvent(crate::tool_backend::ShowEventRequest {
+            selector,
+            window: Some(3),
+            ..
+        })] if selector == "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    ));
+}
+
+#[test]
+fn typed_backend_error_is_rendered_without_downcast() {
+    let backend = RecordingBackend {
+        operations: Mutex::new(Vec::new()),
+        error: Mutex::new(Some(ToolBackendError::SemanticNotReady {
+            code: "semantic_query_service_unavailable",
+            detail: "daemon unavailable".to_owned(),
+            retryable: true,
+        })),
+    };
+    let (handled, _) = handle_tools_call_with_backend(
+        json!({"name": "search", "arguments": {"query": "needle"}}),
+        McpOperationKind::Search,
+        &backend,
+    );
+    let result = handled.unwrap().value;
+
+    assert_eq!(backend.operations.lock().unwrap().len(), 1);
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error_code"],
+        "semantic_query_service_unavailable"
+    );
+    assert_eq!(result["structuredContent"]["retryable"], true);
+}
+
+#[test]
+fn blame_usage_target_survives_later_limit_and_cursor_validation_failures() {
+    let backend = RecordingBackend::default();
+    for arguments in [
+        json!({
+            "target": {"kind": "commit", "oid": "abc1234"},
+            "limit": MCP_BLAME_LIMIT + 1,
+        }),
+        json!({
+            "target": {"kind": "commit", "oid": "abc1234"},
+            "cursor": "",
+        }),
+    ] {
+        let (handled, invocation) = handle_tools_call_with_backend(
+            json!({"name": "blame", "arguments": arguments}),
+            McpOperationKind::Blame,
+            &backend,
+        );
+        assert_eq!(handled.unwrap().value["isError"], true);
+        assert_eq!(
+            invocation.unwrap().target_type_for_test(),
+            crate::local_usage::TargetType::Commit
+        );
+    }
+    assert!(backend.operations.lock().unwrap().is_empty());
 }
 
 #[derive(Clone, Copy)]
@@ -210,7 +307,25 @@ fn blame_validation_failures_use_one_trusted_cli_mcp_diagnostic() {
         }),
     ] {
         let (handled, _) = handle_tools_call(params, temp.path());
-        let value = handled.unwrap().value;
+        let handled = handled.unwrap();
+        let event = handled
+            .pro_event
+            .expect("rejected blame must emit a Pro-host observation");
+        let crate::analytics::PublicEventV1::OperationCompleted(event) = event else {
+            panic!("rejected blame must emit an operation event");
+        };
+        let crate::operation_descriptor::OperationDescriptor::ProHost(
+            crate::analytics::ProHostOperationV1::Blame(blame),
+        ) = event.descriptor
+        else {
+            panic!("rejected blame must retain blame operation identity");
+        };
+        assert_eq!(event.outcome, crate::analytics::Outcome::Failure);
+        assert_eq!(
+            blame.failure,
+            Some(crate::analytics::ProFailureBucketV1::InvalidRequest)
+        );
+        let value = handled.value;
 
         assert_eq!(value["isError"], true);
         assert_eq!(value["structuredContent"], expected);

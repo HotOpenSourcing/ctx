@@ -4,7 +4,12 @@ use anyhow::{Context, Result};
 use ctx_history_core::default_data_root;
 
 use crate::{
-    analytics::{self, ClientOperationDraft},
+    analytics::{
+        self, count_bucket, ClientOperationDraft, DocsTelemetry, DoctorTelemetry, ImportTelemetry,
+        IndexTelemetry, IntegrationTelemetry, LocateTelemetry, ProgressMode, RenderFormat,
+        SearchTelemetry, SetupTelemetry, ShowTelemetry, SourcesTelemetry, StatusTelemetry,
+        TargetKind, TranscriptModeKind, UpgradeMode, UpgradeOperation, UpgradeTelemetry,
+    },
     cli::{CommandRoot, DaemonCommand, DaemonTriggerCommandArg, ImportArgs, ShowArgs, ShowTarget},
     commands::{
         doctor::run_doctor,
@@ -18,12 +23,14 @@ use crate::{
         sources::run_sources,
         stats::{malformed_config_failure as malformed_stats_config_failure, run as run_stats},
         status::{
-            malformed_config_failure, removed_cloud_config_failure, run_status, run_usage_action,
+            malformed_config_failure, removed_cloud_config_failure,
+            run_status_authorized as run_status, run_usage_action,
         },
     },
     config::AppConfig,
     deprecated_controls::DeprecatedControls,
     docs, integrations, local_usage, mcp,
+    operation_descriptor::{CliOperation, OperationDescriptor},
     output::{OutputFormat, OutputMeasurement},
     presentation_limit, pro, semantic,
     ui::{
@@ -220,6 +227,8 @@ pub(crate) fn run_cli() -> Result<()> {
         }
         Err(error) => return Err(error),
     };
+    let local_usage_authority =
+        crate::observability_composition::local_usage_storage_authority(&data_root);
     if usage_control_action {
         let CommandRoot::Status(args) = cli.command else {
             unreachable!("usage controls are status commands");
@@ -227,11 +236,20 @@ pub(crate) fn run_cli() -> Result<()> {
         let Some(mode) = args.usage else {
             unreachable!("usage control mode was checked above");
         };
-        return run_usage_action(mode, &data_root, args.format.is_json(), quiet, &mut ui);
+        return run_usage_action(
+            mode,
+            &data_root,
+            &local_usage_authority,
+            args.format.is_json(),
+            quiet,
+            &mut ui,
+        );
     }
     let daemon_autostart_trigger = command_daemon_autostart_trigger(&cli.command);
-    let mut analytics_draft = ClientOperationDraft::from_command(&cli.command, json_output);
-    let mut local_usage_draft = command_local_usage_draft(&cli.command);
+    let operation_descriptor = command_operation_descriptor(&cli.command);
+    let mut local_usage_draft = local_usage::CliUsage::from_descriptor(&operation_descriptor);
+    let mut analytics_draft =
+        ClientOperationDraft::from_descriptor(operation_descriptor, json_output);
     let mut provider_refreshes = ProviderRefreshCollector::default();
     let mut config =
         match AppConfig::load_with_deprecated_controls(&data_root, &deprecated_controls) {
@@ -267,6 +285,8 @@ pub(crate) fn run_cli() -> Result<()> {
     if let Some(draft) = analytics_draft.as_mut() {
         draft.set_deprecated_controls(deprecated_controls.nonprivacy_analytics_ids().as_deref());
     }
+    let usage_control =
+        crate::observability_composition::usage_control_snapshot(config.local_usage.enabled);
 
     let result = match cli.command {
         CommandRoot::Setup(args) => run_setup(
@@ -283,16 +303,19 @@ pub(crate) fn run_cli() -> Result<()> {
         ),
         CommandRoot::Status(args) => run_status(
             args,
-            data_root.clone(),
+            &data_root,
+            &config,
             quiet,
             analytics_draft
                 .as_mut()
                 .expect("status has a telemetry draft")
                 .status_mut(),
+            &local_usage_authority,
+            &usage_control,
             &mut ui,
         ),
         CommandRoot::Stats(args) => {
-            run_stats(args, data_root.clone(), config.local_usage.enabled, &mut ui)
+            run_stats(args, &local_usage_authority, &usage_control, &mut ui)
         }
         CommandRoot::Index(args) => run_index(
             args,
@@ -375,7 +398,15 @@ pub(crate) fn run_cli() -> Result<()> {
                 // completion hook below.
                 local_usage_draft = local_usage::CliUsage::excluded();
             }
-            validation.and_then(|()| pro::run_lifecycle(args, data_root.clone(), &mut ui))
+            validation.and_then(|()| {
+                pro::run_lifecycle(
+                    args,
+                    &data_root,
+                    &local_usage_authority,
+                    &usage_control,
+                    &mut ui,
+                )
+            })
         }
         CommandRoot::Referral(args) => pro::run_referral(args, data_root.clone(), &mut ui),
         CommandRoot::Blame(args) => {
@@ -479,7 +510,7 @@ pub(crate) fn run_cli() -> Result<()> {
             duration,
             output_measurement.total_bytes(),
         ) {
-            local_usage::record_best_effort(&data_root, config.local_usage.enabled, operation);
+            local_usage::record_best_effort(&local_usage_authority, &usage_control, operation);
         }
         duration
     });
@@ -691,11 +722,161 @@ fn command_can_report_malformed_config(command: &CommandRoot) -> bool {
     ) || matches!(command, CommandRoot::Mcp(_))
 }
 
+pub(crate) fn command_operation_descriptor(command: &CommandRoot) -> OperationDescriptor {
+    let operation = match command {
+        CommandRoot::Setup(args) => CliOperation::Setup(SetupTelemetry {
+            catalog_only: args.catalog_only,
+            no_daemon: args.no_daemon,
+            wait: args.wait,
+            progress_mode: ProgressMode::from_arg(args.progress),
+            mode: None,
+            providers_detected: None,
+            cataloged_sessions: None,
+            inventory_sources: None,
+            inventory_source_files: None,
+            pending_sessions: None,
+            catalog_source_bytes: None,
+            inventory_source_bytes: None,
+            has_indexed_content: None,
+            import: ImportTelemetry::for_setup(args.progress, args.no_daemon),
+        }),
+        CommandRoot::Status(_) => CliOperation::Status(StatusTelemetry::default()),
+        CommandRoot::Stats(_) => CliOperation::Stats,
+        CommandRoot::Index(_) => CliOperation::Index(IndexTelemetry::default()),
+        CommandRoot::Sources(args) => CliOperation::Sources(SourcesTelemetry {
+            all: args.all,
+            show_missing: args.show_missing,
+            provider_filter: args.provider.map(|provider| provider.capture_provider()),
+            providers_detected: None,
+            providers_existing: None,
+            providers_importable: None,
+        }),
+        CommandRoot::Import(args) => CliOperation::Import(ImportTelemetry::from_args(args)),
+        CommandRoot::Show(args) => match &args.target {
+            ShowTarget::Session(args) => CliOperation::ShowSession(ShowTelemetry {
+                target_kind: TargetKind::Session,
+                transcript_mode: Some(TranscriptModeKind::from_mode(args.mode)),
+                output_format: RenderFormat::from_output_format(args.format),
+                writes_out_file: args.out.is_some(),
+                provider_lookup: args.provider.is_some() || args.provider_session.is_some(),
+                window: None,
+                events_returned: None,
+            }),
+            ShowTarget::Event(args) => CliOperation::ShowEvent(ShowTelemetry {
+                target_kind: TargetKind::Event,
+                transcript_mode: None,
+                output_format: RenderFormat::from_output_format(args.format),
+                writes_out_file: false,
+                provider_lookup: false,
+                window: Some(count_bucket(
+                    args.window.unwrap_or(args.before.max(args.after)) as u64,
+                )),
+                events_returned: None,
+            }),
+        },
+        CommandRoot::List(args) => match &args.target {
+            crate::cli::ListTarget::Events(args) => CliOperation::ShowEvent(ShowTelemetry {
+                target_kind: TargetKind::Events,
+                transcript_mode: None,
+                output_format: match args.format {
+                    crate::commands::list::EventQueryFormat::Json => RenderFormat::Json,
+                    crate::commands::list::EventQueryFormat::Jsonl => RenderFormat::Jsonl,
+                },
+                writes_out_file: false,
+                provider_lookup: !args.provider.is_empty(),
+                window: None,
+                events_returned: None,
+            }),
+        },
+        CommandRoot::Locate(args) => match &args.target {
+            crate::LocateTarget::Session(args) => CliOperation::Locate(LocateTelemetry {
+                target_kind: TargetKind::Session,
+                output_format: RenderFormat::from_json_output_format(args.format),
+                provider_lookup: args.provider.is_some() || args.provider_session.is_some(),
+            }),
+            crate::LocateTarget::Event(args) => CliOperation::Locate(LocateTelemetry {
+                target_kind: TargetKind::Event,
+                output_format: RenderFormat::from_json_output_format(args.format),
+                provider_lookup: false,
+            }),
+        },
+        CommandRoot::Search(args) => CliOperation::Search(SearchTelemetry {
+            has_query: args.query.is_some(),
+            has_provider_filter: args.provider.is_some(),
+            has_workspace_filter: args.workspace.is_some(),
+            has_since_filter: args.since.is_some(),
+            has_event_type_filter: args.event_type.is_some(),
+            has_file_filter: args.file.is_some(),
+            has_session_filter: args.session.is_some(),
+            event_results: args.events || args.session.is_some(),
+            primary_only: args.primary_only,
+            include_subagents: args.include_subagents,
+            include_current_session: args.include_current_session,
+            limit: count_bucket(args.limit as u64),
+            provider_filter: args.provider.map(|provider| provider.capture_provider()),
+            refresh_duration: None,
+            refresh_mode: None,
+            refresh_status: None,
+            refresh_source_count: None,
+            has_indexed_content_after: None,
+            query_length: None,
+            query_term_count: None,
+            query_duration: None,
+            backend_requested: None,
+            backend_effective: None,
+            result_count: None,
+            citation_count: None,
+            zero_result: None,
+            render_duration: None,
+        }),
+        CommandRoot::Pro(args) => args.operation_descriptor(),
+        CommandRoot::Referral(_) => CliOperation::Referral,
+        CommandRoot::Blame(_) => CliOperation::Blame,
+        CommandRoot::Docs(_) => CliOperation::Docs(DocsTelemetry::default()),
+        CommandRoot::Integrations(_) => CliOperation::Integrations(IntegrationTelemetry::default()),
+        CommandRoot::Mcp(_) => CliOperation::McpServe,
+        CommandRoot::Daemon(args) => match &args.command {
+            DaemonCommand::Run(_) => CliOperation::DaemonRun,
+            DaemonCommand::Status(_) => CliOperation::DaemonStatus,
+            DaemonCommand::Enable(_) => CliOperation::DaemonEnable,
+            DaemonCommand::Disable(_) => CliOperation::DaemonDisable,
+        },
+        CommandRoot::Upgrade(args) => CliOperation::Upgrade {
+            telemetry: UpgradeTelemetry {
+                mode: UpgradeMode::Manual,
+                operation: match args.operation() {
+                    "check" => UpgradeOperation::Check,
+                    "status" => UpgradeOperation::Status,
+                    "enable" => UpgradeOperation::Enable,
+                    "disable" => UpgradeOperation::Disable,
+                    _ => UpgradeOperation::Apply,
+                },
+                dry_run: args.dry_run,
+                suppress_event: false,
+                status: None,
+                applied: None,
+                scheduled: None,
+                update_available: None,
+                update_was_available: None,
+                upgrade_attempt_id: None,
+                managed_install: None,
+                self_upgrade_allowed: None,
+                auto_upgrade_allowed: None,
+                warning_count: None,
+                channel: None,
+                failure_kind: None,
+            },
+            record_local_usage: !args.replacement_helper && args.hosted_transaction.is_none(),
+        },
+        CommandRoot::Doctor(_) => CliOperation::Doctor(DoctorTelemetry::default()),
+    };
+    OperationDescriptor::Cli(operation)
+}
+
+#[cfg(test)]
 fn command_local_usage_draft(command: &CommandRoot) -> local_usage::CliUsage {
-    match command {
-        CommandRoot::Stats(_) => local_usage::CliUsage::excluded(),
-        _ => local_usage::CliUsage::from_command(command),
-    }
+    let descriptor = command_operation_descriptor(command);
+    local_usage::CliUsage::from_descriptor(&descriptor)
 }
 
 fn command_is_status_report(command: &CommandRoot) -> bool {
@@ -773,12 +954,16 @@ mod tests {
             let cli = Cli::try_parse_from(std::iter::once("ctx").chain(args.iter().copied()))
                 .unwrap_or_else(|error| panic!("failed to parse {args:?}: {error}"));
             assert!(
-                ClientOperationDraft::from_command(&cli.command, command_json_output(&cli.command))
-                    .is_none(),
+                ClientOperationDraft::from_descriptor(
+                    command_operation_descriptor(&cli.command),
+                    command_json_output(&cli.command),
+                )
+                .is_none(),
                 "{args:?}"
             );
+            let descriptor = command_operation_descriptor(&cli.command);
             assert!(
-                command_local_usage_draft(&cli.command)
+                local_usage::CliUsage::from_descriptor(&descriptor)
                     .completed(true, std::time::Duration::ZERO)
                     .is_none(),
                 "{args:?}"
