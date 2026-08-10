@@ -1,4 +1,5 @@
 use super::*;
+use ctx_history_core::SessionRelationshipKind;
 
 mod mcp;
 mod mcp_exchange;
@@ -32,11 +33,10 @@ impl CodexNativeScanner {
 
         self.counters.structural_json_parses =
             self.counters.structural_json_parses.saturating_add(1);
-        let Some(probe) = classify_and_record_codex_lineage(
-            record,
-            self.raw_ordinal,
-            self.lineage_facts.as_mut(),
-        )?
+        let Some(probe) = classify_codex_record(record)
+            .ok()
+            .filter(|probe| !probe.lineage_malformed())
+            .or_else(|| classify_mcp_terminal_after_selector_ambiguity(record))
         else {
             self.reject(false);
             return Ok(CodexRecordProjection::default());
@@ -68,7 +68,10 @@ impl CodexNativeScanner {
             CodexRecordClass::TurnContext => {
                 self.counters.typed_json_parses = self.counters.typed_json_parses.saturating_add(1);
                 match (self.owner.as_mut(), parse_turn_context_cwd(record)) {
-                    (Some(owner), Some(cwd)) => owner.cwd = Some(cwd),
+                    (Some(owner), Some(cwd)) => {
+                        owner.cwd = Some(cwd);
+                        self.local_turn_started = true;
+                    }
                     (None, _) | (_, None) => self.reject(false),
                 }
                 Ok(CodexRecordProjection::default())
@@ -303,16 +306,19 @@ impl CodexNativeScanner {
             }
         }
 
-        let repository_result = context.as_ref().and_then(|context| {
-            crate::provider::codex::repository::repository_result_evidence(
-                &decoded.payload,
-                context,
-                call_id?,
-                record_digest,
-                occurred_at.timestamp_millis(),
-                &structural.outcome,
-            )
-        });
+        let repository_result = call_id
+            .filter(|call_id| self.mcp_terminal_authority.is_unique_result(call_id))
+            .zip(context.as_ref())
+            .and_then(|(call_id, context)| {
+                crate::provider::codex::repository::repository_result_evidence(
+                    &decoded.payload,
+                    context,
+                    call_id,
+                    record_digest,
+                    occurred_at.timestamp_millis(),
+                    &structural.outcome,
+                )
+            });
 
         let invocation = (decoded.payload.get("type").and_then(Value::as_str)
             == Some("mcp_tool_call_end"))
@@ -469,10 +475,20 @@ impl CodexNativeScanner {
                 }
             },
             CodexContextMutation::SourceBackedRow {
-                row,
+                mut row,
                 insert_context,
                 remove_contexts,
             } => {
+                if !self.local_turn_started {
+                    row.copied_from_native_session_id = self.owner.as_ref().and_then(|owner| {
+                        matches!(
+                            owner.session_relationship,
+                            SessionRelationshipKind::Forked | SessionRelationshipKind::ResumedFrom
+                        )
+                        .then(|| owner.parent_native_session_id.clone())
+                        .flatten()
+                    });
+                }
                 for call_id in remove_contexts {
                     self.remove_tool_context(&call_id);
                 }
@@ -603,50 +619,6 @@ impl CodexNativeScanner {
         }
         self.counters.rejected_complete_records =
             self.counters.rejected_complete_records.saturating_add(1);
-    }
-}
-
-/// Applies the one authoritative malformed-selector recovery policy while
-/// recording lineage evidence. Publication and generation-only lineage scans
-/// share this path so an ambiguous record cannot authorize copying in one path
-/// while being rejected by the other.
-pub(super) fn classify_and_record_codex_lineage<'a>(
-    record: &'a [u8],
-    raw_ordinal: u64,
-    mut lineage_facts: Option<&mut CodexLineageFactsV0>,
-) -> Result<Option<CodexRecordProbe<'a>>> {
-    match classify_codex_record(record) {
-        Ok(probe) if !probe.lineage_malformed() => {
-            if let Some(facts) = lineage_facts.as_deref_mut() {
-                facts.record_at(codex_lineage_record_evidence(&probe), raw_ordinal)?;
-            }
-            Ok(Some(probe))
-        }
-        Ok(probe) => {
-            if let Some(facts) = lineage_facts.as_deref_mut() {
-                facts.record_at(codex_lineage_record_evidence(&probe), raw_ordinal)?;
-            }
-            Ok(classify_mcp_terminal_after_selector_ambiguity(record))
-        }
-        Err(_) => {
-            let malformed_evidence = malformed_codex_lineage_record_evidence(record);
-            let lineage_recorded = !matches!(
-                malformed_evidence,
-                CodexMalformedLineageRecordEvidence::None
-            );
-            if let Some(facts) = lineage_facts.as_deref_mut() {
-                facts.record_at(malformed_evidence.as_record_evidence(), raw_ordinal)?;
-            }
-            let Some(recovered) = classify_mcp_terminal_after_selector_ambiguity(record) else {
-                return Ok(None);
-            };
-            if !lineage_recorded {
-                if let Some(facts) = lineage_facts {
-                    facts.record_at(codex_lineage_record_evidence(&recovered), raw_ordinal)?;
-                }
-            }
-            Ok(Some(recovered))
-        }
     }
 }
 

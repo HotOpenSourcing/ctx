@@ -42,7 +42,7 @@ pub const CORE_RECORD_VERSION: u32 = 2;
 pub const CORE_NORMALIZATION_REVISION: u32 = 1;
 pub const CORE_CONTENT_POLICY_REVISION: u32 = 3;
 pub const CORE_MCP_TOOL_CALL_ATTRIBUTION_REVISION: u32 = 1;
-pub const CORE_SESSION_LINEAGE_REVISION: u32 = 1;
+pub const CORE_SESSION_LINEAGE_REVISION: u32 = 2;
 /// Frozen domain for the exact canonical Core-record leaf algorithm.
 pub const CORE_RECORD_LEAF_DOMAIN: &[u8] = b"ctx-core-record-leaf-v1\0";
 /// Frozen identity of the per-source Core-record accumulator algorithm.
@@ -810,9 +810,33 @@ impl CoreRecord {
             })
     }
 
-    /// Finalizes repository commit-operation identities after provider capture
-    /// has attached the repository annotation to this stable Core record.
+    /// Finalizes provider-neutral repository observations before validation.
+    ///
+    /// Outcomes require a positive unique-origin claim. For any other origin,
+    /// this gate converts all outcomes into one typed abstention while
+    /// preserving non-outcome observations and the provider's origin claim.
+    /// Positive unique origins retain their outcomes and receive scoped
+    /// commit-operation identities as before.
     pub fn bind_repository_commit_operation_identities(&mut self) -> CoreRecordResult<()> {
+        if !matches!(&self.event_origin, EventOrigin::UniqueToSession) {
+            let mut removed_outcome = false;
+            self.repository_vcs_observations.retain(|observation| {
+                let retain = !matches!(&observation.kind, RepositoryVcsObservationKind::Outcome(_));
+                removed_outcome |= !retain;
+                retain
+            });
+            if removed_outcome {
+                let abstention = RepositoryAbstention {
+                    evidence_kind: RepositoryEvidenceKind::VcsActivity,
+                    reason: RepositoryAbstentionReason::OutcomeResultInadmissible,
+                    detail: Some("event_origin_not_unique_to_session".to_owned()),
+                    association_policy_revision: CORE_REPOSITORY_ASSOCIATION_POLICY_REVISION,
+                };
+                if !self.repository_abstentions.contains(&abstention) {
+                    self.repository_abstentions.push(abstention);
+                }
+            }
+        }
         let bindings = self
             .repository_bindings
             .iter()
@@ -988,7 +1012,7 @@ impl CoreRecord {
                     observation.repository_binding_id.clone(),
                 ));
             };
-            if matches!(&self.event_origin, EventOrigin::CopiedFromAncestor { .. })
+            if !matches!(&self.event_origin, EventOrigin::UniqueToSession)
                 && matches!(&observation.kind, RepositoryVcsObservationKind::Outcome(_))
             {
                 return Err(CoreRecordError::InvalidRepositoryOutcome);

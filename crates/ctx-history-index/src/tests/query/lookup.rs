@@ -144,6 +144,7 @@ fn decoded_core_event_reports_searchable_touched_files_deterministically() {
     let temp = tempdir().unwrap();
     let source = source("repository-files.jsonl");
     let mut expected = document(&source, 1, "repository file activity");
+    expected.event_origin = EventOrigin::UniqueToSession;
     expected.repository_bindings.push(RepositoryBinding {
         binding_id: "binding-1".to_owned(),
         logical_repository_id: "repo-1".to_owned(),
@@ -216,6 +217,73 @@ fn decoded_core_event_reports_searchable_touched_files_deterministically() {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].event.event_id, expected.event_id);
     }
+}
+
+#[test]
+fn unknown_origin_remains_searchable_without_granting_repository_file_attribution() {
+    let temp = tempdir().unwrap();
+    let source = source("unknown-repository-files.jsonl");
+    let mut unknown = document(&source, 1, "unknownoriginsearchneedle");
+    unknown.repository_bindings.push(RepositoryBinding {
+        binding_id: "binding-1".to_owned(),
+        logical_repository_id: "repo-1".to_owned(),
+        checkout_id: None,
+        worktree_id: None,
+        aliases: Vec::new(),
+        git_object_format: None,
+        local_root_authorization: None,
+        evidence: vec![RepositoryEvidence {
+            kind: RepositoryEvidenceKind::FileActivity,
+            confidence: RepositoryEvidenceConfidence::Explicit,
+        }],
+        association_policy_revision: ctx_history_core::CORE_REPOSITORY_ASSOCIATION_POLICY_REVISION,
+    });
+    unknown
+        .repository_file_observations
+        .push(RepositoryFileObservation {
+            repository_binding_id: "binding-1".to_owned(),
+            relative_path: "src/unknown.rs".to_owned(),
+            kind: RepositoryFileObservationKind::Modified,
+            prior_relative_path: None,
+        });
+    unknown.validate_contract().unwrap();
+
+    let mut writer = GenerationWriter::open(temp.path(), WriterOptions::default())
+        .unwrap()
+        .into_writer()
+        .unwrap();
+    writer.begin_source(source.clone()).unwrap();
+    writer.add_core_record(unknown.clone()).unwrap();
+    writer.certify_source(certificate(&source, 1, 1)).unwrap();
+    writer.commit(|_| true).unwrap();
+    let index = VerifiedIndex::open(temp.path()).unwrap();
+
+    assert_eq!(
+        index
+            .search_event_candidates("unknownoriginsearchneedle", 10)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(index
+        .search_event_candidates_with_filters(
+            "unknownoriginsearchneedle",
+            &EventSearchFilters {
+                file: Some("src/unknown.rs".to_owned()),
+                ..EventSearchFilters::default()
+            },
+            10,
+        )
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        index
+            .core_event_by_id(unknown.event_id.as_uuid())
+            .unwrap()
+            .unwrap()
+            .touched_files,
+        vec!["src/unknown.rs".to_owned()]
+    );
 }
 
 #[test]

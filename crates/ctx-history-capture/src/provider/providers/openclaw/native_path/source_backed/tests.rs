@@ -9,8 +9,8 @@ use crate::{
     ProviderSourceStatus,
 };
 use ctx_history_core::{
-    CertifiedSource, EventOrigin, RepositoryFileInvocationKind, ScannedSourceCounts,
-    SourceObservation,
+    CertifiedSource, EventOrigin, RepositoryFileInvocationKind, RepositoryVcsObservationKind,
+    ScannedSourceCounts, SourceObservation,
 };
 use ctx_history_index::{GenerationWriter, VerifiedIndex, WriterOptions};
 #[cfg(unix)]
@@ -163,17 +163,21 @@ fn openclaw_discovered_leaf_rejects_mutation_before_scan() {
     ));
 }
 
-fn test_projector() -> (tempfile::TempDir, OpenClawProjector) {
+fn test_projector_with_lineage(
+    path: &Path,
+    native_session_id: &str,
+    index: &Value,
+    native_session_family: &OpenClawNativeSessionFamily,
+) -> (tempfile::TempDir, OpenClawProjector) {
     let temp = tempfile::tempdir().unwrap();
     let authority = Arc::new(ProviderSourceRoot::open(temp.path()).unwrap());
-    let native_session_id = "main/test-session";
     let source = source_key(native_session_id).unwrap();
     let session_id = session_identity(&source, native_session_id).unwrap();
     let session = SessionState::new(
-        Path::new("/agents/main/sessions/test-session.jsonl"),
+        path,
         native_session_id,
-        &Value::Null,
-        &OpenClawNativeSessionFamily::Absent,
+        index,
+        native_session_family,
         DateTime::<Utc>::UNIX_EPOCH,
         session_id,
     )
@@ -193,6 +197,15 @@ fn test_projector() -> (tempfile::TempDir, OpenClawProjector) {
             linkage_capacity_exceeded: false,
             fallback_identities: FallbackEventIdentityState::default(),
         },
+    )
+}
+
+fn test_projector() -> (tempfile::TempDir, OpenClawProjector) {
+    test_projector_with_lineage(
+        Path::new("/agents/main/sessions/test-session.jsonl"),
+        "main/test-session",
+        &Value::Null,
+        &OpenClawNativeSessionFamily::Absent,
     )
 }
 
@@ -269,6 +282,135 @@ fn project_values(projector: &mut OpenClawProjector, values: &[Value]) -> Vec<Co
             .unwrap();
     }
     emitted
+}
+
+#[cfg(unix)]
+#[test]
+fn openclaw_outcomes_require_positive_unique_origin_across_lineage_shapes() {
+    let repository = tempfile::tempdir().unwrap();
+    for arguments in [
+        &["init", "-q"][..],
+        &["config", "user.name", "ctx test"],
+        &["config", "user.email", "ctx@example.invalid"],
+    ] {
+        assert!(Command::new("/usr/bin/git")
+            .args(arguments)
+            .current_dir(repository.path())
+            .status()
+            .unwrap()
+            .success());
+    }
+    fs::write(repository.path().join("tracked.txt"), "tracked\n").unwrap();
+    for arguments in [&["add", "tracked.txt"][..], &["commit", "-qm", "fixture"]] {
+        assert!(Command::new("/usr/bin/git")
+            .args(arguments)
+            .current_dir(repository.path())
+            .status()
+            .unwrap()
+            .success());
+    }
+    let oid = String::from_utf8(
+        Command::new("/usr/bin/git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repository.path())
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_owned();
+    let payload = "exact searchable OpenClaw commit result";
+    let values = vec![
+        serde_json::json!({
+            "type": "message",
+            "id": "origin-commit-call-record",
+            "timestamp": "2026-08-05T12:00:00Z",
+            "message": {"role": "assistant", "content": [{
+                "type": "toolCall",
+                "id": "origin-commit-call",
+                "name": "exec",
+                "arguments": {
+                    "command": "git commit -m exact",
+                    "workdir": repository.path(),
+                }
+            }]}
+        }),
+        serde_json::json!({
+            "type": "message",
+            "id": "origin-commit-result-record",
+            "timestamp": "2026-08-05T12:00:01Z",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "origin-commit-call",
+                "content": payload,
+                "details": {
+                    "status": "completed",
+                    "exitCode": 0,
+                    "cwd": repository.path(),
+                    "commit_oid": oid,
+                }
+            }
+        }),
+    ];
+
+    let (_primary_authority, mut primary) = test_projector();
+    let primary_records = project_values(&mut primary, &values);
+    let generic_index = serde_json::json!({
+        "parentSessionId": "main/generic-parent",
+        "rootSessionId": "main/generic-root",
+    });
+    let (_generic_authority, mut generic) = test_projector_with_lineage(
+        Path::new("/agents/worker/sessions/generic-child.jsonl"),
+        "worker/generic-child",
+        &generic_index,
+        &OpenClawNativeSessionFamily::Absent,
+    );
+    let generic_records = project_values(&mut generic, &values);
+    let unique_family = OpenClawNativeSessionFamily::Resolved {
+        parent_native_session_id: "main/unique-parent".to_owned(),
+        root_native_session_id: "main/unique-parent".to_owned(),
+    };
+    let (_unique_authority, mut unique) = test_projector_with_lineage(
+        Path::new("/agents/worker/sessions/unique-child.jsonl"),
+        "worker/unique-child",
+        &Value::Null,
+        &unique_family,
+    );
+    let unique_records = project_values(&mut unique, &values);
+
+    for records in [&primary_records, &generic_records] {
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[1].event_origin, EventOrigin::Unknown);
+        assert_eq!(records[1].content.normalized_body.as_deref(), Some(payload));
+        assert!(records[1]
+            .repository_vcs_observations
+            .iter()
+            .all(|observation| !matches!(
+                observation.kind,
+                RepositoryVcsObservationKind::Outcome(_)
+            )));
+        assert!(records[1].repository_abstentions.iter().any(|abstention| {
+            abstention.reason == RepositoryAbstentionReason::OutcomeResultInadmissible
+                && abstention.detail.as_deref() == Some("event_origin_not_unique_to_session")
+        }));
+    }
+    assert_eq!(
+        generic_records[1].session_relationship,
+        SessionRelationshipKind::RelatedUnknown
+    );
+    assert_eq!(unique_records.len(), 2);
+    assert_eq!(unique_records[1].event_origin, EventOrigin::UniqueToSession);
+    assert!(unique_records[1]
+        .repository_vcs_observations
+        .iter()
+        .any(|observation| matches!(observation.kind, RepositoryVcsObservationKind::Outcome(_))));
+    assert!(!unique_records[1]
+        .repository_abstentions
+        .iter()
+        .any(|abstention| {
+            abstention.detail.as_deref() == Some("event_origin_not_unique_to_session")
+        }));
 }
 
 fn retrieval_excluded(record: &CoreRecord) -> bool {

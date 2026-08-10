@@ -10,8 +10,8 @@ use crate::{
     ProviderSourceStatus,
 };
 use ctx_history_core::{
-    CertifiedSource, CoreDiscoveryExclusion, RepositoryFileInvocationKind, ScannedSourceCounts,
-    SourceObservation,
+    CertifiedSource, CoreDiscoveryExclusion, EventOrigin, RepositoryFileInvocationKind,
+    RepositoryVcsObservationKind, ScannedSourceCounts, SourceObservation,
 };
 use ctx_history_index::{GenerationWriter, VerifiedIndex, WriterOptions};
 use std::{
@@ -885,6 +885,55 @@ fn claude_ctx_retrieval_cli_mcp_and_success_payloads_are_excluded_without_body_l
             .and_then(serde_json::Value::as_bool),
         Some(true)
     );
+}
+
+#[test]
+fn claude_primary_unknown_outcome_is_neutrally_abstained_without_body_loss() {
+    let repository = initialized_test_repository();
+    let oid = String::from_utf8(
+        std::process::Command::new("/usr/bin/git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repository.path())
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_owned();
+    let call = claude_ctx_call(
+        "unknown-origin-commit",
+        "Bash",
+        serde_json::json!({
+            "command": "git commit -m exact",
+            "workdir": repository.path(),
+        }),
+    );
+    let payload = "exact searchable Claude commit result";
+    let result = claude_ctx_result(
+        "unknown-origin-commit",
+        payload,
+        Some(false),
+        None,
+        Some(serde_json::json!({
+            "gitOperation": {"commit": {"sha": oid}},
+            "cwd": repository.path(),
+        })),
+    );
+
+    let records = project_claude_records(&mut test_projector(), &[call, result]);
+
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[1].event_origin, EventOrigin::Unknown);
+    assert_eq!(records[1].content.normalized_body.as_deref(), Some(payload));
+    assert!(records[1]
+        .repository_vcs_observations
+        .iter()
+        .all(|observation| !matches!(observation.kind, RepositoryVcsObservationKind::Outcome(_))));
+    assert!(records[1].repository_abstentions.iter().any(|abstention| {
+        abstention.reason == RepositoryAbstentionReason::OutcomeResultInadmissible
+            && abstention.detail.as_deref() == Some("event_origin_not_unique_to_session")
+    }));
 }
 
 #[test]

@@ -836,7 +836,17 @@ fn gemini_outcomes_require_an_exact_linked_successful_value() {
     let records = project_gemini_test_events(&source, rows).unwrap();
 
     assert_eq!(records.len(), 7);
-    assert_eq!(records[1].repository_vcs_observations.len(), 1);
+    assert_eq!(records[1].event_origin, EventOrigin::Unknown);
+    assert!(records[1].repository_vcs_observations.is_empty());
+    assert!(records[1]
+        .content
+        .normalized_body
+        .as_deref()
+        .is_some_and(|body| body.contains(&oid)));
+    assert!(records[1].repository_abstentions.iter().any(|abstention| {
+        abstention.reason == RepositoryAbstentionReason::OutcomeResultInadmissible
+            && abstention.detail.as_deref() == Some("event_origin_not_unique_to_session")
+    }));
     assert!(records[3].repository_vcs_observations.is_empty());
     assert!(records[5].repository_vcs_observations.is_empty());
     assert!(records[6].repository_vcs_observations.is_empty());

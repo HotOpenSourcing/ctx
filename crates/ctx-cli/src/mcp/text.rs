@@ -243,13 +243,29 @@ fn render_search_text(value: &Value) -> String {
 }
 
 fn push_search_copied_lineage(out: &mut String, result: &Value) {
-    let Some(lineage) = result.get("copied_lineage") else {
+    let Some(lineage) = result
+        .get("copied_lineage")
+        .filter(|value| value.is_object())
+    else {
         return;
     };
     let observed = lineage
         .get("observed_count")
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let resolution = lineage
+        .pointer("/resolution/state")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let selected_depth = lineage
+        .get("selected_depth")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if resolution != "resolved" || selected_depth != 0 {
+        out.push_str(&format!(
+            "   lineage_resolution: {resolution}, selected_depth={selected_depth}\n"
+        ));
+    }
     if observed == 0 {
         return;
     }
@@ -607,14 +623,25 @@ fn render_event_window_text(value: &Value) -> String {
 }
 
 fn push_event_copied_lineage(out: &mut String, value: &Value) {
-    let Some(lineage) = value.get("copied_lineage") else {
+    let Some(lineage) = value
+        .get("copied_lineage")
+        .filter(|value| value.is_object())
+    else {
         return;
     };
     let observed = lineage
         .get("observed_count")
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    if observed == 0 {
+    let resolution = lineage
+        .pointer("/resolution/state")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let selected_depth = lineage
+        .get("selected_depth")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if observed == 0 && resolution == "resolved" && selected_depth == 0 {
         return;
     }
     let truncated = lineage
@@ -622,6 +649,9 @@ fn push_event_copied_lineage(out: &mut String, value: &Value) {
         .and_then(Value::as_bool)
         .unwrap_or(true);
     out.push_str("\ncopied lineage\n");
+    out.push_str(&format!(
+        "resolution: {resolution}, selected_depth={selected_depth}\n"
+    ));
     if truncated {
         out.push_str(&format!("inherited_sessions: at least {observed}\n"));
     } else {
@@ -840,7 +870,13 @@ mod tests {
             },
             "events": [],
             "copied_lineage": {
-                "schema_version": 1,
+                "schema_version": 2,
+                "resolution": {
+                    "state": "resolved",
+                    "ctx_event_id": "aaaaaaaa",
+                    "ctx_session_id": "bbbbbbbb"
+                },
+                "selected_depth": 0,
                 "observed_count": 1,
                 "returned": 1,
                 "occurrences": [{

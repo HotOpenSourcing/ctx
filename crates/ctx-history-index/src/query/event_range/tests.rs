@@ -984,6 +984,7 @@ fn custom_source_and_touched_file_filters_apply_before_limit() {
         TypedKey::utf8("event_id:decoy").unwrap(),
     ]));
     let mut matching = record(&source, 2, 2, Some(101), "matching");
+    matching.event_origin = EventOrigin::UniqueToSession;
     matching.native_event_id = Some(TypedKey::Composite(vec![
         TypedKey::utf8("demo-agent").unwrap(),
         TypedKey::utf8("archive/year/08").unwrap(),

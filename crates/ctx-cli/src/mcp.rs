@@ -57,6 +57,11 @@ pub(crate) fn query_events_for_test(arguments: &Value, data_root: &Path) -> Resu
         })
 }
 
+#[cfg(test)]
+pub(crate) fn render_tool_text_for_test(value: &Value) -> String {
+    render_tool_text(value)
+}
+
 use super::{
     compact_json, config, search_has_intent, ProviderArg, SearchIntentInput,
     SourceIdentityFilterArgs, MAX_EVENT_WINDOW, MAX_SEARCH_LIMIT,

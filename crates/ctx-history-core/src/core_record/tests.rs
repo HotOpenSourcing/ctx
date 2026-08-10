@@ -312,7 +312,31 @@ fn copied_origin_rejects_self_references() {
 }
 
 #[test]
-fn copied_origin_rejects_asserted_repository_outcomes_and_commit_operations() {
+fn relationship_and_copy_targets_are_locally_valid_without_target_records() {
+    let mut child = record();
+    let missing_parent = related_session_id("missing-parent");
+    let claimed_root = related_session_id("claimed-root");
+    let missing_origin_session = related_session_id("missing-origin-session");
+    let missing_origin_event = related_event_id(missing_origin_session, 42);
+
+    child
+        .set_session_relationship(
+            SessionRelationshipKind::RelatedUnknown,
+            Some(missing_parent),
+            claimed_root,
+        )
+        .unwrap();
+    child.event_origin = EventOrigin::CopiedFromAncestor {
+        ancestor_session_id: Box::new(missing_origin_session),
+        ancestor_event_id: Box::new(missing_origin_event),
+        proof: EventCopyProofKind::NativeCopiedFromField,
+    };
+
+    child.validate_contract().unwrap();
+}
+
+#[test]
+fn only_positive_unique_origin_can_assert_repository_outcomes() {
     let scope = record();
     let repository = binding();
     let mut operation_outcome = outcome(RepositoryOutcomeKind::Commit);
@@ -357,18 +381,95 @@ fn copied_origin_rejects_asserted_repository_outcomes_and_commit_operations() {
                 reference: None,
                 relative_path: None,
             });
-        candidate.validate_contract().unwrap();
+        for origin in [
+            EventOrigin::Unknown,
+            EventOrigin::CopiedFromAncestor {
+                ancestor_session_id: Box::new(ancestor_session_id),
+                ancestor_event_id: Box::new(ancestor_event_id),
+                proof: EventCopyProofKind::NativeCopiedFromField,
+            },
+        ] {
+            candidate.event_origin = origin;
+            assert!(matches!(
+                candidate.validate_contract(),
+                Err(CoreRecordError::InvalidRepositoryOutcome)
+            ));
+        }
 
-        candidate.event_origin = EventOrigin::CopiedFromAncestor {
+        candidate.event_origin = EventOrigin::UniqueToSession;
+        candidate.validate_contract().unwrap();
+    }
+}
+
+#[test]
+fn provider_neutral_repository_finalization_abstains_non_unique_outcomes_only() {
+    let repository = binding();
+    let non_outcome = RepositoryVcsObservation {
+        repository_binding_id: repository.binding_id.clone(),
+        kind: RepositoryVcsObservationKind::Head,
+        object_id: Some(oid('b')),
+        parent_object_ids: Vec::new(),
+        reference: Some("refs/heads/main".to_owned()),
+        relative_path: None,
+    };
+    let asserted_outcome = RepositoryVcsObservation {
+        repository_binding_id: repository.binding_id.clone(),
+        kind: RepositoryVcsObservationKind::Outcome(Box::new(outcome(
+            RepositoryOutcomeKind::Commit,
+        ))),
+        object_id: None,
+        parent_object_ids: Vec::new(),
+        reference: None,
+        relative_path: None,
+    };
+    let ancestor_session_id = related_session_id("neutral-outcome-ancestor");
+    let ancestor_event_id = related_event_id(ancestor_session_id, 42);
+
+    for origin in [
+        EventOrigin::Unknown,
+        EventOrigin::CopiedFromAncestor {
             ancestor_session_id: Box::new(ancestor_session_id),
             ancestor_event_id: Box::new(ancestor_event_id),
             proof: EventCopyProofKind::NativeCopiedFromField,
-        };
-        assert!(matches!(
-            candidate.validate_contract(),
-            Err(CoreRecordError::InvalidRepositoryOutcome)
-        ));
+        },
+    ] {
+        let mut candidate = record();
+        candidate.event_origin = origin.clone();
+        candidate.repository_bindings.push(repository.clone());
+        candidate.repository_vcs_observations = vec![non_outcome.clone(), asserted_outcome.clone()];
+        let searchable = candidate.content.normalized_body.clone();
+
+        candidate
+            .bind_repository_commit_operation_identities()
+            .unwrap();
+
+        assert_eq!(candidate.event_origin, origin);
+        assert_eq!(candidate.content.normalized_body, searchable);
+        assert_eq!(
+            candidate.repository_vcs_observations,
+            vec![non_outcome.clone()]
+        );
+        assert!(candidate.repository_abstentions.iter().any(|abstention| {
+            abstention.evidence_kind == RepositoryEvidenceKind::VcsActivity
+                && abstention.reason == RepositoryAbstentionReason::OutcomeResultInadmissible
+                && abstention.detail.as_deref() == Some("event_origin_not_unique_to_session")
+        }));
+        candidate.validate_contract().unwrap();
     }
+
+    let mut unique = record();
+    unique.event_origin = EventOrigin::UniqueToSession;
+    unique.repository_bindings.push(repository);
+    unique.repository_vcs_observations = vec![non_outcome, asserted_outcome];
+    unique
+        .bind_repository_commit_operation_identities()
+        .unwrap();
+    assert_eq!(unique.event_origin, EventOrigin::UniqueToSession);
+    assert_eq!(unique.repository_vcs_observations.len(), 2);
+    assert!(!unique.repository_abstentions.iter().any(|abstention| {
+        abstention.detail.as_deref() == Some("event_origin_not_unique_to_session")
+    }));
+    unique.validate_contract().unwrap();
 }
 
 fn mcp_tool_call(server: impl Into<String>, tool: impl Into<String>) -> McpToolCallAttribution {
@@ -1753,6 +1854,7 @@ fn outcome(kind: RepositoryOutcomeKind) -> RepositoryOutcomeObservation {
 #[test]
 fn repository_outcome_requires_one_scoped_binding_and_exact_shape() {
     let mut record = record();
+    record.event_origin = EventOrigin::UniqueToSession;
     record.repository_bindings.push(binding());
     record
         .repository_vcs_observations
@@ -2336,6 +2438,7 @@ fn core_record_rejects_operation_id_transplanted_to_another_repository() {
         [8; 32],
     )
     .unwrap();
+    record.event_origin = EventOrigin::UniqueToSession;
     record.repository_bindings.push(repository);
     record
         .repository_vcs_observations
@@ -2386,6 +2489,7 @@ fn pull_request_outcome_must_match_its_referenced_repository_binding() {
     created.pull_request = Some(pull_request);
 
     let mut record = record();
+    record.event_origin = EventOrigin::UniqueToSession;
     record.repository_bindings.push(binding());
     record
         .repository_vcs_observations
@@ -2460,14 +2564,14 @@ fn every_bound_revision_and_accumulator_identity_changes_the_core_contract_finge
     let expected = core_record_contract_fingerprint_for(current);
     assert_eq!(
         expected,
-        "0610be9a5810ce742b505dc4c3b3db24e9ab795126a6b62e0ef2172e04a85cc3"
+        "22b962275535fd0cc54944023976b9e2b18bcdb065c0105c77531dba7dd63ca5"
     );
     assert_eq!(
         core_record_contract_fingerprint_for(CoreContractRevisions {
             accumulator_identity: b"",
             ..current
         }),
-        "fc61723d453f4e953145517891e8c9c7129ec09068a821182c77b52a006df982"
+        "4d2e7c90a35351e2999109d40e2c50572ebb75c3bd6c70a1785bda0166243fe6"
     );
     for changed in [
         CoreContractRevisions {
