@@ -320,7 +320,7 @@ fn run_with(
     ui: &mut crate::ui::Ui,
     blame: impl FnOnce(
         &std::path::Path,
-        BlameTarget,
+        &BlameTarget,
         u32,
         Option<String>,
     ) -> Result<crate::pro::HostedBlameResult>,
@@ -340,10 +340,9 @@ fn run_with(
     let target_kind = ProBlameTargetV1::from_protocol(&target);
     let mut telemetry = ProBlameTelemetryV1::new(Some(target_kind), ProSurfaceV1::Cli);
     let result = (|| {
-        let diagnostic_target = target.clone();
         let result = present_blame_result(
-            blame(&data_root, target, limit, cursor)
-                .map_err(|error| crate::pro::blame_boundary_error(error, &diagnostic_target)),
+            blame(&data_root, &target, limit, cursor)
+                .map_err(|error| crate::pro::blame_boundary_error(error, &target)),
             json,
             ui,
         )?;

@@ -1,6 +1,6 @@
 use std::{
     io::{self, BufRead, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::Instant,
 };
 
@@ -9,6 +9,9 @@ use clap::{Args, Subcommand};
 use ctx_history_core::EventType;
 use ctx_history_index::SearchContentScope;
 use serde_json::{json, Value};
+
+#[cfg(test)]
+use std::path::Path;
 
 mod arguments;
 mod input;
@@ -26,37 +29,46 @@ use arguments::{
     validate_argument_keys, validate_search_filter_arguments,
 };
 use input::{read_mcp_input_line, McpInputLine};
-use pro::{
-    pro_blame_tool, required_blame_target, tool_pro_blame, tool_pro_status,
-    MCP_BLAME_MAX_OUTPUT_BYTES,
-};
-use query_events::tool_query_events;
+#[cfg(test)]
+use pro::MCP_BLAME_LIMIT;
+use pro::{blame_operation, pro_blame_tool, rejected_blame_operation, MCP_BLAME_MAX_OUTPUT_BYTES};
+use query_events::query_events_operation;
 use response::{
     error_response, invalid_request_response, invalid_tool_request, json_rpc_error,
     success_response, tool_error_result, tool_result, tool_result_with_text,
 };
 use response_bound::{
     bound_blame_mcp_response, bound_query_events_mcp_response, bound_show_mcp_response,
-    is_blame_tool_call, is_query_events_tool_call, is_show_tool_call,
 };
-use show::{tool_show_event, tool_show_session};
+use show::{show_event_operation, show_session_operation};
 use telemetry::{McpHandled, McpTelemetry, RequestDescriptor};
 use text::render_tool_text;
 
 #[cfg(test)]
 pub(crate) fn query_events_for_test(arguments: &Value, data_root: &Path) -> Result<Value> {
-    tool_query_events(arguments, data_root)
+    let backend = LocalToolBackend::new(data_root.to_path_buf());
+    let operation = query_events_operation(arguments).map_err(anyhow::Error::new)?;
+    backend
+        .execute(operation)
+        .map(|outcome| outcome.structured)
+        .map_err(|failure| match failure.error {
+            ToolBackendError::EventQuery(error) => anyhow::Error::new(error),
+            error => anyhow::Error::new(error),
+        })
 }
 
 use super::{
-    compact_json, config, discovered_plugin_sources_json, search_has_intent, sources_json,
-    ProviderArg, RefreshArg, SearchIntentInput, SourceIdentityFilterArgs, TranscriptMode,
-    MAX_EVENT_WINDOW, MAX_SEARCH_LIMIT,
+    compact_json, config, search_has_intent, ProviderArg, SearchIntentInput,
+    SourceIdentityFilterArgs, MAX_EVENT_WINDOW, MAX_SEARCH_LIMIT,
 };
 use crate::analytics::{McpErrorClassV1, McpStopReasonV1, Outcome};
 use crate::local_usage::{McpInvocation, McpUsageRecorder};
+use crate::operation_descriptor::McpOperationKind;
 use crate::presentation_limit::MCP_PRESENTATION_MAX_OUTPUT_BYTES;
-use crate::provider_sources::{discovered_sources_report, discovery_report_issues_json};
+use crate::tool_backend::{
+    LocalToolBackend, ToolBackend, ToolBackendError, ToolExecutionError, ToolOperation,
+    ToolOutcome, ToolSearchBackend, ToolSearchRequest, ToolUsageFacts,
+};
 
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const MCP_SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[MCP_PROTOCOL_VERSION, "2025-06-18"];
@@ -105,17 +117,21 @@ fn serve_stdio(data_root: PathBuf) -> Result<()> {
     let mut stdin = stdin.lock();
     let mut stdout = stdout.lock();
     let mut telemetry = McpTelemetry::start(data_root.clone());
-    let mut usage_recorder = McpUsageRecorder::start(data_root.clone());
+    let mut usage_recorder = McpUsageRecorder::start_authorized(
+        crate::observability_composition::local_usage_storage_authority(&data_root),
+        crate::observability_composition::LocalUsageControlAuthority::new(data_root.clone()),
+    );
+    let backend = LocalToolBackend::new(data_root.clone());
     let started = Instant::now();
     let mut initialized = false;
 
-    let result = serve_stdio_loop(
-        &data_root,
+    let result = serve_stdio_loop_with_backend(
         &mut stdin,
         &mut stdout,
         &mut initialized,
         &mut telemetry,
         &mut usage_recorder,
+        &backend,
     );
     let (reason, outcome) = match &result {
         Ok(()) => (McpStopReasonV1::Eof, Outcome::Success),
@@ -130,13 +146,13 @@ struct McpServeFailure {
     error: anyhow::Error,
 }
 
-fn serve_stdio_loop(
-    data_root: &Path,
+fn serve_stdio_loop_with_backend<B: ToolBackend>(
     stdin: &mut impl BufRead,
     stdout: &mut impl Write,
     initialized: &mut bool,
     telemetry: &mut McpTelemetry,
     usage_recorder: &mut McpUsageRecorder,
+    backend: &B,
 ) -> std::result::Result<(), McpServeFailure> {
     loop {
         let input = read_mcp_input_line(stdin).map_err(|error| McpServeFailure {
@@ -157,7 +173,7 @@ fn serve_stdio_loop(
                     Ok(message) => {
                         let descriptor = RequestDescriptor::from_message(&message);
                         let (handled, usage_invocation) =
-                            handle_message(message, data_root, initialized);
+                            handle_message_with_backend(message, initialized, descriptor, backend);
                         (handled, descriptor, usage_invocation)
                     }
                     Err(err) => (
@@ -256,10 +272,31 @@ fn serve_stdio_loop(
     }
 }
 
-fn handle_message(
-    message: Value,
+#[cfg(test)]
+fn serve_stdio_loop(
     data_root: &Path,
+    stdin: &mut impl BufRead,
+    stdout: &mut impl Write,
     initialized: &mut bool,
+    telemetry: &mut McpTelemetry,
+    usage_recorder: &mut McpUsageRecorder,
+) -> std::result::Result<(), McpServeFailure> {
+    let backend = LocalToolBackend::new(data_root.to_path_buf());
+    serve_stdio_loop_with_backend(
+        stdin,
+        stdout,
+        initialized,
+        telemetry,
+        usage_recorder,
+        &backend,
+    )
+}
+
+fn handle_message_with_backend<B: ToolBackend>(
+    message: Value,
+    initialized: &mut bool,
+    descriptor: RequestDescriptor,
+    backend: &B,
 ) -> (McpHandled<Option<Value>>, Option<McpInvocation>) {
     let Some(object) = message.as_object() else {
         return (
@@ -278,9 +315,10 @@ fn handle_message(
             None,
         );
     }
-    let bound_show = is_show_tool_call(&message);
-    let bound_blame = is_blame_tool_call(&message);
-    let bound_query_events = is_query_events_tool_call(&message);
+    let tool_operation = match descriptor {
+        RequestDescriptor::ToolCall { operation } => Some(operation),
+        _ => None,
+    };
     let id = message
         .as_object()
         .and_then(|object| object.get("id"))
@@ -339,7 +377,11 @@ fn handle_message(
             Ok(McpHandled::plain(json!({ "tools": tool_definitions() }))),
             None,
         ),
-        "tools/call" => handle_tools_call(params, data_root),
+        "tools/call" => handle_tools_call_with_backend(
+            params,
+            tool_operation.unwrap_or(McpOperationKind::Missing),
+            backend,
+        ),
         _ => (Err(json_rpc_error(-32601, "Method not found", None)), None),
     };
     let response_id = id.clone();
@@ -351,7 +393,6 @@ fn handle_message(
         Ok(handled) => McpHandled {
             value: success_response(id, handled.value),
             pro_event: handled.pro_event,
-            text_content: None,
         },
         Err(error) => McpHandled::plain({
             if let Some(object) = error.as_object() {
@@ -369,21 +410,29 @@ fn handle_message(
     };
     (
         McpHandled {
-            value: Some(if bound_show {
-                bound_show_mcp_response(response, response_id, MCP_PRESENTATION_MAX_OUTPUT_BYTES)
-            } else if bound_blame {
-                bound_blame_mcp_response(response, response_id, MCP_BLAME_MAX_OUTPUT_BYTES)
-            } else if bound_query_events {
-                bound_query_events_mcp_response(
-                    response,
-                    response_id,
-                    MCP_PRESENTATION_MAX_OUTPUT_BYTES,
-                )
-            } else {
-                response
-            }),
+            value: Some(
+                if matches!(
+                    tool_operation,
+                    Some(McpOperationKind::ShowSession | McpOperationKind::ShowEvent)
+                ) {
+                    bound_show_mcp_response(
+                        response,
+                        response_id,
+                        MCP_PRESENTATION_MAX_OUTPUT_BYTES,
+                    )
+                } else if tool_operation == Some(McpOperationKind::Blame) {
+                    bound_blame_mcp_response(response, response_id, MCP_BLAME_MAX_OUTPUT_BYTES)
+                } else if tool_operation == Some(McpOperationKind::QueryEvents) {
+                    bound_query_events_mcp_response(
+                        response,
+                        response_id,
+                        MCP_PRESENTATION_MAX_OUTPUT_BYTES,
+                    )
+                } else {
+                    response
+                },
+            ),
             pro_event,
-            text_content: None,
         },
         usage_invocation,
     )
@@ -417,9 +466,10 @@ fn negotiate_protocol_version(params: &Value) -> &'static str {
         .unwrap_or(MCP_PROTOCOL_VERSION)
 }
 
-fn handle_tools_call(
+fn handle_tools_call_with_backend<B: ToolBackend>(
     params: Value,
-    data_root: &Path,
+    operation: McpOperationKind,
+    backend: &B,
 ) -> (Result<McpHandled<Value>, Value>, Option<McpInvocation>) {
     let Some(name) = params.get("name").and_then(Value::as_str) else {
         return (
@@ -431,7 +481,7 @@ fn handle_tools_call(
             None,
         );
     };
-    let Some(allowed_arguments) = allowed_tool_arguments(name) else {
+    let Some(allowed_arguments) = allowed_tool_arguments(operation) else {
         return (
             Err(json_rpc_error(
                 -32602,
@@ -441,17 +491,28 @@ fn handle_tools_call(
             None,
         );
     };
-    let mut usage_invocation = McpInvocation::recognized(name);
+    let mut usage_invocation = McpInvocation::from_operation(operation);
     let arguments = params
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
     if !arguments.is_object() {
-        if name == "blame" {
+        if operation == McpOperationKind::Blame {
+            let failure = rejected_blame_operation(
+                pro::invalid_blame_backend_error(),
+                ToolUsageFacts::default(),
+                Instant::now(),
+            );
+            if let Some(invocation) = usage_invocation.as_mut() {
+                invocation.bind_tool_usage(failure.usage.clone());
+            }
             return (
-                Ok(McpHandled::plain(tool_error_result(
-                    crate::pro::invalid_blame_request(),
-                ))),
+                Ok(McpHandled {
+                    value: tool_error_result(failure.error),
+                    pro_event: failure
+                        .product_observation
+                        .map(crate::observability_composition::tool_product_event),
+                }),
                 usage_invocation,
             );
         }
@@ -466,128 +527,146 @@ fn handle_tools_call(
     }
 
     if let Err(error) = validate_argument_keys(&arguments, allowed_arguments) {
-        let error = if name == "blame" {
-            crate::pro::invalid_blame_request()
+        let failure = if operation == McpOperationKind::Blame {
+            rejected_blame_operation(
+                pro::invalid_blame_backend_error(),
+                ToolUsageFacts::default(),
+                Instant::now(),
+            )
         } else {
-            error
+            error.into()
         };
+        if let Some(invocation) = usage_invocation.as_mut() {
+            invocation.bind_tool_usage(failure.usage.clone());
+        }
         return (
-            Ok(McpHandled::plain(tool_error_result(error))),
+            Ok(McpHandled {
+                value: tool_error_result(failure.error),
+                pro_event: failure
+                    .product_observation
+                    .map(crate::observability_composition::tool_product_event),
+            }),
             usage_invocation,
         );
     }
-    match parsed_show_context_target(name, &arguments) {
-        Ok(_) => {}
-        Err(error) => {
+    let parsed = match parse_operation(operation, &arguments) {
+        Ok(parsed) => parsed,
+        Err(failure) => {
+            if let Some(invocation) = usage_invocation.as_mut() {
+                invocation.bind_tool_usage(failure.usage.clone());
+            }
             return (
-                Ok(McpHandled::plain(tool_error_result(error))),
+                Ok(McpHandled {
+                    value: tool_error_result(failure.error),
+                    pro_event: failure
+                        .product_observation
+                        .map(crate::observability_composition::tool_product_event),
+                }),
                 usage_invocation,
             );
         }
+    };
+    if let Some(invocation) = usage_invocation.as_mut() {
+        invocation.bind_tool_usage(parsed.usage);
     }
-
-    let handled = match name {
-        "status" => McpHandled::plain(tool_status(data_root)),
-        "sources" => McpHandled::plain(tool_sources(data_root)),
-        "search" => match tool_search(&arguments, data_root) {
-            Ok((value, observation, compact_value)) => {
-                if let Some(invocation) = usage_invocation.as_mut() {
-                    invocation.bind_search_context(observation);
-                }
-                McpHandled::with_text_content(Ok(value), render_tool_text(&compact_value))
+    match backend.execute(parsed.operation) {
+        Ok(ToolOutcome {
+            structured,
+            compact,
+            usage,
+            product_observation,
+        }) => {
+            if let Some(invocation) = usage_invocation.as_mut() {
+                invocation.bind_tool_usage(usage);
             }
-            Err(error) => McpHandled::plain(Err(error)),
-        },
-        "show_session" => match tool_show_session(&arguments, data_root) {
-            Ok((value, compact_value)) => {
-                McpHandled::with_text_content(Ok(value), render_tool_text(&compact_value))
-            }
-            Err(error) => McpHandled::plain(Err(error)),
-        },
-        "show_event" => match tool_show_event(&arguments, data_root) {
-            Ok((value, compact_value)) => {
-                McpHandled::with_text_content(Ok(value), render_tool_text(&compact_value))
-            }
-            Err(error) => McpHandled::plain(Err(error)),
-        },
-        "query_events" => McpHandled::plain(tool_query_events(&arguments, data_root)),
-        "pro_status" => tool_pro_status(data_root),
-        "blame" => {
-            let parsed_target = required_blame_target(&arguments);
-            if let Ok(target) = &parsed_target {
-                if let Some(invocation) = usage_invocation.as_mut() {
-                    invocation.bind_blame_target(target);
-                }
-            }
-            tool_pro_blame(&arguments, data_root, parsed_target)
+            let value = if let Some(compact) = compact {
+                tool_result_with_text(structured, render_tool_text(&compact))
+            } else {
+                tool_result(structured)
+            };
+            (
+                Ok(McpHandled {
+                    value,
+                    pro_event: product_observation
+                        .map(crate::observability_composition::tool_product_event),
+                }),
+                usage_invocation,
+            )
         }
-        _ => unreachable!("known tool was validated above"),
-    };
-
-    let McpHandled {
-        value,
-        pro_event,
-        text_content,
-    } = handled;
-    (
-        Ok(McpHandled {
-            value: match (value, text_content) {
-                (Ok(value), Some(text)) => tool_result_with_text(value, text),
-                (Ok(value), None) => tool_result(value),
-                (Err(err), _) => tool_error_result(err),
-            },
-            pro_event,
-            text_content: None,
-        }),
-        usage_invocation,
-    )
-}
-
-fn parsed_show_context_target(name: &str, arguments: &Value) -> Result<Option<String>> {
-    let (argument, kind) = match name {
-        "show_session" => ("ctx_session_id", "session"),
-        "show_event" => ("ctx_event_id", "event"),
-        _ => return Ok(None),
-    };
-    let target = optional_string(arguments, argument)?
-        .ok_or_else(|| invalid_tool_request(format!("{argument} is required")))?;
-    if uuid::Uuid::parse_str(target.trim()).is_err() {
-        crate::transcript::normalize_uuid_prefix(&target, kind)
-            .map_err(|error| invalid_tool_request(format!("invalid {argument}: {error}")))?;
+        Err(failure) => {
+            if let Some(invocation) = usage_invocation.as_mut() {
+                invocation.bind_tool_usage(failure.usage.clone());
+            }
+            (
+                Ok(McpHandled {
+                    value: tool_error_result(failure.error),
+                    pro_event: failure
+                        .product_observation
+                        .map(crate::observability_composition::tool_product_event),
+                }),
+                usage_invocation,
+            )
+        }
     }
-    Ok(Some(target))
 }
 
-fn tool_status(data_root: &Path) -> Result<Value> {
-    let config = config::AppConfig::load(data_root)?;
-    Ok(crate::commands::status::status_read_model(data_root, &config)?.report)
-}
-
-fn tool_sources(data_root: &Path) -> Result<Value> {
-    let report = discovered_sources_report();
-    let mut source_values = sources_json(&report.sources);
-    source_values.extend(discovered_plugin_sources_json(data_root)?);
-    let (issues, issues_truncated) = discovery_report_issues_json(&report);
-    Ok(json!({
-        "schema_version": 1,
-        "sources": source_values,
-        "issues": issues,
-        "issues_truncated": issues_truncated,
-        "read_only": true,
-    }))
-}
-
-fn tool_search(
-    arguments: &Value,
+#[cfg(test)]
+fn handle_message(
+    message: Value,
     data_root: &Path,
-) -> Result<(Value, crate::local_usage::SearchContextObservation, Value)> {
-    let request = search_request(arguments)?;
-    crate::commands::source_index::validate_explicit_semantic_scope(&request)?;
-    recover_enabled_daemon_before_search(data_root);
-    crate::commands::source_index::mcp_search_with_compact(request, data_root)
+    initialized: &mut bool,
+) -> (McpHandled<Option<Value>>, Option<McpInvocation>) {
+    let backend = LocalToolBackend::new(data_root.to_path_buf());
+    let descriptor = RequestDescriptor::from_message(&message);
+    handle_message_with_backend(message, initialized, descriptor, &backend)
 }
 
-fn search_request(arguments: &Value) -> Result<crate::commands::source_index::SourceSearchRequest> {
+#[cfg(test)]
+fn handle_tools_call(
+    params: Value,
+    data_root: &Path,
+) -> (Result<McpHandled<Value>, Value>, Option<McpInvocation>) {
+    let backend = LocalToolBackend::new(data_root.to_path_buf());
+    let operation = McpOperationKind::from_tool_name(params.get("name").and_then(Value::as_str));
+    handle_tools_call_with_backend(params, operation, &backend)
+}
+
+#[derive(Debug)]
+pub(super) struct ParsedToolOperation {
+    operation: ToolOperation,
+    usage: ToolUsageFacts,
+}
+
+fn parse_operation(
+    operation: McpOperationKind,
+    arguments: &Value,
+) -> std::result::Result<ParsedToolOperation, ToolExecutionError> {
+    let operation = match operation {
+        McpOperationKind::Status => Ok(ToolOperation::Status),
+        McpOperationKind::Sources => Ok(ToolOperation::Sources),
+        McpOperationKind::Search => search_request(arguments)
+            .map(ToolOperation::Search)
+            .map_err(ToolExecutionError::from),
+        McpOperationKind::ShowSession => {
+            show_session_operation(arguments).map_err(ToolExecutionError::from)
+        }
+        McpOperationKind::ShowEvent => {
+            show_event_operation(arguments).map_err(ToolExecutionError::from)
+        }
+        McpOperationKind::QueryEvents => {
+            query_events_operation(arguments).map_err(ToolExecutionError::from)
+        }
+        McpOperationKind::ProStatus => Ok(ToolOperation::ProStatus),
+        McpOperationKind::Blame => return blame_operation(arguments),
+        McpOperationKind::Unknown | McpOperationKind::Missing => {
+            Err(invalid_tool_request(format!("unknown tool {}", operation.tool_name())).into())
+        }
+    }?;
+    let usage = operation.invocation_usage();
+    Ok(ParsedToolOperation { operation, usage })
+}
+
+fn search_request(arguments: &Value) -> std::result::Result<ToolSearchRequest, ToolBackendError> {
     let event_type = optional_string(arguments, "event_type")?;
     let content_scope = optional_content_scope(arguments, "content_scope")?;
     if content_scope.is_some() && event_type.is_some() {
@@ -643,9 +722,8 @@ fn search_request(arguments: &Value) -> Result<crate::commands::source_index::So
         since.as_deref(),
         event_type.as_deref(),
     )?;
-    Ok(crate::commands::source_index::SourceSearchRequest {
+    Ok(ToolSearchRequest {
         query,
-        terms: Vec::new(),
         limit,
         provider: provider.map(ProviderArg::capture_provider),
         history_source: source_identity.history_source,
@@ -662,30 +740,13 @@ fn search_request(arguments: &Value) -> Result<crate::commands::source_index::So
         session,
         events,
         include_current_session,
-        backend,
+        backend: backend.map(|backend| match backend {
+            crate::SearchBackendArg::Lexical => ToolSearchBackend::Lexical,
+            crate::SearchBackendArg::Semantic => ToolSearchBackend::Semantic,
+            crate::SearchBackendArg::Hybrid => ToolSearchBackend::Hybrid,
+        }),
         semantic_weight,
-        semantic_enabled: false,
-        semantic_daemon_enabled: false,
-        refresh: RefreshArg::Off,
     })
-}
-
-fn recover_enabled_daemon_before_search(data_root: &Path) {
-    let Ok(config) = config::AppConfig::load(data_root) else {
-        return;
-    };
-    if !config.daemon.enabled || crate::semantic::daemon_autostart_suppression_reason().is_some() {
-        return;
-    }
-    // Search continues against the last verified generation when recovery is
-    // unavailable. The attempt is nevertheless made for every search so a
-    // long-lived MCP process cannot retain the startup health decision after
-    // the daemon later crashes.
-    let _ = crate::semantic::autostart_daemon_and_wait(
-        data_root,
-        &config,
-        crate::DaemonTriggerCommandArg::Search,
-    );
 }
 
 fn tool_definitions() -> Vec<Value> {

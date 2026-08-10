@@ -126,7 +126,10 @@ fn query_events_counts_the_delivered_page_after_mcp_adaptation() {
         }
     });
     let completed = invocation.completed(&response, Duration::ZERO, 321);
-    assert_eq!(completed.operation, "show_event");
+    assert_eq!(
+        completed.operation,
+        crate::operation_descriptor::LocalUsageOperation::ShowEvent
+    );
     assert_eq!(completed.result_count, 2);
     assert_eq!(completed.delivered_output_bytes, 321);
 }

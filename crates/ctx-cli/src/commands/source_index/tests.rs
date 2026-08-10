@@ -444,6 +444,7 @@ mod tests {
         .err()
         .expect("oversized query must be rejected");
 
+        let error = error.into_anyhow();
         assert!(matches!(
             error.downcast_ref::<IndexError>(),
             Some(IndexError::LexicalQueryBytesTooLarge { actual, maximum })
@@ -472,6 +473,7 @@ mod tests {
         .err()
         .expect("repeated terms must be rejected");
 
+        let error = error.into_anyhow();
         assert!(matches!(
             error.downcast_ref::<IndexError>(),
             Some(IndexError::LexicalQueryAlternativesTooMany { observed, maximum })
@@ -971,6 +973,29 @@ mod tests {
             source_backed_refresh_mode(RefreshArg::Wait),
             SourceBackedRefreshMode::Wait
         );
+    }
+
+    #[test]
+    fn missing_root_does_not_reclassify_an_unrelated_refresh_io_error() {
+        let temp = tempdir().unwrap();
+        let error = match refresh_for_search_with(&request(RefreshArg::Off), temp.path(), |_, _| {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "injected refresh authority read failure",
+            )
+            .into())
+        }) {
+            Ok(_) => panic!("an unrelated refresh I/O failure must remain an application failure"),
+            Err(error) => error.into_anyhow(),
+        };
+
+        assert!(matches!(
+            error.downcast_ref::<io::Error>(),
+            Some(error) if error.kind() == io::ErrorKind::PermissionDenied
+        ));
+        assert!(error
+            .downcast_ref::<ctx_history_refresh::MissingActiveGeneration>()
+            .is_none());
     }
 
     #[test]
@@ -1644,12 +1669,13 @@ mod tests {
         semantic.backend = Some(SearchBackendArg::Semantic);
         let error = mcp_search(semantic, temp.path())
             .expect_err("MCP semantic-only must fail when the daemon is disabled");
-        assert_eq!(
-            error
-                .downcast_ref::<SemanticNotReady>()
-                .map(SemanticNotReady::code),
-            Some("semantic_daemon_disabled")
-        );
+        assert!(matches!(
+            error,
+            McpSearchError::SemanticNotReady {
+                code: "semantic_daemon_disabled",
+                ..
+            }
+        ));
     }
 
     #[test]

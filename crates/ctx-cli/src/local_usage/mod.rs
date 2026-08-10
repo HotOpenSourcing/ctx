@@ -1,10 +1,13 @@
-use std::{collections::BTreeSet, path::Path, time::Duration};
+use std::{collections::BTreeSet, time::Duration};
 
 use ctx_pro_host_protocol::{BlameAttribution, BlameResult, BlameTarget};
 use serde_json::Value;
 
-use crate::cli::{CommandRoot, DaemonCommand, ShowTarget};
+use crate::operation_descriptor::{LocalUsageOperation, McpOperationKind, OperationDescriptor};
 
+pub(crate) use crate::operation_descriptor::ResultObservationAction;
+
+mod authority;
 mod correlation;
 mod estimate;
 mod report;
@@ -13,10 +16,16 @@ mod store;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use crate::observability_composition::LocalUsageStorageAuthority;
+pub(crate) use authority::{UsageControlRevision, UsageControlSnapshot};
 pub(crate) use correlation::McpUsageRecorder;
 pub(crate) use estimate::{estimate_usage, EstimateFacts, UsageEstimates};
-pub(crate) use report::{pro_conversion_action, read_report, UsageReport};
-pub(crate) use store::{reset, UsageStoreError};
+#[cfg(test)]
+pub(crate) use report::read_report;
+pub(crate) use report::{pro_conversion_action, read_report_authorized, UsageReport};
+#[cfg(test)]
+pub(crate) use store::reset;
+pub(crate) use store::{reset_authorized, UsageStoreError};
 
 pub(crate) const DEFINITION_VERSION: i64 = 2;
 pub(crate) const RETENTION_DAYS: i64 = 400;
@@ -67,21 +76,6 @@ impl ValueClass {
             Self::NotApplicable => "not_applicable",
         }
     }
-}
-
-/// Closed adapter vocabulary retained at the public result boundary.
-///
-/// Definition 2 persists the public operation itself, not this adapter hint.
-/// The hint lets existing command adapters classify their canonical result
-/// collections without accepting content or an open-ended operation string.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ResultObservationAction {
-    Search,
-    OpenSession,
-    OpenEvent,
-    Locate,
-    Sources,
-    Blame,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,6 +168,16 @@ impl SearchContextObservation {
             })
     }
 
+    pub(crate) const fn complete_byte_totals(self) -> Option<(u64, u64)> {
+        match self.coverage {
+            ContextCoverage::Complete => Some((
+                self.delivered_context_bytes,
+                self.matched_normalized_session_bytes,
+            )),
+            ContextCoverage::Unavailable | ContextCoverage::NotApplicable => None,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) const fn metadata_for_test(self) -> (ContextCoverage, u64, u64) {
         (
@@ -224,7 +228,7 @@ impl DurationBucket {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CompletedOperation {
     surface: Surface,
-    operation: &'static str,
+    operation: LocalUsageOperation,
     outcome: Outcome,
     value_class: ValueClass,
     duration: DurationBucket,
@@ -239,7 +243,7 @@ pub(crate) struct CompletedOperation {
 }
 
 impl CompletedOperation {
-    pub(crate) fn cli(operation: &'static str, success: bool, duration: Duration) -> Self {
+    pub(crate) fn cli(operation: LocalUsageOperation, success: bool, duration: Duration) -> Self {
         Self {
             surface: Surface::Cli,
             operation,
@@ -299,7 +303,7 @@ impl CompletedOperation {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CliUsage {
-    operation: Option<&'static str>,
+    operation: Option<LocalUsageOperation>,
     target_type: TargetType,
     pro_outcome: ProOutcome,
     result_count: usize,
@@ -312,49 +316,21 @@ pub(crate) struct CliUsage {
 }
 
 impl CliUsage {
-    pub(crate) fn from_command(command: &CommandRoot) -> Self {
-        let (operation, target_type) = match command {
-            CommandRoot::Setup(_) => (Some("setup"), TargetType::NotApplicable),
-            CommandRoot::Status(_) | CommandRoot::Stats(_) => (None, TargetType::NotApplicable),
-            CommandRoot::Index(_) => (Some("index"), TargetType::NotApplicable),
-            CommandRoot::Sources(_) => (Some("sources"), TargetType::NotApplicable),
-            CommandRoot::Import(_) => (Some("import"), TargetType::NotApplicable),
-            CommandRoot::Show(args) => (
-                match &args.target {
-                    ShowTarget::Session(_) => Some("show_session"),
-                    ShowTarget::Event(_) => Some("show_event"),
-                },
-                TargetType::NotApplicable,
-            ),
-            CommandRoot::List(_) => (Some("show_event"), TargetType::NotApplicable),
-            CommandRoot::Locate(_) => (Some("locate"), TargetType::NotApplicable),
-            CommandRoot::Search(_) => (Some("search"), TargetType::NotApplicable),
-            CommandRoot::Pro(args) => (
-                Some(args.local_usage_operation()),
-                TargetType::NotApplicable,
-            ),
-            CommandRoot::Referral(_) => (None, TargetType::NotApplicable),
-            CommandRoot::Blame(_) => (Some("blame"), TargetType::NotApplicable),
-            CommandRoot::Docs(_) => (Some("docs"), TargetType::NotApplicable),
-            CommandRoot::Integrations(_) => (Some("integrations"), TargetType::NotApplicable),
-            CommandRoot::Mcp(_) => (None, TargetType::NotApplicable),
-            CommandRoot::Daemon(args) => match &args.command {
-                DaemonCommand::Status(_) => (Some("daemon_status"), TargetType::NotApplicable),
-                DaemonCommand::Enable(_) => (Some("daemon_enable"), TargetType::NotApplicable),
-                DaemonCommand::Disable(_) => (Some("daemon_disable"), TargetType::NotApplicable),
-                DaemonCommand::Run(_) => (None, TargetType::NotApplicable),
-            },
-            CommandRoot::Upgrade(args)
-                if !args.replacement_helper && args.hosted_transaction.is_none() =>
-            {
-                (Some("upgrade"), TargetType::NotApplicable)
-            }
-            CommandRoot::Upgrade(_) => (None, TargetType::NotApplicable),
-            CommandRoot::Doctor(_) => (Some("doctor"), TargetType::NotApplicable),
+    #[cfg(test)]
+    pub(crate) fn from_command(command: &crate::cli::CommandRoot) -> Self {
+        let descriptor = crate::dispatch::command_operation_descriptor(command);
+        Self::from_descriptor(&descriptor)
+    }
+
+    pub(crate) fn from_descriptor(descriptor: &OperationDescriptor) -> Self {
+        let operation = match descriptor {
+            OperationDescriptor::Cli(operation) => operation.local_usage_operation(),
+            OperationDescriptor::Mcp(operation) => operation.kind().local_usage_operation(),
+            OperationDescriptor::ProHost(_) | OperationDescriptor::Daemon(_) => None,
         };
         Self {
             operation,
-            target_type,
+            target_type: TargetType::NotApplicable,
             pro_outcome: ProOutcome::NotApplicable,
             result_count: 0,
             citation_count: 0,
@@ -440,20 +416,24 @@ impl CliUsage {
             0
         };
         if !success {
-            if operation == "blame" {
+            if operation == LocalUsageOperation::Blame {
                 completed.pro_outcome = ProOutcome::Error;
             }
             return Some(completed);
         }
-        if matches!(operation, "search" | "blame") {
+        if matches!(
+            operation,
+            LocalUsageOperation::Search | LocalUsageOperation::Blame
+        ) {
             completed.value_class = self.value_class;
             completed.result_count = u64::try_from(self.result_count).unwrap_or(u64::MAX);
         }
-        if operation == "blame" {
+        if operation == LocalUsageOperation::Blame {
             completed.pro_outcome = self.pro_outcome;
             completed.citation_count = u64::try_from(self.citation_count).unwrap_or(u64::MAX);
         }
-        if operation == "search" && self.value_class == ValueClass::ResultBearing {
+        if operation == LocalUsageOperation::Search && self.value_class == ValueClass::ResultBearing
+        {
             let observation = self
                 .search_context
                 .unwrap_or_else(SearchContextObservation::unavailable);
@@ -466,9 +446,13 @@ impl CliUsage {
     }
 }
 
-pub(crate) fn record_best_effort(data_root: &Path, enabled: bool, operation: CompletedOperation) {
-    if enabled {
-        let _ = store::record(data_root, operation);
+pub(crate) fn record_best_effort(
+    authority: &LocalUsageStorageAuthority,
+    control: &UsageControlSnapshot,
+    operation: CompletedOperation,
+) {
+    if control.enabled() {
+        let _ = store::record_authorized(authority, operation);
     }
 }
 
@@ -480,24 +464,19 @@ enum McpContextTarget {
 
 #[derive(Debug, Clone)]
 pub(crate) struct McpInvocation {
-    operation: &'static str,
+    operation: LocalUsageOperation,
     target_type: TargetType,
     search_context: Option<SearchContextObservation>,
 }
 
 impl McpInvocation {
+    #[cfg(test)]
     pub(crate) fn recognized(name: &str) -> Option<Self> {
-        let operation = match name {
-            "status" => "status",
-            "sources" => "sources",
-            "search" => "search",
-            "show_session" => "show_session",
-            "show_event" => "show_event",
-            "query_events" => "show_event",
-            "pro_status" => "pro_status",
-            "blame" => "blame",
-            _ => return None,
-        };
+        Self::from_operation(McpOperationKind::from_tool_name(Some(name)))
+    }
+
+    pub(crate) fn from_operation(kind: McpOperationKind) -> Option<Self> {
+        let operation = kind.local_usage_operation()?;
         Some(Self {
             operation,
             target_type: TargetType::NotApplicable,
@@ -505,14 +484,32 @@ impl McpInvocation {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn bind_search_context(&mut self, observation: SearchContextObservation) {
-        if self.operation == "search" {
+        if self.operation == LocalUsageOperation::Search {
             self.search_context = Some(observation);
         }
     }
 
-    pub(crate) fn bind_blame_target(&mut self, target: &BlameTarget) {
-        self.target_type = target_type(target);
+    pub(crate) fn bind_tool_usage(&mut self, usage: crate::tool_backend::ToolUsageFacts) {
+        if self.operation == LocalUsageOperation::Search {
+            self.search_context = usage.search.map(|search| SearchContextObservation {
+                coverage: if search.context_complete {
+                    ContextCoverage::Complete
+                } else {
+                    ContextCoverage::Unavailable
+                },
+                delivered_context_bytes: search.delivered_context_bytes,
+                matched_normalized_session_bytes: search.matched_normalized_session_bytes,
+            });
+        }
+        if let Some(target) = usage.blame_target {
+            self.target_type = match target {
+                crate::tool_backend::ToolBlameTargetKind::File => TargetType::File,
+                crate::tool_backend::ToolBlameTargetKind::Commit => TargetType::Commit,
+                crate::tool_backend::ToolBlameTargetKind::PullRequest => TargetType::PullRequest,
+            };
+        }
     }
 
     #[cfg(test)]
@@ -539,7 +536,7 @@ impl McpInvocation {
             value_class: ValueClass::NotApplicable,
             duration: DurationBucket::from_duration(duration),
             target_type: self.target_type,
-            pro_outcome: if self.operation == "blame" && failed {
+            pro_outcome: if self.operation == LocalUsageOperation::Blame && failed {
                 ProOutcome::Error
             } else {
                 ProOutcome::NotApplicable
@@ -563,7 +560,9 @@ impl McpInvocation {
             };
             operation.result_count = u64::try_from(count).unwrap_or(u64::MAX);
         }
-        if self.operation == "search" && operation.value_class == ValueClass::ResultBearing {
+        if self.operation == LocalUsageOperation::Search
+            && operation.value_class == ValueClass::ResultBearing
+        {
             let observation = self
                 .search_context
                 .unwrap_or_else(SearchContextObservation::unavailable);
@@ -572,7 +571,7 @@ impl McpInvocation {
             operation.matched_normalized_session_bytes =
                 observation.matched_normalized_session_bytes;
         }
-        if self.operation == "blame" {
+        if self.operation == LocalUsageOperation::Blame {
             operation.citation_count = unique_blame_json_citation_count(structured);
             operation.pro_outcome = classify_blame_json(structured);
         }
@@ -616,14 +615,17 @@ fn mcp_search_context_targets(response: &Value) -> Vec<McpContextTarget> {
         .unwrap_or_default()
 }
 
-fn resolved_mcp_context_target(operation: &str, response: &Value) -> Option<McpContextTarget> {
+fn resolved_mcp_context_target(
+    operation: LocalUsageOperation,
+    response: &Value,
+) -> Option<McpContextTarget> {
     let structured = response.pointer("/result/structuredContent")?;
     match operation {
-        "show_session" => structured
+        LocalUsageOperation::ShowSession => structured
             .get("ctx_session_id")
             .and_then(Value::as_str)
             .map(|id| McpContextTarget::Session(id.to_owned())),
-        "show_event" => structured
+        LocalUsageOperation::ShowEvent => structured
             .get("ctx_event_id")
             .and_then(Value::as_str)
             .map(|id| McpContextTarget::Event(id.to_owned())),
@@ -631,13 +633,13 @@ fn resolved_mcp_context_target(operation: &str, response: &Value) -> Option<McpC
     }
 }
 
-fn mcp_result_count(operation: &str, structured: Option<&Value>) -> Option<usize> {
+fn mcp_result_count(operation: LocalUsageOperation, structured: Option<&Value>) -> Option<usize> {
     let structured = structured?;
     let field = match operation {
-        "sources" => "sources",
-        "search" => "results",
-        "show_session" | "show_event" => "events",
-        "blame" => "matches",
+        LocalUsageOperation::Sources => "sources",
+        LocalUsageOperation::Search => "results",
+        LocalUsageOperation::ShowSession | LocalUsageOperation::ShowEvent => "events",
+        LocalUsageOperation::Blame => "matches",
         _ => return None,
     };
     structured

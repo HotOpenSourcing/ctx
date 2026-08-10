@@ -677,7 +677,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         MCP_MODULE,
-        "serve_stdio_loop#1@0b1e1125489bffc5",
+        "serve_stdio_loop_with_backend#1@0b1e1125489bffc5",
         DirectWrite,
         MachineProtocol,
         "MCP JSON-RPC response framing",
