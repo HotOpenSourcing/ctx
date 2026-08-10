@@ -72,7 +72,7 @@
     "ctx-history-capture": {
       "manifest": "crates/ctx-history-capture/Cargo.toml",
       "targets": {
-        "custom-build:build-script-build": "//crates/ctx-history-capture:cargo_package_data",
+        "custom-build:build-script-build": "//:history_capture_build_cfg_parity_check",
         "lib:ctx_history_capture": "//crates/ctx-history-capture:lib",
         "test:codex_direct_result": "//crates/ctx-history-capture:codex_direct_result_tests",
         "test:ctx_retrieval_classifier": "//crates/ctx-history-capture:ctx_retrieval_classifier_tests",
@@ -92,14 +92,30 @@
       "native_unit": "//crates/ctx-history-index-generation:unit_tests",
       "feature_variants": ["//crates/ctx-history-index-generation:test_support_lib"]
     },
+    "ctx-history-index-format": {
+      "manifest": "crates/ctx-history-index-format/Cargo.toml",
+      "targets": {"lib:ctx_history_index_format": "//crates/ctx-history-index-format:lib"},
+      "native_unit": "//crates/ctx-history-index-format:unit_tests",
+      "feature_variants": ["//crates/ctx-history-index-format:test_support_lib"]
+    },
+    "ctx-history-index-query": {
+      "manifest": "crates/ctx-history-index-query/Cargo.toml",
+      "targets": {
+        "lib:ctx_history_index_query": "//crates/ctx-history-index-query:lib",
+        "test:mcp_attribution_search": "//crates/ctx-history-index-query:mcp_attribution_search_tests",
+        "test:writer_integration": "//crates/ctx-history-index-query:writer_integration_tests"
+      },
+      "native_unit": "//crates/ctx-history-index-query:unit_tests",
+      "feature_variants": ["//crates/ctx-history-index-query:test_support_lib"]
+    },
     "ctx-history-index": {
       "manifest": "crates/ctx-history-index/Cargo.toml",
       "targets": {
         "lib:ctx_history_index": "//crates/ctx-history-index:lib",
-        "test:mcp_attribution_search": "//crates/ctx-history-index:mcp_attribution_search_tests",
         "test:source_backed_recovery": "//crates/ctx-history-index:source_backed_recovery_tests"
       },
-      "native_unit": "//crates/ctx-history-index:unit_tests"
+      "native_unit": "//crates/ctx-history-index:unit_tests",
+      "feature_variants": ["//crates/ctx-history-index:test_support_lib"]
     },
     "ctx-history-refresh": {
       "manifest": "crates/ctx-history-refresh/Cargo.toml",

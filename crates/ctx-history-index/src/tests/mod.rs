@@ -207,22 +207,6 @@ fn with_annotation(mut record: CoreRecord, annotation: CoreRecordAnnotation) -> 
     record
 }
 
-fn filtered_session_ids(index: &VerifiedIndex, filters: EventSearchFilters) -> Vec<Uuid> {
-    sorted_uuids(
-        index
-            .search_event_candidates_with_filters("shared needle", &filters, 10)
-            .unwrap()
-            .into_iter()
-            .map(|candidate| candidate.event.session_id.as_uuid())
-            .collect(),
-    )
-}
-
-fn sorted_uuids(mut ids: Vec<Uuid>) -> Vec<Uuid> {
-    ids.sort();
-    ids
-}
-
 fn indexed_document(record: CoreRecord) -> TantivyDocument {
     let schema = lexical_schema();
     let fields = fields_from_schema(&schema).unwrap();
@@ -242,26 +226,6 @@ fn decoded_stored_core(searcher: &Searcher, address: tantivy::DocAddress) -> Cor
         .and_then(|value| value.as_bytes())
         .unwrap();
     CoreRecord::decode_stored(encoded).unwrap()
-}
-
-fn collect_source_pages(
-    index: &VerifiedIndex,
-    source: &SourceKey,
-    limit: usize,
-) -> Vec<EventRecord> {
-    let mut cursor = None;
-    let mut records = Vec::new();
-    loop {
-        let page = index
-            .source_event_page(source, cursor.as_ref(), limit)
-            .unwrap();
-        records.extend(page.items);
-        if page.terminal {
-            assert!(page.next_cursor.is_none());
-            return records;
-        }
-        cursor = Some(page.next_cursor.unwrap());
-    }
 }
 
 fn publish_unchecked_generation(
@@ -318,7 +282,10 @@ fn open_unverified_generation(root: &Path) -> (Searcher, GenerationManifest) {
     let directory = DurableMmapDirectory::open(active_generation_path(root)).unwrap();
     let index = Index::open(directory).unwrap();
     let metas = index.load_metas().unwrap();
-    let manifest = load_publication_for_metas(root, &metas).unwrap().manifest;
+    let manifest = load_publication_for_metas(root, &metas)
+        .unwrap()
+        .into_parts()
+        .1;
     let reader = index
         .reader_builder()
         .reload_policy(ReloadPolicy::Manual)
@@ -491,9 +458,7 @@ fn multisegment_fixture(
 }
 
 mod integrity_certification;
-mod pinned_generation;
 mod publication_metadata;
-mod query;
 mod recovery;
 mod republish;
 #[cfg(target_os = "linux")]

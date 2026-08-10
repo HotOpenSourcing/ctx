@@ -581,8 +581,8 @@ fn recommit_candidate_with_query_projection_mutation(
 
 #[test]
 fn candidate_publication_rejects_every_query_authoritative_projection_mutation() {
-    const CORRUPT_EVENT_RANGE_ORDER: [u8; crate::index_document::EVENT_RANGE_ORDER_KEY_LEN] =
-        [0x5a; crate::index_document::EVENT_RANGE_ORDER_KEY_LEN];
+    const CORRUPT_EVENT_RANGE_ORDER: [u8; ctx_history_index_format::EVENT_RANGE_ORDER_KEY_LEN] =
+        [0x5a; ctx_history_index_format::EVENT_RANGE_ORDER_KEY_LEN];
     let cases = [
         ("event_type", QueryProjectionMutation::Omit("event_type")),
         ("role", QueryProjectionMutation::Text("role", "assistant")),
@@ -738,7 +738,10 @@ fn assert_malicious_incremental_copy_is_rejected(
         let directory = DurableMmapDirectory::open(candidate_path).unwrap();
         let index = Index::open(directory).unwrap();
         let metas = index.load_metas().unwrap();
-        let manifest = load_publication_for_metas(&root, &metas).unwrap().manifest;
+        let manifest = load_publication_for_metas(&root, &metas)
+            .unwrap()
+            .into_parts()
+            .1;
         let reader = index
             .reader_builder()
             .reload_policy(ReloadPolicy::Manual)
@@ -1307,7 +1310,7 @@ fn stale_schema_manifest_fails_closed_at_generation_boundary() {
     stale_manifest.lexical_schema_version = STALE_LEXICAL_SCHEMA;
     let stale_generation_id = stale_manifest.generation_id().unwrap();
     write_manifest(temp.path(), &stale_generation_id, &stale_manifest).unwrap();
-    let mut stale_metas = index.searcher.index().load_metas().unwrap();
+    let mut stale_metas = index.test_searcher().index().load_metas().unwrap();
     stale_metas.payload = Some(
         serde_json::to_string(&CommitPayload {
             version: COMMIT_PAYLOAD_VERSION,
@@ -1534,7 +1537,7 @@ fn verified_open_rejects_mismatched_core_contract_fingerprint() {
     let mut mismatched_manifest = pinned.manifest().clone();
     mismatched_manifest.core_record_contract_fingerprint =
         PRIOR_REPOSITORY_CONTRACT_FINGERPRINT.to_owned();
-    let index = pinned.searcher.index().clone();
+    let index = pinned.test_searcher().index().clone();
     publish_unchecked_generation(temp.path(), &index, mismatched_manifest, &[], Vec::new());
 
     let error = match VerifiedIndex::open(temp.path()) {
@@ -1588,7 +1591,7 @@ fn verified_open_rejects_mismatched_active_policy() {
     let mismatched_policy_hash = mismatched_policy.canonical_sha256().unwrap();
     let mut mismatched_manifest = pinned.manifest().clone();
     mismatched_manifest.policy_schema_hash = mismatched_policy_hash.clone();
-    let index = pinned.searcher.index().clone();
+    let index = pinned.test_searcher().index().clone();
     publish_unchecked_generation(temp.path(), &index, mismatched_manifest, &[], Vec::new());
 
     let error = match VerifiedIndex::open(temp.path()) {
