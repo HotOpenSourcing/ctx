@@ -15,7 +15,7 @@ const MCP_TEXT_MAX_SNIPPET_CHARS: usize = 320;
 const MCP_TEXT_MAX_EVENT_CHARS: usize = 500;
 const MCP_TEXT_MAX_CELL_CHARS: usize = 80;
 
-pub(super) fn render_tool_text(value: &Value) -> String {
+pub(crate) fn render_tool_text(value: &Value) -> String {
     if is_blame_result(value) {
         return render_blame_text(value);
     }

@@ -6,81 +6,39 @@ use std::{
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
-use ctx_history_core::EventType;
-use ctx_history_index::SearchContentScope;
+use ctx_agent_integrations::{
+    mcp::{
+        encode_response_line, error_response, handle_protocol_message, read_mcp_input_line,
+        McpHandled, McpInputLine, McpServerIdentity, McpUsage, RequestDescriptor,
+        MCP_MAX_LINE_BYTES,
+    },
+    tool_backend::{ToolBackend, ToolBlameTargetKind, ToolIntegrationReceipt, ToolTransportFacts},
+};
 use serde_json::{json, Value};
 
 #[cfg(test)]
 use std::path::Path;
 
-mod arguments;
-mod input;
-mod pro;
-mod query_events;
-mod response;
-mod response_bound;
-mod show;
 mod telemetry;
-mod text;
+pub(crate) mod text;
 
-use arguments::{
-    allowed_tool_arguments, optional_bool, optional_content_scope, optional_f32, optional_provider,
-    optional_search_backend, optional_string, optional_transcript_mode, optional_usize,
-    validate_argument_keys, validate_search_filter_arguments,
+use telemetry::McpTelemetry;
+
+use super::config;
+use crate::{
+    analytics::{
+        pro_helper_connection_outcome, pro_operation_event, McpErrorClassV1, McpStopReasonV1,
+        Outcome, ProAccessStateV1, ProBlameTargetV1, ProBlameTelemetryV1,
+        ProHelperConnectionOutcomeV1, ProHostOperationV1, ProStatusTelemetryV1, ProSurfaceV1,
+        PublicEventV1,
+    },
+    local_usage::{McpInvocation, McpUsageRecorder},
+    operation_descriptor::observed_mcp_product_operation,
+    tool_backend::LocalToolBackend,
 };
-use input::{read_mcp_input_line, McpInputLine};
-#[cfg(test)]
-use pro::MCP_BLAME_LIMIT;
-use pro::{blame_operation, pro_blame_tool, rejected_blame_operation, MCP_BLAME_MAX_OUTPUT_BYTES};
-use query_events::query_events_operation;
-use response::{
-    error_response, invalid_request_response, invalid_tool_request, json_rpc_error,
-    success_response, tool_error_result, tool_result, tool_result_with_text,
-};
-use response_bound::{
-    bound_blame_mcp_response, bound_query_events_mcp_response, bound_show_mcp_response,
-};
-use show::{show_event_operation, show_session_operation};
-use telemetry::{McpHandled, McpTelemetry, RequestDescriptor};
-use text::render_tool_text;
 
 #[cfg(test)]
-pub(crate) fn query_events_for_test(arguments: &Value, data_root: &Path) -> Result<Value> {
-    let backend = LocalToolBackend::new(data_root.to_path_buf());
-    let operation = query_events_operation(arguments).map_err(anyhow::Error::new)?;
-    backend
-        .execute(operation)
-        .map(|outcome| outcome.structured)
-        .map_err(|failure| match failure.error {
-            ToolBackendError::EventQuery(error) => anyhow::Error::new(error),
-            error => anyhow::Error::new(error),
-        })
-}
-
-#[cfg(test)]
-pub(crate) fn render_tool_text_for_test(value: &Value) -> String {
-    render_tool_text(value)
-}
-
-use super::{
-    compact_json, config, search_has_intent, ProviderArg, SearchIntentInput,
-    SourceIdentityFilterArgs, MAX_EVENT_WINDOW, MAX_SEARCH_LIMIT,
-};
-use crate::analytics::{McpErrorClassV1, McpStopReasonV1, Outcome};
-use crate::local_usage::{McpInvocation, McpUsageRecorder};
-use crate::operation_descriptor::McpOperationKind;
-use crate::presentation_limit::MCP_PRESENTATION_MAX_OUTPUT_BYTES;
-use crate::tool_backend::{
-    LocalToolBackend, ToolBackend, ToolBackendError, ToolExecutionError, ToolOperation,
-    ToolOutcome, ToolSearchBackend, ToolSearchRequest, ToolUsageFacts,
-};
-
-const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
-const MCP_SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[MCP_PROTOCOL_VERSION, "2025-06-18"];
-const MCP_MAX_LINE_BYTES: usize = 1024 * 1024;
-const MCP_DEFAULT_SESSION_PAGE_LIMIT: usize = 200;
-const MCP_MAX_SESSION_PAGE_LIMIT: usize = 4_096;
-const MCP_MAX_SESSION_CURSOR_BYTES: usize = 4_096;
+mod tests;
 
 #[derive(Debug, Args)]
 pub(crate) struct McpArgs {
@@ -128,7 +86,7 @@ fn serve_stdio(data_root: PathBuf) -> Result<()> {
         crate::observability_composition::local_usage_storage_authority(&data_root),
         move || control.snapshot(),
     );
-    let backend = LocalToolBackend::new(data_root.clone());
+    let backend = LocalToolBackend::new(data_root);
     let started = Instant::now();
     let mut initialized = false;
 
@@ -170,7 +128,7 @@ fn serve_stdio_loop_with_backend<B: ToolBackend>(
             return Ok(());
         };
         let request_started = Instant::now();
-        let (handled, descriptor, usage_invocation) = match input {
+        let (handled, descriptor) = match input {
             McpInputLine::Line(line) => {
                 let line = line.trim();
                 if line.is_empty() {
@@ -179,19 +137,25 @@ fn serve_stdio_loop_with_backend<B: ToolBackend>(
                 match serde_json::from_str::<Value>(line) {
                     Ok(message) => {
                         let descriptor = RequestDescriptor::from_message(&message);
-                        let (handled, usage_invocation) =
-                            handle_message_with_backend(message, initialized, descriptor, backend);
-                        (handled, descriptor, usage_invocation)
+                        (
+                            handle_protocol_message(
+                                message,
+                                descriptor,
+                                initialized,
+                                server_identity(),
+                                backend,
+                            ),
+                            descriptor,
+                        )
                     }
-                    Err(err) => (
+                    Err(error) => (
                         McpHandled::plain(Some(error_response(
                             Value::Null,
                             -32700,
                             "Parse error",
-                            Some(json!({ "error": err.to_string() })),
+                            Some(json!({ "error": error.to_string() })),
                         ))),
                         RequestDescriptor::InvalidJson,
-                        None,
                     ),
                 }
             }
@@ -203,7 +167,6 @@ fn serve_stdio_loop_with_backend<B: ToolBackend>(
                     Some(json!({ "error": "MCP message is not valid UTF-8" })),
                 ))),
                 RequestDescriptor::InvalidUtf8,
-                None,
             ),
             McpInputLine::TooLarge => (
                 McpHandled::plain(Some(error_response(
@@ -215,16 +178,16 @@ fn serve_stdio_loop_with_backend<B: ToolBackend>(
                     })),
                 ))),
                 RequestDescriptor::LineTooLarge,
-                None,
             ),
         };
         let McpHandled {
             value: response,
-            pro_event,
-            ..
+            integration_receipt,
+            usage,
         } = handled;
+        let usage_invocation = usage.and_then(usage_invocation);
         if let Some(response) = response {
-            let encoded = serde_json::to_string(&response).map_err(|error| {
+            let encoded = encode_response_line(&response).map_err(|error| {
                 telemetry.record_response_failure(
                     descriptor,
                     request_started.elapsed(),
@@ -235,7 +198,7 @@ fn serve_stdio_loop_with_backend<B: ToolBackend>(
                     error: error.into(),
                 }
             })?;
-            writeln!(stdout, "{encoded}").map_err(|error| {
+            stdout.write_all(encoded.as_bytes()).map_err(|error| {
                 telemetry.record_response_failure(
                     descriptor,
                     request_started.elapsed(),
@@ -259,23 +222,26 @@ fn serve_stdio_loop_with_backend<B: ToolBackend>(
             })?;
             let duration = request_started.elapsed();
             if let Some(invocation) = usage_invocation {
-                let serialized_response_bytes = encoded.len().saturating_add(1);
+                let operation = match descriptor {
+                    RequestDescriptor::ToolCall { operation } => {
+                        observed_mcp_product_operation(operation)
+                            .expect("usage receipts exist only for recognized MCP tools")
+                    }
+                    _ => unreachable!("usage receipts exist only for MCP tool calls"),
+                };
                 // Usage-v2 owns bounded, process-local search-to-show correlation inside
                 // this delivery boundary; MCP never sends target IDs to storage or logs.
                 usage_recorder.record_delivered(invocation, duration, || {
                     crate::observability_product::mcp_completion_facts(
-                        match descriptor {
-                            RequestDescriptor::ToolCall { operation } => operation,
-                            _ => McpOperationKind::Missing,
-                        },
+                        operation,
                         &response,
-                        serialized_response_bytes,
+                        encoded.len(),
                     )
                 });
             }
             telemetry.record_delivered(descriptor, Some(&response), duration);
-            if let Some(event) = pro_event {
-                telemetry.submit_pro_event(event);
+            if let Some(receipt) = integration_receipt {
+                telemetry.submit_pro_event(integration_receipt_event(receipt));
             }
         } else {
             telemetry.record_delivered(descriptor, None, request_started.elapsed());
@@ -283,627 +249,138 @@ fn serve_stdio_loop_with_backend<B: ToolBackend>(
     }
 }
 
-fn handle_message_with_backend<B: ToolBackend>(
-    message: Value,
-    initialized: &mut bool,
-    descriptor: RequestDescriptor,
-    backend: &B,
-) -> (McpHandled<Option<Value>>, Option<McpInvocation>) {
-    let Some(object) = message.as_object() else {
-        return (
-            McpHandled::plain(Some(error_response(
-                Value::Null,
-                -32600,
-                "Invalid Request",
-                None,
-            ))),
-            None,
-        );
-    };
-    if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
-        return (
-            McpHandled::plain(Some(invalid_request_response(object.get("id")))),
-            None,
-        );
+fn server_identity() -> McpServerIdentity<'static> {
+    McpServerIdentity {
+        name: "ctx",
+        version: env!("CARGO_PKG_VERSION"),
     }
-    let tool_operation = match descriptor {
-        RequestDescriptor::ToolCall { operation } => Some(operation),
-        _ => None,
-    };
-    let id = message
-        .as_object()
-        .and_then(|object| object.get("id"))
-        .cloned();
-    let Some(method) = message.get("method").and_then(Value::as_str) else {
-        return (
-            McpHandled::plain(Some(invalid_request_response(id.as_ref()))),
-            None,
-        );
-    };
-    if matches!(
-        id,
-        Some(Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_))
-    ) {
-        return (
-            McpHandled::plain(Some(invalid_request_response(None))),
-            None,
-        );
-    }
-    let Some(id) = id else {
-        if method == "notifications/initialized" {
-            *initialized = true;
-        }
-        return (McpHandled::plain(None), None);
-    };
-    let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
-    if !params.is_object() {
-        return (
-            McpHandled::plain(Some(error_response(
-                id,
-                -32602,
-                "Invalid params",
-                Some(json!({ "error": "params must be an object" })),
-            ))),
-            None,
-        );
-    }
-    if method != "initialize" && !*initialized {
-        return (
-            McpHandled::plain(Some(error_response(
-                id,
-                -32002,
-                "Server not initialized",
-                Some(json!({ "error": "send initialize before calling ctx MCP tools" })),
-            ))),
-            None,
-        );
-    }
-    let (result, usage_invocation) = match method {
-        "initialize" => {
-            *initialized = true;
-            (Ok(McpHandled::plain(initialize_result(&params))), None)
-        }
-        "ping" => (Ok(McpHandled::plain(json!({}))), None),
-        "tools/list" => (
-            Ok(McpHandled::plain(json!({ "tools": tool_definitions() }))),
-            None,
-        ),
-        "tools/call" => handle_tools_call_with_backend(
-            params,
-            tool_operation.unwrap_or(McpOperationKind::Missing),
-            backend,
-        ),
-        _ => (Err(json_rpc_error(-32601, "Method not found", None)), None),
-    };
-    let response_id = id.clone();
-    let McpHandled {
-        value: response,
-        pro_event,
-        ..
-    } = match result {
-        Ok(handled) => McpHandled {
-            value: success_response(id, handled.value),
-            pro_event: handled.pro_event,
-        },
-        Err(error) => McpHandled::plain({
-            if let Some(object) = error.as_object() {
-                let code = object.get("code").and_then(Value::as_i64).unwrap_or(-32603);
-                let message = object
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("Internal error");
-                let data = object.get("data").cloned();
-                error_response(id, code, message, data)
+}
+
+fn usage_invocation(usage: McpUsage) -> Option<McpInvocation> {
+    let operation = observed_mcp_product_operation(usage.operation)?;
+    let mut invocation = McpInvocation::from_operation(operation);
+    invocation.bind_tool_usage(crate::observability_product::mcp_tool_usage(usage.facts));
+    Some(invocation)
+}
+
+fn integration_receipt_event(receipt: ToolIntegrationReceipt) -> PublicEventV1 {
+    let operation = match receipt.facts {
+        ToolTransportFacts::ProStatus {
+            access_state,
+            helper_connected,
+            error_code,
+        } => {
+            let mut telemetry = ProStatusTelemetryV1::new(ProSurfaceV1::Mcp);
+            telemetry.access_state = access_state
+                .as_deref()
+                .and_then(ProAccessStateV1::from_safe_name);
+            telemetry.helper_connection = if helper_connected {
+                ProHelperConnectionOutcomeV1::Connected
             } else {
-                error_response(id, -32603, "Internal error", Some(error))
+                pro_helper_connection_outcome(error_code.as_deref())
+            };
+            if error_code.is_some() {
+                telemetry.fail(error_code.as_deref());
             }
-        }),
+            ProHostOperationV1::Status(telemetry)
+        }
+        ToolTransportFacts::Blame {
+            target,
+            result_count,
+            has_more,
+            failure_code,
+        } => {
+            let target = target.map(|target| match target {
+                ToolBlameTargetKind::File => ProBlameTargetV1::File,
+                ToolBlameTargetKind::Commit => ProBlameTargetV1::Commit,
+                ToolBlameTargetKind::PullRequest => ProBlameTargetV1::PullRequest,
+            });
+            let mut telemetry = ProBlameTelemetryV1::new(target, ProSurfaceV1::Mcp);
+            if receipt.success {
+                telemetry.complete(result_count.unwrap_or(0), has_more.unwrap_or(false));
+            } else {
+                telemetry.fail(failure_code);
+            }
+            ProHostOperationV1::Blame(telemetry)
+        }
     };
-    (
-        McpHandled {
-            value: Some(
-                if matches!(
-                    tool_operation,
-                    Some(McpOperationKind::ShowSession | McpOperationKind::ShowEvent)
-                ) {
-                    bound_show_mcp_response(
-                        response,
-                        response_id,
-                        MCP_PRESENTATION_MAX_OUTPUT_BYTES,
-                    )
-                } else if tool_operation == Some(McpOperationKind::Blame) {
-                    bound_blame_mcp_response(response, response_id, MCP_BLAME_MAX_OUTPUT_BYTES)
-                } else if tool_operation == Some(McpOperationKind::QueryEvents) {
-                    bound_query_events_mcp_response(
-                        response,
-                        response_id,
-                        MCP_PRESENTATION_MAX_OUTPUT_BYTES,
-                    )
-                } else {
-                    response
-                },
-            ),
-            pro_event,
+    pro_operation_event(
+        operation,
+        if receipt.success {
+            Outcome::Success
+        } else {
+            Outcome::Failure
         },
-        usage_invocation,
+        receipt.duration,
     )
 }
 
-fn initialize_result(params: &Value) -> Value {
-    let protocol_version = negotiate_protocol_version(params);
-    json!({
-        "protocolVersion": protocol_version,
-        "capabilities": {
-            "tools": {
-                "listChanged": false
-            }
-        },
-        "serverInfo": {
-            "name": "ctx",
-            "version": env!("CARGO_PKG_VERSION")
-        },
-        "instructions": "Local access to the ctx Core/Tantivy index and optional Pro work graph. Tool output may include absolute paths, source metadata, snippets, and transcript text; MCP hosts may log or forward it. Blame may perform bounded local catch-up that updates the canonical Core index, writes the encrypted derived Pro graph, and writes the projection acknowledgement. It never writes provider history or repositories. pro_status and the other tools are read-only."
-    })
-}
-
-fn negotiate_protocol_version(params: &Value) -> &'static str {
-    let Some(requested) = params.get("protocolVersion").and_then(Value::as_str) else {
-        return MCP_PROTOCOL_VERSION;
-    };
-    MCP_SUPPORTED_PROTOCOL_VERSIONS
-        .iter()
-        .copied()
-        .find(|version| *version == requested)
-        .unwrap_or(MCP_PROTOCOL_VERSION)
-}
-
-fn handle_tools_call_with_backend<B: ToolBackend>(
-    params: Value,
-    operation: McpOperationKind,
-    backend: &B,
-) -> (Result<McpHandled<Value>, Value>, Option<McpInvocation>) {
-    let Some(name) = params.get("name").and_then(Value::as_str) else {
-        return (
-            Err(json_rpc_error(
-                -32602,
-                "Invalid params",
-                Some(json!({ "error": "tools/call requires params.name" })),
-            )),
-            None,
-        );
-    };
-    let Some(allowed_arguments) = allowed_tool_arguments(operation) else {
-        return (
-            Err(json_rpc_error(
-                -32602,
-                "Invalid params",
-                Some(json!({ "error": format!("unknown tool {name}") })),
-            )),
-            None,
-        );
-    };
-    let mut usage_invocation = operation.observed().map(McpInvocation::from_operation);
-    let arguments = params
-        .get("arguments")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    if !arguments.is_object() {
-        if operation == McpOperationKind::Blame {
-            let failure = rejected_blame_operation(
-                pro::invalid_blame_backend_error(),
-                ToolUsageFacts::default(),
-                Instant::now(),
-            );
-            if let Some(invocation) = usage_invocation.as_mut() {
-                invocation.bind_tool_usage(crate::observability_product::mcp_tool_usage(
-                    failure.usage.clone(),
-                ));
-            }
-            return (
-                Ok(McpHandled {
-                    value: tool_error_result(failure.error),
-                    pro_event: failure.product_observation.map(|observation| {
-                        crate::observability_composition::tool_product_event(*observation)
-                    }),
-                }),
-                usage_invocation,
-            );
-        }
-        return (
-            Err(json_rpc_error(
-                -32602,
-                "Invalid params",
-                Some(json!({ "error": "tools/call params.arguments must be an object" })),
-            )),
-            usage_invocation,
-        );
-    }
-
-    if let Err(error) = validate_argument_keys(&arguments, allowed_arguments) {
-        let failure = if operation == McpOperationKind::Blame {
-            rejected_blame_operation(
-                pro::invalid_blame_backend_error(),
-                ToolUsageFacts::default(),
-                Instant::now(),
-            )
-        } else {
-            error.into()
-        };
-        if let Some(invocation) = usage_invocation.as_mut() {
-            invocation.bind_tool_usage(crate::observability_product::mcp_tool_usage(
-                failure.usage.clone(),
-            ));
-        }
-        return (
-            Ok(McpHandled {
-                value: tool_error_result(failure.error),
-                pro_event: failure.product_observation.map(|observation| {
-                    crate::observability_composition::tool_product_event(*observation)
-                }),
-            }),
-            usage_invocation,
-        );
-    }
-    let parsed = match parse_operation(operation, &arguments) {
-        Ok(parsed) => parsed,
-        Err(failure) => {
-            if let Some(invocation) = usage_invocation.as_mut() {
-                invocation.bind_tool_usage(crate::observability_product::mcp_tool_usage(
-                    failure.usage.clone(),
-                ));
-            }
-            return (
-                Ok(McpHandled {
-                    value: tool_error_result(failure.error),
-                    pro_event: failure.product_observation.map(|observation| {
-                        crate::observability_composition::tool_product_event(*observation)
-                    }),
-                }),
-                usage_invocation,
-            );
-        }
-    };
-    if let Some(invocation) = usage_invocation.as_mut() {
-        invocation.bind_tool_usage(crate::observability_product::mcp_tool_usage(parsed.usage));
-    }
-    match backend.execute(parsed.operation) {
-        Ok(ToolOutcome {
-            structured,
-            compact,
-            usage,
-            product_observation,
-        }) => {
-            if let Some(invocation) = usage_invocation.as_mut() {
-                invocation.bind_tool_usage(crate::observability_product::mcp_tool_usage(usage));
-            }
-            let value = if let Some(compact) = compact {
-                tool_result_with_text(structured, render_tool_text(&compact))
-            } else {
-                tool_result(structured)
-            };
-            (
-                Ok(McpHandled {
-                    value,
-                    pro_event: product_observation
-                        .map(crate::observability_composition::tool_product_event),
-                }),
-                usage_invocation,
-            )
-        }
-        Err(failure) => {
-            if let Some(invocation) = usage_invocation.as_mut() {
-                invocation.bind_tool_usage(crate::observability_product::mcp_tool_usage(
-                    failure.usage.clone(),
-                ));
-            }
-            (
-                Ok(McpHandled {
-                    value: tool_error_result(failure.error),
-                    pro_event: failure.product_observation.map(|observation| {
-                        crate::observability_composition::tool_product_event(*observation)
-                    }),
-                }),
-                usage_invocation,
-            )
-        }
-    }
-}
-
 #[cfg(test)]
-fn handle_tools_call(
-    params: Value,
+fn serve_stdio_loop(
     data_root: &Path,
-) -> (Result<McpHandled<Value>, Value>, Option<McpInvocation>) {
+    stdin: &mut impl BufRead,
+    stdout: &mut impl Write,
+    initialized: &mut bool,
+    telemetry: &mut McpTelemetry,
+    usage_recorder: &mut McpUsageRecorder,
+) -> std::result::Result<(), McpServeFailure> {
     let backend = LocalToolBackend::new(data_root.to_path_buf());
-    let operation = McpOperationKind::from_tool_name(params.get("name").and_then(Value::as_str));
-    handle_tools_call_with_backend(params, operation, &backend)
-}
-
-#[derive(Debug)]
-pub(super) struct ParsedToolOperation {
-    operation: ToolOperation,
-    usage: ToolUsageFacts,
-}
-
-fn parse_operation(
-    operation: McpOperationKind,
-    arguments: &Value,
-) -> std::result::Result<ParsedToolOperation, ToolExecutionError> {
-    let operation = match operation {
-        McpOperationKind::Status => Ok(ToolOperation::Status),
-        McpOperationKind::Sources => Ok(ToolOperation::Sources),
-        McpOperationKind::Search => search_request(arguments)
-            .map(ToolOperation::Search)
-            .map_err(ToolExecutionError::from),
-        McpOperationKind::ShowSession => {
-            show_session_operation(arguments).map_err(ToolExecutionError::from)
-        }
-        McpOperationKind::ShowEvent => {
-            show_event_operation(arguments).map_err(ToolExecutionError::from)
-        }
-        McpOperationKind::QueryEvents => {
-            query_events_operation(arguments).map_err(ToolExecutionError::from)
-        }
-        McpOperationKind::ProStatus => Ok(ToolOperation::ProStatus),
-        McpOperationKind::Blame => return blame_operation(arguments),
-        McpOperationKind::Unknown | McpOperationKind::Missing => {
-            Err(invalid_tool_request(format!("unknown tool {}", operation.tool_name())).into())
-        }
-    }?;
-    let usage = operation.invocation_usage();
-    Ok(ParsedToolOperation { operation, usage })
-}
-
-fn search_request(arguments: &Value) -> std::result::Result<ToolSearchRequest, ToolBackendError> {
-    let event_type = optional_string(arguments, "event_type")?;
-    let content_scope = optional_content_scope(arguments, "content_scope")?;
-    if content_scope.is_some() && event_type.is_some() {
-        return Err(invalid_tool_request(
-            "content_scope and event_type are mutually exclusive",
-        ));
-    }
-    let query = optional_string(arguments, "query")?.unwrap_or_default();
-    let limit = optional_usize(arguments, "limit")?.unwrap_or(20);
-    if !(1..=MAX_SEARCH_LIMIT).contains(&limit) {
-        return Err(invalid_tool_request(format!(
-            "limit must be between 1 and {MAX_SEARCH_LIMIT}"
-        )));
-    }
-    let provider = optional_provider(arguments, "provider")?;
-    let history_source = optional_string(arguments, "history_source")?;
-    let provider_key = optional_string(arguments, "provider_key")?;
-    let source_id = optional_string(arguments, "source_id")?;
-    let source_format = optional_string(arguments, "source_format")?;
-    let session = optional_string(arguments, "session")?;
-    let workspace = optional_string(arguments, "workspace")?;
-    let since = optional_string(arguments, "since")?;
-    let primary_only = optional_bool(arguments, "primary_only")?.unwrap_or(false);
-    let include_subagents = optional_bool(arguments, "include_subagents")?.unwrap_or(false);
-    let file = optional_string(arguments, "file")?.map(PathBuf::from);
-    let events = optional_bool(arguments, "events")?.unwrap_or(false) || session.is_some();
-    let include_current_session =
-        optional_bool(arguments, "include_current_session")?.unwrap_or(false);
-    let backend = optional_search_backend(arguments, "backend")?;
-    let semantic_weight = optional_f32(arguments, "semantic_weight")?.unwrap_or(0.35);
-    if !(0.0..=1.0).contains(&semantic_weight) || !semantic_weight.is_finite() {
-        return Err(invalid_tool_request(
-            "semantic_weight must be between 0.0 and 1.0",
-        ));
-    }
-    let source_identity = SourceIdentityFilterArgs {
-        history_source,
-        provider_key,
-        source_id,
-        source_format,
-    };
-    if !search_has_intent(SearchIntentInput {
-        query: Some(&query),
-        terms: &[],
-        file: file.as_deref(),
-    }) {
-        return Err(invalid_tool_request("search needs a query or file"));
-    }
-    validate_search_filter_arguments(
-        provider.as_ref(),
-        &source_identity,
-        session.as_deref(),
-        since.as_deref(),
-        event_type.as_deref(),
-    )?;
-    Ok(ToolSearchRequest {
-        query,
-        limit,
-        provider: provider.map(ProviderArg::capture_provider),
-        history_source: source_identity.history_source,
-        provider_key: source_identity.provider_key,
-        source_id: source_identity.source_id,
-        source_format: source_identity.source_format,
-        workspace,
-        since,
-        primary_only,
-        include_subagents,
-        content_scope: content_scope.unwrap_or(SearchContentScope::All),
-        event_type,
-        file,
-        session,
-        events,
-        include_current_session,
-        backend: backend.map(|backend| match backend {
-            crate::SearchBackendArg::Lexical => ToolSearchBackend::Lexical,
-            crate::SearchBackendArg::Semantic => ToolSearchBackend::Semantic,
-            crate::SearchBackendArg::Hybrid => ToolSearchBackend::Hybrid,
-        }),
-        semantic_weight,
-    })
-}
-
-fn tool_definitions() -> Vec<Value> {
-    vec![
-        json!({
-            "name": "status",
-            "title": "Status",
-            "description": "Return detailed local ctx readiness and service status without writing to provider history or repositories.",
-            "inputSchema": object_schema(json!({}), vec![]),
-            "annotations": { "readOnlyHint": true },
-        }),
-        json!({
-            "name": "sources",
-            "title": "Sources",
-            "description": "List discovered local agent history sources.",
-            "inputSchema": object_schema(json!({}), vec![]),
-            "annotations": { "readOnlyHint": true },
-        }),
-        json!({
-            "name": "search",
-            "title": "Search",
-            "description": "Search the existing local ctx index by query text or touched-file path. This does not refresh or import provider history.",
-            "inputSchema": object_schema_with_mutually_exclusive(json!({
-                "query": { "type": "string", "description": "Non-empty text query. Required unless file is provided." },
-                "limit": { "type": "integer", "minimum": 1, "maximum": MAX_SEARCH_LIMIT, "default": 20 },
-                "provider": { "type": "string", "enum": provider_names() },
-                "history_source": { "type": "string", "description": "Custom history source selector as plugin/source or provider_key/source_id." },
-                "provider_key": { "type": "string", "description": "Custom history provider_key." },
-                "source_id": { "type": "string", "description": "Custom history source_id." },
-                "source_format": { "type": "string", "description": "Custom history source_format." },
-                "workspace": { "type": "string", "description": "Workspace path or name text." },
-                "since": { "type": "string", "description": "RFC3339 timestamp or day window such as 30d." },
-                "include_subagents": { "type": "boolean", "default": false, "description": "Include subagent sessions in addition to primary-agent sessions." },
-                "content_scope": { "type": "string", "enum": content_scope_names(), "default": "all", "description": "Search all indexed content, transcript text, tool/command calls, or tool/command outputs." },
-                "event_type": { "type": "string", "enum": event_type_names() },
-                "file": { "type": "string", "description": "Indexed touched-file path. Required unless query is provided." },
-                "session": { "type": "string", "description": "ctx session id." },
-                "events": { "type": "boolean", "default": false },
-                "include_current_session": { "type": "boolean", "default": false, "description": "Include the active Codex session tree when CODEX_THREAD_ID is set." },
-                "backend": { "type": "string", "enum": ["hybrid", "semantic", "lexical"], "description": "Optional backend override. Defaults to lexical unless local semantic search is enabled in ctx config, then hybrid." },
-                "semantic_weight": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.35 }
-            }), vec![], "content_scope", "event_type"),
-            "annotations": { "readOnlyHint": true },
-        }),
-        json!({
-            "name": "show_session",
-            "title": "Show Session",
-            "description": "Return one bounded page of an indexed session transcript by ctx session id. Continue with next_cursor while has_more is true.",
-            "inputSchema": object_schema(json!({
-                "ctx_session_id": { "type": "string" },
-                "mode": { "type": "string", "enum": ["full", "lite", "log"], "default": "lite" },
-                "limit": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": MCP_MAX_SESSION_PAGE_LIMIT,
-                    "default": MCP_DEFAULT_SESSION_PAGE_LIMIT,
-                    "description": "Maximum selected transcript events to return after applying mode."
-                },
-                "cursor": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": MCP_MAX_SESSION_CURSOR_BYTES,
-                    "description": "Opaque next_cursor from the preceding page of this exact session and Core generation."
-                },
-            }), vec!["ctx_session_id"]),
-            "annotations": { "readOnlyHint": true },
-        }),
-        json!({
-            "name": "show_event",
-            "title": "Show Event",
-            "description": "Return an indexed event and optional surrounding event window by ctx event id.",
-            "inputSchema": object_schema(json!({
-                "ctx_event_id": { "type": "string" },
-                "before": { "type": "integer", "minimum": 0, "default": 0 },
-                "after": { "type": "integer", "minimum": 0, "default": 0 },
-                "window": { "type": "integer", "minimum": 0 }
-            }), vec!["ctx_event_id"]),
-            "annotations": { "readOnlyHint": true },
-        }),
-        json!({
-            "name": "query_events",
-            "title": "Query Events",
-            "description": "Return one bounded deterministic page from the pinned normalized Core event corpus.",
-            "inputSchema": object_schema(json!({
-                "since": { "type": "string", "description": "Inclusive millisecond-aligned absolute RFC3339 lower bound; requires until." },
-                "until": { "type": "string", "description": "Exclusive millisecond-aligned absolute RFC3339 upper bound; requires since." },
-                "providers": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-                "source": { "type": "string", "description": "Exact public ctx source UUID." },
-                "history_source": { "type": "string" },
-                "provider_key": { "type": "string" },
-                "source_id": { "type": "string" },
-                "source_format": { "type": "string" },
-                "provider_session": { "type": "string" },
-                "session": { "type": "string", "description": "Exact public ctx session UUID." },
-                "parent_session": { "type": "string", "description": "Exact public parent ctx session UUID." },
-                "root_session": { "type": "string", "description": "Exact public root ctx session UUID." },
-                "branch": { "type": "string" },
-                "workspace": { "type": "string" },
-                "event_type": { "type": "string", "description": "Exact open event type string." },
-                "role": { "type": "string" },
-                "agent_type": { "type": "string" },
-                "scope": { "type": "string", "enum": ["all", "primary", "subagent"], "default": "all" },
-                "file": { "type": "string" },
-                "direction": { "type": "string", "enum": ["ascending", "descending"], "default": "ascending" },
-                "cursor": { "type": "string", "description": "Opaque next_cursor from the preceding page of this exact selection and generation." },
-                "limit": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": crate::commands::list::events::MAX_EVENT_QUERY_LIMIT,
-                    "default": crate::commands::list::events::DEFAULT_EVENT_QUERY_LIMIT
-                },
-                "content": { "type": "string", "enum": ["full", "text", "none"], "default": "full" }
-            }), vec![]),
-            "annotations": { "readOnlyHint": true },
-        }),
-        json!({
-            "name": "pro_status",
-            "title": "Pro Status",
-            "description": "Inspect local ctx Pro readiness, protocol capabilities, and nonsecret access state/deadlines.",
-            "inputSchema": object_schema(json!({}), vec![]),
-            "annotations": { "readOnlyHint": true },
-        }),
-        pro_blame_tool(),
-    ]
-}
-
-fn object_schema(properties: Value, required: Vec<&str>) -> Value {
-    compact_json(json!({
-        "type": "object",
-        "properties": properties,
-        "required": required,
-        "additionalProperties": false,
-    }))
-}
-
-fn object_schema_with_mutually_exclusive(
-    properties: Value,
-    required: Vec<&str>,
-    left: &str,
-    right: &str,
-) -> Value {
-    let mut schema = object_schema(properties, required);
-    schema["not"] = json!({"required": [left, right]});
-    compact_json(schema)
-}
-
-fn provider_names() -> Vec<&'static str> {
-    ProviderArg::mcp_names()
-}
-
-fn content_scope_names() -> Vec<&'static str> {
-    vec!["all", "transcript", "calls", "outputs"]
-}
-
-fn event_type_names() -> Vec<&'static str> {
-    vec![
-        EventType::Message.as_str(),
-        EventType::ToolCall.as_str(),
-        EventType::ToolOutput.as_str(),
-        EventType::CommandStarted.as_str(),
-        EventType::CommandOutput.as_str(),
-        EventType::CommandFinished.as_str(),
-        EventType::FileTouched.as_str(),
-        EventType::VcsChange.as_str(),
-        EventType::Artifact.as_str(),
-        EventType::Summary.as_str(),
-        EventType::Notice.as_str(),
-    ]
+    serve_stdio_loop_with_backend(
+        stdin,
+        stdout,
+        initialized,
+        telemetry,
+        usage_recorder,
+        &backend,
+    )
 }
 
 #[cfg(test)]
-mod tests;
+fn handle_message(
+    message: Value,
+    data_root: &Path,
+    initialized: &mut bool,
+) -> (McpHandled<Option<Value>>, Option<McpInvocation>) {
+    let backend = LocalToolBackend::new(data_root.to_path_buf());
+    let descriptor = RequestDescriptor::from_message(&message);
+    let handled = handle_protocol_message(
+        message,
+        descriptor,
+        initialized,
+        server_identity(),
+        &backend,
+    );
+    let invocation = handled.usage.clone().and_then(usage_invocation);
+    (handled, invocation)
+}
+
+#[cfg(test)]
+pub(crate) fn query_events_for_test(arguments: &Value, data_root: &Path) -> Result<Value> {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": ctx_agent_integrations::mcp::McpToolKind::QueryEvents.tool_name(),
+            "arguments": arguments,
+        },
+    });
+    let (handled, _) = handle_message(request, data_root, &mut true);
+    let result = handled
+        .value
+        .and_then(|response| response.get("result").cloned())
+        .ok_or_else(|| anyhow::anyhow!("MCP query_events returned no result"))?;
+    let structured = result
+        .get("structuredContent")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("MCP query_events returned no structured content"))?;
+    if result.get("isError").and_then(Value::as_bool) == Some(true) {
+        return Err(anyhow::anyhow!(serde_json::to_string(&structured)?));
+    }
+    Ok(structured)
+}
+
+#[cfg(test)]
+pub(crate) fn render_tool_text_for_test(value: &Value) -> String {
+    text::render_tool_text(value)
+}
