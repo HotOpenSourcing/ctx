@@ -83,6 +83,17 @@ pub(crate) struct AttributionInput {
     pub(crate) outcome_abstentions: Vec<(RepositoryAbstentionReason, &'static str)>,
 }
 
+impl AttributionInput {
+    pub(crate) fn apply_linked_outcome(&mut self, linked: LinkedOutcomeEvidence) {
+        self.provider_native_repository_aliases = linked.provider_native_repository_aliases;
+        self.outcome_operation_repository_path = linked.outcome_operation_repository_path;
+        self.outcome_output_repository_path = linked.outcome_output_repository_path;
+        self.outcome_observations = linked.outcomes;
+        self.pull_request_associations = linked.pull_request_associations;
+        self.outcome_abstentions = linked.abstentions;
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandEvidenceDisposition {
     #[default]
@@ -94,6 +105,7 @@ pub(crate) fn apply_annotation(
     record: &mut ctx_history_core::CoreRecord,
     annotation: CoreRecordAnnotation,
 ) -> CoreRecordResult<()> {
+    record.mcp_tool_call = annotation.mcp_tool_call;
     record.content.structured_content = annotation.structured_content;
     record.metadata = annotation.metadata;
     record.repository_candidate_evidence = annotation.repository_candidate_evidence;
@@ -103,6 +115,66 @@ pub(crate) fn apply_annotation(
     record.repository_file_observations = annotation.repository_file_observations;
     record.repository_vcs_observations = annotation.repository_vcs_observations;
     record.bind_repository_commit_operation_identities()
+}
+
+/// Merge independently attributed repository activities into one record
+/// annotation without treating provider content or MCP identity as mergeable.
+pub(crate) fn merge_repository_annotation(
+    target: &mut CoreRecordAnnotation,
+    mut additional: CoreRecordAnnotation,
+) {
+    for candidate in additional.repository_candidate_evidence.candidates {
+        target
+            .repository_candidate_evidence
+            .insert(candidate.kind, candidate.path);
+    }
+    for mut binding in additional.repository_bindings.drain(..) {
+        if let Some(existing) = target
+            .repository_bindings
+            .iter_mut()
+            .find(|existing| existing.binding_id == binding.binding_id)
+        {
+            for alias in binding.aliases.drain(..) {
+                if !existing.aliases.contains(&alias) {
+                    existing.aliases.push(alias);
+                }
+            }
+            for evidence in binding.evidence.drain(..) {
+                if !existing.evidence.contains(&evidence) {
+                    existing.evidence.push(evidence);
+                }
+            }
+            if existing.local_root_authorization.is_none() {
+                existing.local_root_authorization = binding.local_root_authorization;
+            }
+        } else {
+            target.repository_bindings.push(binding);
+        }
+    }
+    for abstention in additional.repository_abstentions {
+        if !target.repository_abstentions.contains(&abstention) {
+            target.repository_abstentions.push(abstention);
+        }
+    }
+    for observation in additional.repository_file_observations {
+        if !target.repository_file_observations.contains(&observation) {
+            target.repository_file_observations.push(observation);
+        }
+    }
+    for evidence in additional.repository_file_invocation_evidence {
+        if !target
+            .repository_file_invocation_evidence
+            .contains(&evidence)
+        {
+            target.repository_file_invocation_evidence.push(evidence);
+        }
+    }
+    target.repository_file_invocation_evidence.sort();
+    for observation in additional.repository_vcs_observations {
+        if !target.repository_vcs_observations.contains(&observation) {
+            target.repository_vcs_observations.push(observation);
+        }
+    }
 }
 
 #[cfg(test)]

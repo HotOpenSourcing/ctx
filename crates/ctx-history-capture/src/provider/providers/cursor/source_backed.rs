@@ -43,9 +43,9 @@ use crate::{
         observe_opened_file, read_bounded_record_unhashed, remember_pending_exchange,
         JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf,
         JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyTerminalProof,
-        JsonlFamilyWorkerContext, JsonlPendingExchangeRemember, JsonlPendingExchangeState,
-        JsonlReader, JsonlRecordFraming, JsonlRecordRef, JsonlSourceIdentity,
-        JsonlTerminalAuthority, JsonlTerminalObservationRegion,
+        JsonlFamilyWorkerContext, JsonlOrderedAppendOccurrenceState, JsonlPendingExchangeRemember,
+        JsonlPendingExchangeState, JsonlReader, JsonlRecordFraming, JsonlRecordRef,
+        JsonlSourceIdentity, JsonlTerminalAuthority, JsonlTerminalObservationRegion,
     },
     CaptureError, Result, CURSOR_AGENT_TRANSCRIPT_SOURCE_FORMAT, MAX_PROVIDER_JSONL_LINE_BYTES,
 };
@@ -350,11 +350,12 @@ impl JsonlFamilyAdapter for CursorJsonlAdapter {
             tool_contexts,
             linkage_capacity_exceeded,
             result_terminal_authority,
-            event_identities: CursorEventIdentityState::new(
-                (mode == JsonlFamilyProjectionMode::CertifiedAppend)
-                    .then_some(base_event_lookup)
-                    .flatten(),
-            ),
+            event_identities: match (mode, base_event_lookup) {
+                (JsonlFamilyProjectionMode::CertifiedAppend, Some(base_lookup)) => {
+                    CursorEventIdentityState::for_append(base_lookup)
+                }
+                _ => CursorEventIdentityState::default(),
+            },
         }))
     }
 }
@@ -431,20 +432,7 @@ struct CursorProjector {
     event_identities: CursorEventIdentityState,
 }
 
-#[derive(Default)]
-struct CursorEventIdentityState {
-    base_lookup: Option<BaseEventIdentityLookup>,
-    next_occurrences: BTreeMap<CursorLogicalEventIdentity, u64>,
-}
-
-impl CursorEventIdentityState {
-    fn new(base_lookup: Option<BaseEventIdentityLookup>) -> Self {
-        Self {
-            base_lookup,
-            next_occurrences: BTreeMap::new(),
-        }
-    }
-}
+type CursorEventIdentityState = JsonlOrderedAppendOccurrenceState<CursorLogicalEventIdentity>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct CursorLogicalEventIdentity {
@@ -1046,22 +1034,12 @@ fn core_record(
         .occurred_at
         .map(|occurred_at| occurred_at.timestamp_millis());
     record.role = Some(event.role.as_str().to_owned());
-    record.content.structured_content = content.annotation.structured_content;
     record.content.discovery_exclusion = content.discovery_exclusion;
+    crate::repository_attribution::apply_annotation(&mut record, content.annotation)
+        .map_err(contract)?;
     record
         .content
         .omit_structured_content_if_aggregate_exceeds_limit()
-        .map_err(contract)?;
-    record.metadata = content.annotation.metadata;
-    record.repository_candidate_evidence = content.annotation.repository_candidate_evidence;
-    record.repository_bindings = content.annotation.repository_bindings;
-    record.repository_abstentions = content.annotation.repository_abstentions;
-    record.repository_file_invocation_evidence =
-        content.annotation.repository_file_invocation_evidence;
-    record.repository_file_observations = content.annotation.repository_file_observations;
-    record.repository_vcs_observations = content.annotation.repository_vcs_observations;
-    record
-        .bind_repository_commit_operation_identities()
         .map_err(contract)?;
     record.validate_contract().map_err(contract)?;
     Ok(Some(record))
@@ -1137,57 +1115,13 @@ fn next_event_occurrence(
     state: &mut CursorEventIdentityState,
 ) -> Result<u64> {
     let logical_identity = CursorLogicalEventIdentity::from_event(event);
-    let occurrence = match state.next_occurrences.get(&logical_identity).copied() {
-        Some(occurrence) => occurrence,
-        None => {
-            first_unused_base_occurrence(state.base_lookup.as_ref(), source, session_id, event)?
-        }
-    };
-    let next = occurrence
-        .checked_add(1)
-        .ok_or(CaptureError::SystemInvariant(
-            "Cursor duplicate event occurrence overflowed",
-        ))?;
-    state.next_occurrences.insert(logical_identity, next);
-    Ok(occurrence)
-}
-
-fn first_unused_base_occurrence(
-    base_lookup: Option<&BaseEventIdentityLookup>,
-    source: &SourceKey,
-    session_id: StableEntityId,
-    event: &CursorNativeEvent,
-) -> Result<u64> {
-    let Some(base_lookup) = base_lookup else {
-        return Ok(0);
-    };
-    if !base_occurrence_exists(base_lookup, source, session_id, event, 0)? {
-        return Ok(0);
-    }
-
-    let mut present = 0_u64;
-    let mut missing = 1_u64;
-    while base_occurrence_exists(base_lookup, source, session_id, event, missing)? {
-        present = missing;
-        missing = match missing.checked_mul(2) {
-            Some(next) => next,
-            None if missing != u64::MAX => u64::MAX,
-            None => {
-                return Err(CaptureError::SystemInvariant(
-                    "Cursor duplicate event occurrence overflowed",
-                ));
-            }
-        };
-    }
-    while present.saturating_add(1) < missing {
-        let candidate = present + (missing - present) / 2;
-        if base_occurrence_exists(base_lookup, source, session_id, event, candidate)? {
-            present = candidate;
-        } else {
-            missing = candidate;
-        }
-    }
-    Ok(missing)
+    state.next(
+        logical_identity,
+        || CaptureError::SystemInvariant("Cursor duplicate event occurrence overflowed"),
+        |base_lookup, occurrence| {
+            base_occurrence_exists(base_lookup, source, session_id, event, occurrence)
+        },
+    )
 }
 
 fn base_occurrence_exists(

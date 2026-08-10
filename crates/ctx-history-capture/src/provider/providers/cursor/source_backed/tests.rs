@@ -1283,8 +1283,7 @@ mod fidelity_identity_tests {
         let event = event(&message("user", "2026-07-31T12:00:00Z", "duplicate"), 0);
         let mut state = CursorEventIdentityState::default();
         state
-            .next_occurrences
-            .insert(CursorLogicalEventIdentity::from_event(&event), u64::MAX);
+            .set_next_occurrence_for_test(CursorLogicalEventIdentity::from_event(&event), u64::MAX);
         let occurrence_error =
             next_event_occurrence(&event, &source, session_id, &mut state).unwrap_err();
         assert!(occurrence_error

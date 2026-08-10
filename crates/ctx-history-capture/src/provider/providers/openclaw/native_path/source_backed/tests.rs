@@ -1964,13 +1964,17 @@ fn append_after_prior_duplicate_probes_base_and_restores_call_ambiguity() {
         digest[..8].copy_from_slice(&occurrence.to_be_bytes());
         projector
             .fallback_identities
-            .next_occurrences
-            .insert(digest, occurrence + 1);
+            .next(
+                digest,
+                || CaptureError::SystemInvariant("test occurrence overflowed"),
+                |_, _| unreachable!("cold identity state has no Core base"),
+            )
+            .unwrap();
     }
     assert_eq!(encode_projector_checkpoint(&projector).unwrap(), checkpoint);
     let mut restored = decode_projector_checkpoint(&checkpoint, &binding).unwrap();
 
-    let mut append_identity_state = FallbackEventIdentityState::new(Some(base_lookup));
+    let mut append_identity_state = FallbackEventIdentityState::for_append(base_lookup);
     let suffix_event = fallback_event_id(
         "duplicate",
         2,

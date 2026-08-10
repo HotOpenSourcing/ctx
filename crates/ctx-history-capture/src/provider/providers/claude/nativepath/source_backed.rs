@@ -42,11 +42,11 @@ use crate::{
         providers::native_jsonl::visit_native_jsonl_files,
         source_backed::family::jsonl::{
             observe_opened_file, remember_pending_exchange, take_pending_exchange,
-            JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf,
-            JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyWorkerContext,
-            JsonlFileObservation, JsonlPendingExchangeLookup, JsonlPendingExchangeRemember,
-            JsonlPendingExchangeState, JsonlReader, JsonlRecordRef, JsonlSourceIdentity,
-            JsonlTerminalAuthority, JsonlTerminalObservationRegion,
+            JsonlAppendOccurrenceState, JsonlFamilyAdapter, JsonlFamilyAppendMode,
+            JsonlFamilyInventory, JsonlFamilyLeaf, JsonlFamilyProjectionMode, JsonlFamilyProjector,
+            JsonlFamilyWorkerContext, JsonlFileObservation, JsonlPendingExchangeLookup,
+            JsonlPendingExchangeRemember, JsonlPendingExchangeState, JsonlReader, JsonlRecordRef,
+            JsonlSourceIdentity, JsonlTerminalAuthority, JsonlTerminalObservationRegion,
         },
     },
     CaptureError, Result, CLAUDE_PROJECTS_SOURCE_FORMAT,
@@ -274,11 +274,12 @@ impl JsonlFamilyAdapter for ClaudeJsonlAdapter {
             linkage_capacity_exceeded,
             result_terminal_authority,
             rejected_records: 0,
-            fallback_identities: FallbackEventIdentityState::new(
-                (mode == JsonlFamilyProjectionMode::CertifiedAppend)
-                    .then_some(base_event_lookup)
-                    .flatten(),
-            ),
+            fallback_identities: match (mode, base_event_lookup) {
+                (JsonlFamilyProjectionMode::CertifiedAppend, Some(base_lookup)) => {
+                    FallbackEventIdentityState::for_append(base_lookup)
+                }
+                _ => FallbackEventIdentityState::default(),
+            },
         }))
     }
 }
@@ -392,20 +393,7 @@ struct FallbackEventIdentity {
     duplicate_occurrence: u64,
 }
 
-#[derive(Default)]
-struct FallbackEventIdentityState {
-    base_lookup: Option<BaseEventIdentityLookup>,
-    next_occurrences: HashMap<[u8; 32], u64>,
-}
-
-impl FallbackEventIdentityState {
-    fn new(base_lookup: Option<BaseEventIdentityLookup>) -> Self {
-        Self {
-            base_lookup,
-            next_occurrences: HashMap::new(),
-        }
-    }
-}
+type FallbackEventIdentityState = JsonlAppendOccurrenceState<[u8; 32]>;
 
 impl ClaudeProjector {
     fn reject_record(&mut self) -> Result<()> {
@@ -600,15 +588,7 @@ impl JsonlFamilyProjector for ClaudeProjector {
                             structured_commit_oid: structured_oid,
                             output_repository_path: output_workdir,
                         }) {
-                            input.provider_native_repository_aliases =
-                                linked.provider_native_repository_aliases;
-                            input.outcome_operation_repository_path =
-                                linked.outcome_operation_repository_path;
-                            input.outcome_output_repository_path =
-                                linked.outcome_output_repository_path;
-                            input.outcome_observations = linked.outcomes;
-                            input.pull_request_associations = linked.pull_request_associations;
-                            input.outcome_abstentions = linked.abstentions;
+                            input.apply_linked_outcome(linked);
                         }
                     }
                 }
@@ -1056,63 +1036,18 @@ fn next_fallback_event_identity(
         return Ok(None);
     }
     let digest = fallback_event_digest(row)?;
-    let occurrence = match state.next_occurrences.get(&digest).copied() {
-        Some(occurrence) => occurrence,
-        None => {
-            first_unused_base_occurrence(state.base_lookup.as_ref(), source, session_id, digest)?
-        }
-    };
+    let occurrence = state.next(
+        digest,
+        || CaptureError::SystemInvariant("Claude fallback duplicate occurrence overflowed"),
+        |base_lookup, occurrence| {
+            base_occurrence_exists(base_lookup, source, session_id, digest, occurrence)
+        },
+    )?;
     let identity = FallbackEventIdentity {
         digest,
         duplicate_occurrence: occurrence,
     };
-    state.next_occurrences.insert(
-        digest,
-        occurrence
-            .checked_add(1)
-            .ok_or(CaptureError::SystemInvariant(
-                "Claude fallback duplicate occurrence overflowed",
-            ))?,
-    );
     Ok(Some(identity))
-}
-
-fn first_unused_base_occurrence(
-    base_lookup: Option<&BaseEventIdentityLookup>,
-    source: &SourceKey,
-    session_id: StableEntityId,
-    digest: [u8; 32],
-) -> Result<u64> {
-    let Some(base_lookup) = base_lookup else {
-        return Ok(0);
-    };
-    if !base_occurrence_exists(base_lookup, source, session_id, digest, 0)? {
-        return Ok(0);
-    }
-
-    let mut present = 0_u64;
-    let mut missing = 1_u64;
-    while base_occurrence_exists(base_lookup, source, session_id, digest, missing)? {
-        present = missing;
-        missing = match missing.checked_mul(2) {
-            Some(next) => next,
-            None if missing != u64::MAX => u64::MAX,
-            None => {
-                return Err(CaptureError::SystemInvariant(
-                    "Claude fallback duplicate occurrence overflowed",
-                ));
-            }
-        };
-    }
-    while present.saturating_add(1) < missing {
-        let candidate = present + (missing - present) / 2;
-        if base_occurrence_exists(base_lookup, source, session_id, digest, candidate)? {
-            present = candidate;
-        } else {
-            missing = candidate;
-        }
-    }
-    Ok(missing)
 }
 
 fn base_occurrence_exists(

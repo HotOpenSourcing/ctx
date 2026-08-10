@@ -693,15 +693,7 @@ fn gemini_attribution_for_event(
                         structured_commit_oid: structured_oid,
                         output_repository_path: output_workdir,
                     }) {
-                        input.provider_native_repository_aliases =
-                            linked.provider_native_repository_aliases;
-                        input.outcome_operation_repository_path =
-                            linked.outcome_operation_repository_path;
-                        input.outcome_output_repository_path =
-                            linked.outcome_output_repository_path;
-                        input.outcome_observations = linked.outcomes;
-                        input.pull_request_associations = linked.pull_request_associations;
-                        input.outcome_abstentions = linked.abstentions;
+                        input.apply_linked_outcome(linked);
                     }
                 }
             }

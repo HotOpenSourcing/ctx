@@ -1,4 +1,5 @@
 use super::*;
+use crate::provider::source_backed::family::jsonl::JsonlAppendOccurrenceState;
 
 const CODEX_NATIVE_EVENT_NAMESPACE: &str = "codex.event.v1";
 const CODEX_PROVIDER_EVENT_KEY_VERSION: &str = "provider-native-v1";
@@ -9,15 +10,13 @@ const CODEX_FALLBACK_EVENT_DIGEST_DOMAIN: &[u8] = b"ctx/codex-nativepath/fallbac
 
 #[derive(Default)]
 pub(super) struct CodexEventIdentityStateV0 {
-    base_lookup: Option<BaseEventIdentityLookup>,
-    occurrences: HashMap<[u8; 32], u64>,
+    occurrences: JsonlAppendOccurrenceState<[u8; 32]>,
 }
 
 impl CodexEventIdentityStateV0 {
     pub(super) fn for_append(base_lookup: BaseEventIdentityLookup) -> Self {
         Self {
-            base_lookup: Some(base_lookup),
-            occurrences: HashMap::new(),
+            occurrences: JsonlAppendOccurrenceState::for_append(base_lookup),
         }
     }
 
@@ -31,56 +30,16 @@ impl CodexEventIdentityStateV0 {
             Some(provider_identity) => provider_event_key(row, provider_identity)?,
             None => fallback_event_key(row)?,
         };
-        let occurrence = match self.occurrences.get(&occurrence_key).copied() {
-            Some(occurrence) => occurrence,
-            None => self.first_unused_base_occurrence(source, session_id, &parts)?,
-        };
-        self.occurrences.insert(
+        let occurrence = self.occurrences.next(
             occurrence_key,
-            occurrence
-                .checked_add(1)
-                .ok_or(CodexSourceBackedErrorV0::CountOverflow)?,
-        );
+            || CodexSourceBackedErrorV0::CountOverflow,
+            |base_lookup, occurrence| {
+                base_occurrence_exists(base_lookup, source, session_id, &parts, occurrence)
+            },
+        )?;
         let (event_id, native_event_id) =
             event_identity_for_occurrence(source, session_id, &parts, occurrence)?;
         Ok((event_id, native_event_id, occurrence))
-    }
-
-    fn first_unused_base_occurrence(
-        &self,
-        source: &SourceKey,
-        session_id: StableEntityId,
-        parts: &[TypedKey],
-    ) -> CodexSourceBackedResultV0<u64> {
-        let Some(base_lookup) = self.base_lookup.as_ref() else {
-            return Ok(0);
-        };
-        if !base_occurrence_exists(base_lookup, source, session_id, parts, 0)? {
-            return Ok(0);
-        }
-
-        // Revision-v6 generations assign each logical key a contiguous range
-        // from zero. Exact event-ID probes therefore recover its high-water
-        // mark without reading any record from the validated source prefix.
-        let mut present = 0_u64;
-        let mut missing = 1_u64;
-        while base_occurrence_exists(base_lookup, source, session_id, parts, missing)? {
-            present = missing;
-            missing = match missing.checked_mul(2) {
-                Some(next) => next,
-                None if missing != u64::MAX => u64::MAX,
-                None => return Err(CodexSourceBackedErrorV0::CountOverflow),
-            };
-        }
-        while present.saturating_add(1) < missing {
-            let candidate = present + (missing - present) / 2;
-            if base_occurrence_exists(base_lookup, source, session_id, parts, candidate)? {
-                present = candidate;
-            } else {
-                missing = candidate;
-            }
-        }
-        Ok(missing)
     }
 }
 
@@ -474,81 +433,14 @@ pub(super) fn codex_core_record(
         .git
         .as_ref()
         .and_then(|git| bounded_core_metadata(git.branch.as_deref()));
-    record.content.structured_content = annotation.structured_content;
     record.content.discovery_exclusion = discovery_exclusion;
     record.content.mcp_exchange = mcp_exchange;
+    apply_annotation(&mut record, annotation)?;
     record
         .content
         .omit_structured_content_if_aggregate_exceeds_limit()?;
-    record.mcp_tool_call = annotation.mcp_tool_call;
-    record.metadata = annotation.metadata;
-    record.repository_candidate_evidence = annotation.repository_candidate_evidence;
-    record.repository_bindings = annotation.repository_bindings;
-    record.repository_abstentions = annotation.repository_abstentions;
-    record.repository_file_invocation_evidence = annotation.repository_file_invocation_evidence;
-    record.repository_file_observations = annotation.repository_file_observations;
-    record.repository_vcs_observations = annotation.repository_vcs_observations;
-    record.bind_repository_commit_operation_identities()?;
     record.validate_contract()?;
     Ok(record)
-}
-
-fn merge_repository_annotation(
-    target: &mut CoreRecordAnnotation,
-    mut additional: CoreRecordAnnotation,
-) {
-    let target_evidence = &mut target.repository_candidate_evidence;
-    let additional_evidence = additional.repository_candidate_evidence;
-    for candidate in additional_evidence.candidates {
-        target_evidence.insert(candidate.kind, candidate.path);
-    }
-    for mut binding in additional.repository_bindings.drain(..) {
-        if let Some(existing) = target
-            .repository_bindings
-            .iter_mut()
-            .find(|existing| existing.binding_id == binding.binding_id)
-        {
-            for alias in binding.aliases.drain(..) {
-                if !existing.aliases.contains(&alias) {
-                    existing.aliases.push(alias);
-                }
-            }
-            for evidence in binding.evidence.drain(..) {
-                if !existing.evidence.contains(&evidence) {
-                    existing.evidence.push(evidence);
-                }
-            }
-            if existing.local_root_authorization.is_none() {
-                existing.local_root_authorization = binding.local_root_authorization;
-            }
-        } else {
-            target.repository_bindings.push(binding);
-        }
-    }
-    for abstention in additional.repository_abstentions {
-        if !target.repository_abstentions.contains(&abstention) {
-            target.repository_abstentions.push(abstention);
-        }
-    }
-    for observation in additional.repository_file_observations {
-        if !target.repository_file_observations.contains(&observation) {
-            target.repository_file_observations.push(observation);
-        }
-    }
-    for evidence in additional.repository_file_invocation_evidence {
-        if !target
-            .repository_file_invocation_evidence
-            .contains(&evidence)
-        {
-            target.repository_file_invocation_evidence.push(evidence);
-        }
-    }
-    target.repository_file_invocation_evidence.sort();
-    for observation in additional.repository_vcs_observations {
-        if !target.repository_vcs_observations.contains(&observation) {
-            target.repository_vcs_observations.push(observation);
-        }
-    }
 }
 
 fn bounded_core_metadata(value: Option<&str>) -> Option<String> {
