@@ -9,6 +9,9 @@ homepage.workspace = true
 rust-version.workspace = true
 publish = false
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true

@@ -41,14 +41,52 @@ if ! diff -u "${expected_direct}" "${tmp}/actual-direct.txt"; then
   exit 1
 fi
 
+expected_qualification="${tmp}/expected-qualification.txt"
+printf '%s\n' \
+  '//crates/ctx-client-observability:lib' \
+  '//crates/ctx-daemon-runtime:qualification_lib' \
+  '//crates/ctx-daemon-service:qualification_lib' \
+  '//crates/ctx-history-capture:lib' \
+  '//crates/ctx-history-core:lib' \
+  '//crates/ctx-history-index:lib' \
+  '//crates/ctx-history-refresh:lib' \
+  '//crates/ctx-pro-host-protocol:lib' \
+  '//crates/ctx-semantic-index:lib' \
+  '//crates/ctx-semantic-model:lib' \
+  '//crates/ctx-upgrade-engine:qualification_lib' >"${expected_qualification}"
+query 'kind("rust_library rule", deps(//crates/ctx-daemon-service:qualification_lib, 1)) intersect //crates/...' \
+  | LC_ALL=C sort -u >"${tmp}/actual-qualification.txt"
+if ! diff -u "${expected_qualification}" "${tmp}/actual-qualification.txt"; then
+  echo 'unexpected qualification dependency set for ctx-daemon-service' >&2
+  exit 1
+fi
+
+expected_test_support="${tmp}/expected-test-support.txt"
+printf '%s\n' \
+  '//crates/ctx-client-observability:test_support_lib' \
+  '//crates/ctx-daemon-runtime:lib' \
+  '//crates/ctx-daemon-service:test_support_lib' \
+  '//crates/ctx-history-capture:lib' \
+  '//crates/ctx-history-core:lib' \
+  '//crates/ctx-history-index:lib' \
+  '//crates/ctx-history-refresh:test_support_lib' \
+  '//crates/ctx-pro-host-protocol:lib' \
+  '//crates/ctx-semantic-index:test_support_lib' \
+  '//crates/ctx-semantic-model:test_support_lib' \
+  '//crates/ctx-upgrade-engine:test_support_lib' >"${expected_test_support}"
+query 'kind("rust_library rule", deps(//crates/ctx-daemon-service:test_support_lib, 1)) intersect //crates/...' \
+  | LC_ALL=C sort -u >"${tmp}/actual-test-support.txt"
+if ! diff -u "${expected_test_support}" "${tmp}/actual-test-support.txt"; then
+  echo 'unexpected test-support dependency set for ctx-daemon-service' >&2
+  exit 1
+fi
+
 expected_reverse="${tmp}/expected-reverse.txt"
-# The fixture binaries compile the CLI production source under controlled cfg
-# variants, so the complete binary/library reverse set is intentionally exact.
+# The production and Pro-host binaries use the production service variant;
+# qualification fixtures use the source-identical qualification variant.
 printf '%s\n' \
   '//crates/ctx-cli:ctx' \
-  '//crates/ctx-cli:ctx_auto_upgrade_acceptance_fixture' \
   '//crates/ctx-cli:ctx_pro_test_host' \
-  '//crates/ctx-cli:ctx_upgrade_test_harness' \
   '//crates/ctx-daemon-service:lib' >"${expected_reverse}"
 query 'kind("rust_binary rule", rdeps(//crates/..., //crates/ctx-daemon-service:lib)) union kind("rust_library rule", rdeps(//crates/..., //crates/ctx-daemon-service:lib))' \
   | LC_ALL=C sort -u >"${tmp}/actual-reverse.txt"
@@ -118,8 +156,8 @@ if actual_dev != expected_dev:
         "ctx-daemon-service dev dependency inventory differs: "
         f"missing={sorted(expected_dev - actual_dev)} extra={sorted(actual_dev - expected_dev)}"
     )
-if manifest.get("features"):
-    raise SystemExit("ctx-daemon-service must not expose Cargo feature variants")
+if manifest.get("features") != {"test-support": []}:
+    raise SystemExit("ctx-daemon-service feature inventory differs")
 
 reverse = []
 for candidate in sorted((root / "crates").glob("*/Cargo.toml")):

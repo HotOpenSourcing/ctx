@@ -84,6 +84,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 [dev-dependencies]
 assert_cmd.workspace = true
 ctx-client-observability = { path = "../ctx-client-observability", features = ["test-support"] }
+ctx-daemon-service = { path = "../ctx-daemon-service", features = ["test-support"] }
 ctx-pro-access = { path = "../ctx-pro-access", features = ["test-support"] }
 ctx-upgrade-engine = { path = "../ctx-upgrade-engine", features = ["test-support"] }
 ctx-history-refresh = { path = "../ctx-history-refresh", features = ["test-support"] }
