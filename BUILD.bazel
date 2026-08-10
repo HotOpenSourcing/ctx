@@ -258,6 +258,16 @@ py_test(
 )
 
 py_test(
+    name = "rust_crate_size_unit_tests",
+    srcs = [
+        "scripts/check-rust-crate-size.py",
+        "scripts/tests/check_rust_crate_size_test.py",
+    ],
+    data = ["scripts/check-rust-crate-size-policy-v1.json"],
+    main = "scripts/tests/check_rust_crate_size_test.py",
+)
+
+py_test(
     name = "semantic_index_boundary_mutation_tests",
     srcs = [
         "//tools/bazel:check_semantic_index_boundary.py",
