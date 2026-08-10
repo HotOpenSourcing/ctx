@@ -860,3 +860,39 @@ fn old_helper_cannot_clear_pending_target_identity() {
         "b".repeat(64)
     );
 }
+
+#[test]
+fn pinned_generation_mismatch_fails_before_sync() {
+    let temp = tempfile::tempdir().unwrap();
+    let index = empty_index(temp.path());
+    let expected = "f".repeat(64);
+    let run = run_with(
+        temp.path(),
+        &expected,
+        ProCatchUpAuthority {
+            generation_id: Some(index.generation_id()),
+            verified_index: Some(&index),
+        },
+        |_| Ok(()),
+        |_, _| panic!("mismatched pin must not sync"),
+    )
+    .unwrap();
+    assert!(!run.did_work);
+    assert_eq!(run.status["error_code"], "source_pro_generation_mismatch");
+}
+
+#[test]
+fn production_catch_up_has_no_manifest_resolver_or_provider_io() {
+    let source = ctx_daemon_service::testing::pro_catch_up_production_source();
+    for forbidden in [
+        ["Source", "Manifest"].concat(),
+        ["source", "_manifest"].concat(),
+        ["sync_source", "_manifest_materialization"].concat(),
+    ] {
+        assert!(
+            !source.contains(&forbidden),
+            "forbidden authority: {forbidden}"
+        );
+    }
+    assert!(source.contains("pro.sync(data_root, index)"));
+}
