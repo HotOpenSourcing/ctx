@@ -60,6 +60,7 @@ ctx-history-refresh = { path = "../ctx-history-refresh" }
 ctx-pro-access = { path = "../ctx-pro-access" }
 ctx-pro-host = { path = "../ctx-pro-host" }
 ctx-pro-host-protocol = { path = "../ctx-pro-host-protocol" }
+ctx-pro-lifecycle = { path = "../ctx-pro-lifecycle" }
 ctx-semantic-index = { path = "../ctx-semantic-index" }
 ctx-semantic-model = { path = "../ctx-semantic-model" }
 ctx-upgrade-engine = { path = "../ctx-upgrade-engine" }

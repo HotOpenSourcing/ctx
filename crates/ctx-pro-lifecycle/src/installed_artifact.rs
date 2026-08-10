@@ -5,7 +5,7 @@ use ctx_pro_host_protocol::ProFilesystemLayout;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::lifecycle_manifest::{
+use crate::release_manifest::{
     ProInstallMarker, ProManifest, MAX_ARTIFACT_BYTES, MAX_INSTALL_MARKER_BYTES,
 };
 

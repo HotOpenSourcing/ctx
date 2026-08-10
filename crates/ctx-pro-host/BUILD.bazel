@@ -33,6 +33,7 @@ HOST_DEPS = [
     "//crates/ctx-history-refresh:lib",
     "//crates/ctx-pro-access:lib",
     "//crates/ctx-pro-host-protocol:lib",
+    "//crates/ctx-pro-lifecycle:lib",
 ]
 
 HOST_TEST_DEPS = [
@@ -44,6 +45,7 @@ HOST_TEST_DEPS = [
     "//crates/ctx-history-refresh:lib",
     "//crates/ctx-pro-access:test_support_lib",
     "//crates/ctx-pro-host-protocol:lib",
+    "//crates/ctx-pro-lifecycle:lib",
 ]
 
 HOST_TEST_SUPPORT_DEPS = [
@@ -54,6 +56,7 @@ HOST_TEST_SUPPORT_DEPS = [
     "//crates/ctx-history-refresh:lib",
     "//crates/ctx-pro-access:test_support_lib",
     "//crates/ctx-pro-host-protocol:lib",
+    "//crates/ctx-pro-lifecycle:lib",
 ]
 
 HOST_RUSTC_FLAGS = [
@@ -104,6 +107,7 @@ rust_library(
         "//crates/ctx-history-refresh:lib",
         "//crates/ctx-pro-access:qualification_lib",
         "//crates/ctx-pro-host-protocol:lib",
+        "//crates/ctx-pro-lifecycle:lib",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True),
     rustc_env = COMMON_RUSTC_ENV,
@@ -129,6 +133,7 @@ rust_library(
         "//crates/ctx-history-refresh:lib",
         "//crates/ctx-pro-access:qualification_lib",
         "//crates/ctx-pro-host-protocol:lib",
+        "//crates/ctx-pro-lifecycle:lib",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True),
     rustc_env = COMMON_RUSTC_ENV,

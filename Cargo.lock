@@ -749,6 +749,7 @@ dependencies = [
  "ctx-pro-access",
  "ctx-pro-host",
  "ctx-pro-host-protocol",
+ "ctx-pro-lifecycle",
  "ctx-semantic-index",
  "ctx-semantic-model",
  "ctx-upgrade-engine",
@@ -1102,6 +1103,7 @@ dependencies = [
  "ctx-history-refresh",
  "ctx-pro-access",
  "ctx-pro-host-protocol",
+ "ctx-pro-lifecycle",
  "libc",
  "ring",
  "serde",
@@ -1125,6 +1127,22 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
+name = "ctx-pro-lifecycle"
+version = "0.26.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "ctx-history-core",
+ "ctx-pro-host-protocol",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
  "uuid",
 ]
 

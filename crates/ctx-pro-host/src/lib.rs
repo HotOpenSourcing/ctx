@@ -12,12 +12,13 @@ mod core_worker_budget;
 pub mod diagnostic;
 pub mod evidence_preview;
 pub mod helper_command;
-pub mod installed_helper;
-pub mod lifecycle_manifest;
 pub mod setup_validation;
 mod verified_executable;
 
 mod host_port;
+
+pub use ctx_pro_lifecycle::installed_artifact as installed_helper;
+pub use ctx_pro_lifecycle::release_manifest as lifecycle_manifest;
 
 pub use client::{
     blame, blame_boundary_error, blame_diagnostic, core_finalization_generation_lease,
