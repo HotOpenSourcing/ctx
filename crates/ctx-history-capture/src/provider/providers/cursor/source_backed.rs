@@ -3,7 +3,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
-    io::{self, BufRead, BufReader, Read},
+    io::{self, BufReader},
     path::Path,
     sync::{Arc, Mutex},
 };
@@ -40,9 +40,10 @@ use crate::{
         discovery_exclusion_for, ContributionClass, ResultAtom, ResultTerminalStatus,
     },
     provider::source_backed::family::jsonl::{
-        observe_opened_file, JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory,
-        JsonlFamilyLeaf, JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyTerminalProof,
-        JsonlFamilyWorkerContext, JsonlReader, JsonlRecordRef, JsonlSourceIdentity,
+        observe_opened_file, read_bounded_record_unhashed, JsonlFamilyAdapter,
+        JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf, JsonlFamilyProjectionMode,
+        JsonlFamilyProjector, JsonlFamilyTerminalProof, JsonlFamilyWorkerContext, JsonlReader,
+        JsonlRecordFraming, JsonlRecordRef, JsonlSourceIdentity,
     },
     CaptureError, Result, CURSOR_AGENT_TRANSCRIPT_SOURCE_FORMAT, MAX_PROVIDER_JSONL_LINE_BYTES,
 };
@@ -987,8 +988,30 @@ fn visit_cursor_events(
     let mut reader = BufReader::new(source.file().try_clone()?);
     let mut line = Vec::new();
     let mut physical_ordinal = 0_u64;
-    while read_cursor_line(&mut reader, &mut line)? {
-        if !line.is_empty() {
+    let mut offset = 0_u64;
+    let frozen_len = source.len();
+    while offset < frozen_len {
+        let record = read_bounded_record_unhashed(
+            &mut reader,
+            &mut line,
+            frozen_len.saturating_sub(offset),
+            JsonlRecordFraming::ordinary(),
+            || CaptureError::SourceChangedDuringCapture,
+        )?
+        .ok_or(CaptureError::SourceChangedDuringCapture)?;
+        offset = offset
+            .checked_add(record.byte_len)
+            .ok_or(CaptureError::SystemInvariant(
+                "Cursor signature offset overflowed",
+            ))?;
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+        if record.complete
+            && !record.oversized
+            && line.len() <= MAX_PROVIDER_JSONL_LINE_BYTES
+            && !line.is_empty()
+        {
             if let Some(events) = project_cursor_jsonl_record(
                 &line,
                 physical_ordinal,
@@ -1008,51 +1031,11 @@ fn visit_cursor_events(
             .ok_or(CaptureError::SystemInvariant(
                 "Cursor physical ordinal overflowed",
             ))?;
+        if !record.complete {
+            break;
+        }
     }
     source.revalidate_leaf()
-}
-
-fn read_cursor_line(reader: &mut BufReader<std::fs::File>, line: &mut Vec<u8>) -> io::Result<bool> {
-    line.clear();
-    let limit = MAX_PROVIDER_JSONL_LINE_BYTES.saturating_add(2);
-    let read = {
-        let mut bounded = (&mut *reader).take(u64::try_from(limit).unwrap_or(u64::MAX));
-        bounded.read_until(b'\n', line)?
-    };
-    if read == 0 {
-        return Ok(false);
-    }
-    if !line.ends_with(b"\n") {
-        discard_through_newline(reader)?;
-        line.clear();
-        return Ok(true);
-    }
-    line.pop();
-    if line.ends_with(b"\r") {
-        line.pop();
-    }
-    if line.len() > MAX_PROVIDER_JSONL_LINE_BYTES {
-        line.clear();
-    }
-    Ok(true)
-}
-
-fn discard_through_newline(reader: &mut BufReader<std::fs::File>) -> io::Result<()> {
-    loop {
-        let available = reader.fill_buf()?;
-        if available.is_empty() {
-            return Ok(());
-        }
-        let consumed = available
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .map_or(available.len(), |position| position.saturating_add(1));
-        let reached_newline = available.get(consumed.saturating_sub(1)) == Some(&b'\n');
-        reader.consume(consumed);
-        if reached_newline {
-            return Ok(());
-        }
-    }
 }
 
 struct CursorProjectedContent {
