@@ -16,7 +16,7 @@ const MAX_NEGATIVE_CERTIFICATION_CACHE_ENTRIES: usize = 64;
 const MAX_EVENT_TIME_CERTIFICATION_ENTRIES: usize = 256;
 
 #[derive(Debug, Default)]
-pub(crate) struct RepositoryAttributor {
+pub struct RepositoryAttributor {
     pub(super) certifier: GitCertifier,
     positive_cache: Vec<CachedPositiveCertificate>,
     negative_cache: Vec<CachedNegativeCertificate>,
@@ -54,16 +54,16 @@ impl RepositoryAttributor {
     /// revalidated positive and negative certification caches. Historical
     /// event-time bindings are source-semantic state and must not cross a
     /// shared scanner worker's leaf boundary.
-    pub(crate) fn begin_source(&mut self) {
+    pub fn begin_source(&mut self) {
         self.event_time_cache.clear();
     }
 
-    #[cfg(test)]
-    pub(crate) fn event_time_cache_len(&self) -> usize {
+    #[doc(hidden)]
+    pub fn event_time_cache_len(&self) -> usize {
         self.event_time_cache.len()
     }
 
-    pub(crate) fn attribute(&mut self, input: AttributionInput) -> CoreRecordAnnotation {
+    pub fn attribute(&mut self, input: AttributionInput) -> CoreRecordAnnotation {
         // Certificates authorize the route observed during this event only.
         // A later event must revalidate after a move, replacement, or removal.
         attribute_with_attributor(input, self)
@@ -300,7 +300,7 @@ impl RepositoryAttributor {
         Ok(Some(reused))
     }
 
-    pub(crate) fn full_certification_probe_count(&self) -> usize {
+    pub fn full_certification_probe_count(&self) -> usize {
         self.certifier.full_certification_probe_count()
     }
 

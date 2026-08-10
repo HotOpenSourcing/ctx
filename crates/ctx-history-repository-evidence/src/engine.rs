@@ -35,7 +35,7 @@ use super::{
     CommandEvidenceDisposition, UnscopedVcsObservation,
 };
 
-pub(crate) const MAX_REPOSITORY_CANDIDATES: usize = 32;
+pub const MAX_REPOSITORY_CANDIDATES: usize = 32;
 
 #[derive(Debug, Clone)]
 pub(super) struct Candidate {
@@ -68,8 +68,7 @@ pub(super) struct ScopedVcsInput {
     pub(super) observation: UnscopedVcsObservation,
 }
 
-#[cfg(test)]
-pub(crate) fn attribute(input: AttributionInput) -> CoreRecordAnnotation {
+pub fn attribute(input: AttributionInput) -> CoreRecordAnnotation {
     RepositoryAttributor::default().attribute(input)
 }
 

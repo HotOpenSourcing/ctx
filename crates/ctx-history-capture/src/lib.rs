@@ -72,7 +72,7 @@ pub(crate) const PROVIDER_MAX_PREVIEW_CHARS: usize = 4_000;
 
 pub(crate) mod native_source;
 pub(crate) mod record_evidence;
-pub(crate) mod repository_attribution;
+pub(crate) use ctx_history_repository_evidence as repository_attribution;
 pub use ctx_history_capture_model::{
     stable_capture_uuid, CatalogSummary, OutputObservationKind, OutputOutcome,
     OutputOutcomeMetadata, ProviderImportFailure, ProviderImportSummary, ProviderImportWorkResult,
@@ -85,7 +85,11 @@ pub use error::{CaptureError, ProviderJsonlInventoryLimit, Result};
 pub(crate) mod common {
     pub(crate) mod identity;
     pub(crate) mod io;
-    pub(crate) mod json;
+    pub(crate) mod json {
+        pub(crate) use ctx_history_repository_evidence::{
+            default_metadata, exact_json_value as exact_value, raw_object_keys_are_unique,
+        };
+    }
     pub(crate) mod time;
 }
 pub use common::identity::compute_payload_hash;

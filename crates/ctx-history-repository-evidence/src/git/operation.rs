@@ -10,7 +10,7 @@ impl GitCertifier {
     /// Verifies one canonical bounded set of full operation objects in the
     /// certificate's immutable repository/object-format domain. The linked
     /// receipt, not object existence, remains the mapping authority.
-    pub(in crate::repository_attribution) fn verify_commit_operation_objects(
+    pub(crate) fn verify_commit_operation_objects(
         &self,
         certificate: &CertifiedCandidate,
         object_ids: &[GitObjectId],

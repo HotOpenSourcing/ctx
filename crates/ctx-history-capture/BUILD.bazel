@@ -63,6 +63,7 @@ CTX_HISTORY_CAPTURE_DEPS = [
     "//crates/ctx-history-core:lib",
     "//crates/ctx-history-index:lib",
     "//crates/ctx-history-jsonl:lib",
+    "//crates/ctx-history-repository-evidence:lib",
     "//crates/ctx-pro-host-protocol:lib",
 ]
 
@@ -233,37 +234,6 @@ py_test(
     main = "tests/mcp_attribution_conformance_test.py",
     data = MCP_ATTRIBUTION_ROUTE_CONTRACTS + MCP_ATTRIBUTION_TEST_CONTRACTS,
     tags = ["provider-conformance"],
-)
-
-ctx_rust_test(
-    name = "repository_shell_outcomes_tests",
-    srcs = [
-        "src/common/json.rs",
-        "src/repository_attribution/association.rs",
-        "src/repository_attribution/outcome.rs",
-        "src/repository_attribution/outcome/pull_request.rs",
-        "src/repository_attribution/shell.rs",
-        "src/repository_attribution/shell/outcome_tests.rs",
-        "src/repository_attribution/shell/outcome_plan.rs",
-        "src/repository_attribution/shell/pull_request.rs",
-        "tests/repository_shell_outcomes.rs",
-    ],
-    crate_name = "repository_shell_outcomes",
-    crate_root = "tests/repository_shell_outcomes.rs",
-    edition = crate_edition(),
-    aliases = aliases(
-        normal_dev = True,
-        proc_macro_dev = True,
-    ),
-    deps = all_crate_deps(
-        normal = True,
-        normal_dev = True,
-    ) + [":lib"] + CTX_HISTORY_CAPTURE_DEPS,
-    proc_macro_deps = all_crate_deps(
-        proc_macro = True,
-        proc_macro_dev = True,
-    ),
-    rustc_env = COMMON_RUSTC_ENV,
 )
 
 sh_test(

@@ -1,0 +1,30 @@
+[package]
+name = "ctx-history-repository-evidence"
+version = "0.26.0"
+description = "Provider-neutral repository discovery, certification, and capture evidence for ctx"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+chrono.workspace = true
+ctx-history-capture-model = { path = "../ctx-history-capture-model" }
+ctx-history-core = { path = "../ctx-history-core" }
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+] }

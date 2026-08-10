@@ -23,7 +23,6 @@ use super::{
     linked_outcome_evidence, AttributionInput, LinkedOutcomeInput, RepositoryAttributor,
     UnscopedFileObservation, UnscopedRepositoryFileInvocationEvidence, UnscopedVcsObservation,
 };
-use crate::OutputOutcome;
 
 mod certification;
 #[cfg(unix)]
