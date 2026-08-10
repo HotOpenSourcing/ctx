@@ -42,11 +42,11 @@ use sha2::{Digest as _, Sha256};
 
 use super::*;
 #[cfg(test)]
-use crate::pro::core_worker_budget::{
+use crate::core_worker_budget::{
     core_launch_product_budget, worker_selection_for_test, CoreLaunchProductBudget,
     MAX_HELPER_PREPARATION_WORKERS,
 };
-use crate::pro::core_worker_budget::{CoreWorkerLaunchSelection, MAX_CORE_PREFETCH_WORKERS};
+use crate::core_worker_budget::{CoreWorkerLaunchSelection, MAX_CORE_PREFETCH_WORKERS};
 #[cfg(test)]
 use ctx_pro_host_protocol::JournalFinishActivity;
 
@@ -300,12 +300,13 @@ impl CoreMaterializationConsumer for ProtocolCoreMaterializationConsumer {
 }
 
 pub(super) fn sync_generation_pinned_core(
+    host: &(impl InstalledProHost + ?Sized),
     data_root: &Path,
     index: &VerifiedIndex,
 ) -> Result<CoreMaterializationSyncProgress> {
     let selection = CoreWorkerLaunchSelection::from_runtime();
     let required = BTreeSet::from([Capability::Status, Capability::CoreMaterialization]);
-    let client = ProClient::connect(data_root, &required)?;
+    let client = ProClient::connect(host, data_root, &required)?;
     let helper_artifact_sha256 = client.helper_artifact_sha256()?.to_owned();
     let mut consumer = ProtocolCoreMaterializationConsumer {
         client,
@@ -320,7 +321,9 @@ pub(super) fn sync_generation_pinned_core(
         .validate()
         .map_err(|error| anyhow!("invalid_response: {}", error.message))?;
     let mut progress = if status.currentness == CoreProjectionCurrentness::Finalizing {
-        continue_core_finalization(index, &status, &mut consumer, selection)?
+        continue_core_finalization(index, &status, &mut consumer, selection, || {
+            host.unix_time()
+        })?
     } else {
         sync_core_feed_progress_with_launch(
             index,
@@ -393,7 +396,7 @@ fn acquire_finalization_generation_lease(
     })
 }
 
-pub(crate) fn validate_core_finalization_generation_lease(
+pub fn validate_core_finalization_generation_lease(
     data_root: &Path,
     progress: &ctx_pro_host_protocol::CoreMaterializationFinalizationProgress,
 ) -> Result<()> {
@@ -422,7 +425,7 @@ pub(crate) fn validate_core_finalization_generation_lease(
     Ok(())
 }
 
-pub(crate) fn reconstruct_core_finalization_generation_lease(
+pub fn reconstruct_core_finalization_generation_lease(
     data_root: &Path,
     progress: &ctx_pro_host_protocol::CoreMaterializationFinalizationProgress,
 ) -> Result<()> {
@@ -430,7 +433,7 @@ pub(crate) fn reconstruct_core_finalization_generation_lease(
     validate_core_finalization_generation_lease(data_root, progress)
 }
 
-pub(crate) fn core_finalization_generation_lease(
+pub fn core_finalization_generation_lease(
     data_root: &Path,
 ) -> Result<Option<GenerationRetentionLease>> {
     load_generation_retention_lease(ctx_history_refresh::source_backed_index_root(data_root))
@@ -439,7 +442,7 @@ pub(crate) fn core_finalization_generation_lease(
         })
 }
 
-pub(crate) fn release_core_finalization_generation_lease(
+pub fn release_core_finalization_generation_lease(
     data_root: &Path,
     expected_generation_id: Option<&str>,
 ) -> Result<bool> {
@@ -539,7 +542,7 @@ fn sync_core_feed_progress_with_launch<C: CoreMaterializationConsumer>(
     selection: CoreWorkerLaunchSelection,
 ) -> Result<CoreMaterializationSyncProgress> {
     match sync_core_feed_attempt_with_launch(index, prior_receipt, consumer, selection) {
-        Err(error) if crate::pro::stable_error_code(&error) == Some("needs_rebuild") => {
+        Err(error) if crate::stable_error_code(&error) == Some("needs_rebuild") => {
             sync_core_feed_attempt_with_launch(index, prior_receipt, consumer, selection)
         }
         result => result,
@@ -776,12 +779,17 @@ fn sync_core_feed_attempt_with_launch<C: CoreMaterializationConsumer>(
     }
 }
 
-fn continue_core_finalization<C: CoreMaterializationConsumer>(
+fn continue_core_finalization<C, UnixNow>(
     index: &VerifiedIndex,
     status: &ctx_pro_host_protocol::StatusResult,
     consumer: &mut C,
     selection: CoreWorkerLaunchSelection,
-) -> Result<CoreMaterializationSyncProgress> {
+    unix_now: UnixNow,
+) -> Result<CoreMaterializationSyncProgress>
+where
+    C: CoreMaterializationConsumer,
+    UnixNow: FnMut() -> Result<i64>,
+{
     let authenticated_final_deadline_unix = consumer.authenticated_final_deadline_unix();
     continue_core_finalization_burst_with(
         index,
@@ -791,7 +799,7 @@ fn continue_core_finalization<C: CoreMaterializationConsumer>(
         CoreFinalizationBurstLimits::PRODUCTION,
         authenticated_final_deadline_unix,
         Instant::now,
-        crate::pro::commercial_lifecycle::unix_time,
+        unix_now,
         || false,
     )
 }

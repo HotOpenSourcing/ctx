@@ -12,7 +12,7 @@ use serde::Serialize;
 
 const CHECK_STATUS_ARGV: &[&str] = &["ctx", "status"];
 
-pub(crate) const RESOURCE_NOT_FOUND_DIAGNOSTIC: &str =
+pub const RESOURCE_NOT_FOUND_DIAGNOSTIC: &str =
     "No indexed Pro resource matches the requested blame target.";
 
 /// A trusted public blame failure.
@@ -22,20 +22,20 @@ pub(crate) const RESOURCE_NOT_FOUND_DIAGNOSTIC: &str =
 /// and use `message` for prose. No helper-authored message or error source is
 /// retained.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct BlameDiagnostic {
-    pub(crate) error: &'static str,
-    pub(crate) error_code: &'static str,
-    pub(crate) reason: BlameDiagnosticReason,
-    pub(crate) message: &'static str,
-    pub(crate) retryable: bool,
+pub struct BlameDiagnostic {
+    pub error: &'static str,
+    pub error_code: &'static str,
+    pub reason: BlameDiagnosticReason,
+    pub message: &'static str,
+    pub retryable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) freshness: Option<BlameDiagnosticFreshness>,
+    pub freshness: Option<BlameDiagnosticFreshness>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) next_action: Option<BlameNextAction>,
+    pub next_action: Option<BlameNextAction>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub(crate) candidates: Vec<BlameDiagnosticCandidate>,
+    pub candidates: Vec<BlameDiagnosticCandidate>,
     #[serde(skip_serializing_if = "is_false")]
-    pub(crate) candidates_truncated: bool,
+    pub candidates_truncated: bool,
     #[serde(skip)]
     blame_details_valid: bool,
 }
@@ -50,7 +50,7 @@ impl Error for BlameDiagnostic {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum BlameDiagnosticReason {
+pub enum BlameDiagnosticReason {
     ProNotInstalled,
     EntitlementRequired,
     EntitlementExpired,
@@ -88,25 +88,25 @@ pub(crate) enum BlameDiagnosticReason {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct BlameDiagnosticFreshness {
-    pub(crate) state: BlameFreshnessState,
+pub struct BlameDiagnosticFreshness {
+    pub state: BlameFreshnessState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum BlameFreshnessState {
+pub enum BlameFreshnessState {
     StaleCommitted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct BlameNextAction {
-    pub(crate) kind: BlameNextActionKind,
-    pub(crate) argv: Vec<String>,
+pub struct BlameNextAction {
+    pub kind: BlameNextActionKind,
+    pub argv: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum BlameNextActionKind {
+pub enum BlameNextActionKind {
     SetupPro,
     ManagePro,
     RepairPro,
@@ -116,7 +116,7 @@ pub(crate) enum BlameNextActionKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum BlameDiagnosticCandidate {
+pub enum BlameDiagnosticCandidate {
     Repository { selector: String },
     Commit { repository: String, oid: String },
 }
@@ -140,7 +140,7 @@ struct DiagnosticMapping {
 }
 
 impl BlameDiagnostic {
-    pub(crate) fn from_protocol_error(error: ProtocolError) -> Self {
+    pub fn from_protocol_error(error: ProtocolError) -> Self {
         if error.validate().is_err() {
             return Self::invalid_response();
         }
@@ -152,7 +152,7 @@ impl BlameDiagnostic {
         diagnostic
     }
 
-    pub(crate) fn for_stable_error_code(code: &'static str) -> Option<Self> {
+    pub fn for_stable_error_code(code: &'static str) -> Option<Self> {
         let mapping = stable_code_mapping(code)?;
         Some(Self::from_mapping(
             mapping,
@@ -162,14 +162,14 @@ impl BlameDiagnostic {
     }
 
     #[must_use]
-    pub(crate) fn with_stale_committed(mut self) -> Self {
+    pub fn with_stale_committed(mut self) -> Self {
         self.freshness = Some(BlameDiagnosticFreshness {
             state: BlameFreshnessState::StaleCommitted,
         });
         self
     }
 
-    pub(crate) fn with_core_search_for(mut self, target: &BlameTarget) -> Self {
+    pub fn with_core_search_for(mut self, target: &BlameTarget) -> Self {
         if !self.blame_details_valid {
             return Self::invalid_response();
         }
@@ -218,7 +218,7 @@ impl BlameDiagnostic {
 }
 
 impl BlameNextAction {
-    pub(crate) fn check_status() -> Self {
+    pub fn check_status() -> Self {
         Self {
             kind: BlameNextActionKind::CheckStatus,
             argv: CHECK_STATUS_ARGV
@@ -228,7 +228,7 @@ impl BlameNextAction {
         }
     }
 
-    pub(crate) fn core_search_for(target: &BlameTarget) -> Option<Self> {
+    pub fn core_search_for(target: &BlameTarget) -> Option<Self> {
         let term = safe_core_search_term(target)?;
         Some(Self {
             kind: BlameNextActionKind::SearchCore,
@@ -242,7 +242,7 @@ impl BlameNextAction {
         })
     }
 
-    pub(crate) fn core_search_for_resolved(
+    pub fn core_search_for_resolved(
         target: &ctx_pro_host_protocol::ResolvedBlameTarget,
     ) -> Option<Self> {
         let target = match target {

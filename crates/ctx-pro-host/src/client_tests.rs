@@ -10,6 +10,59 @@ use ctx_pro_host_protocol::{
     ResourceRef,
 };
 
+struct MissingPin;
+
+impl CoreGenerationPin for MissingPin {
+    fn generation_id(&self) -> &str {
+        unreachable!("the missing-pin test host never returns a pin")
+    }
+}
+
+struct MissingPinHost;
+
+impl InstalledProHost for MissingPinHost {
+    fn host_version(&self) -> &str {
+        "1.0.0"
+    }
+
+    fn existing_installation_id(&self, _data_root: &Path) -> Result<Option<String>> {
+        Ok(Some("00000000-0000-4000-8000-000000000000".to_owned()))
+    }
+
+    fn validated_installed_helper(&self, _data_root: &Path) -> Result<VerifiedHelperExecutable> {
+        bail!("pro_not_installed: helper fixture is absent")
+    }
+
+    fn release_trust(&self) -> Result<crate::lifecycle_manifest::ReleaseTrust> {
+        crate::lifecycle_manifest::release_trust(crate::lifecycle_manifest::ReleaseChannel::Stable)
+    }
+
+    fn authorization_for_challenge(
+        &self,
+        _data_root: &Path,
+        _challenge: &[u8; ctx_pro_host_protocol::AUTHORIZATION_CHALLENGE_BYTES],
+        _mode: AuthorizationMode,
+    ) -> Result<AuthorizationReceipt> {
+        bail!("authentication_denied: test host does not authorize")
+    }
+
+    fn setup_repair_required(&self, _error: &anyhow::Error) -> bool {
+        false
+    }
+
+    fn unix_time(&self) -> Result<i64> {
+        Ok(0)
+    }
+}
+
+impl CoreGenerationHost for MissingPinHost {
+    type Pin = MissingPin;
+
+    fn pin_active_core_generation(&self, _data_root: &Path) -> Result<Self::Pin> {
+        bail!("source_unavailable: active verified Core generation is missing")
+    }
+}
+
 fn receipt(generation: char) -> CoreMaterializationReceipt {
     CoreMaterializationReceipt {
         core_generation_id: generation.to_string().repeat(64),
@@ -358,9 +411,10 @@ fn status_preserves_explicit_stale_currentness_for_the_pinned_generation() {
 #[test]
 fn missing_helper_status_does_not_require_an_active_core_generation() {
     let temp = tempfile::tempdir().unwrap();
-    let status = super::client_status::status_with_helper_resolver(temp.path(), |_| {
-        bail!("pro_not_installed: helper fixture is absent")
-    });
+    let status =
+        super::client_status::status_with_helper_resolver(&MissingPinHost, temp.path(), |_| {
+            bail!("pro_not_installed: helper fixture is absent")
+        });
 
     assert!(!status.installed);
     assert!(!status.ready);
@@ -371,9 +425,10 @@ fn missing_helper_status_does_not_require_an_active_core_generation() {
 #[test]
 fn installed_status_fails_closed_when_active_core_cannot_be_pinned() {
     let temp = tempfile::tempdir().unwrap();
-    let status = super::client_status::status_with_helper_resolver(temp.path(), |_| {
-        Ok(temp.path().join("ctx-pro"))
-    });
+    let status =
+        super::client_status::status_with_helper_resolver(&MissingPinHost, temp.path(), |_| {
+            Ok(temp.path().join("ctx-pro"))
+        });
 
     assert!(status.installed);
     assert!(!status.ready);
@@ -527,7 +582,7 @@ fn stale_generation_bound_failure_becomes_one_typed_stale_diagnostic() {
     assert!(diagnostic.candidates.is_empty());
     assert_ne!(
         diagnostic.next_action.as_ref().map(|action| action.kind),
-        Some(crate::pro::diagnostic::BlameNextActionKind::SearchCore)
+        Some(crate::diagnostic::BlameNextActionKind::SearchCore)
     );
 
     let entitlement = protocol_blame_error(

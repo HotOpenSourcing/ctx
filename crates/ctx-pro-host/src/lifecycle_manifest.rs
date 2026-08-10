@@ -4,12 +4,12 @@ use ring::signature::{UnparsedPublicKey, RSA_PKCS1_2048_8192_SHA256};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub(crate) const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
-pub(crate) const MAX_SIGNATURE_BYTES: u64 = 16 * 1024;
-pub(crate) const MAX_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
-pub(in crate::pro) const MAX_INSTALL_MARKER_BYTES: u64 = 128 * 1024;
-pub(super) const PRO_RELEASE_STABLE_KEY_ID: &str = "ctx-pro-release-stable-2026-07-27";
-pub(super) const PRO_RELEASE_STABLE_PUBLIC_KEY_PEM: &str = r#"-----BEGIN RSA PUBLIC KEY-----
+pub const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
+pub const MAX_SIGNATURE_BYTES: u64 = 16 * 1024;
+pub const MAX_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
+pub const MAX_INSTALL_MARKER_BYTES: u64 = 128 * 1024;
+pub const PRO_RELEASE_STABLE_KEY_ID: &str = "ctx-pro-release-stable-2026-07-27";
+pub const PRO_RELEASE_STABLE_PUBLIC_KEY_PEM: &str = r#"-----BEGIN RSA PUBLIC KEY-----
 MIIBigKCAYEAq2vmUvoGcm0bAJhCdjzqzLF9SAALDA33KQOHWI3JeKFjxHTLs3hP
 88b3WfUfWgd/Bj6pVWpAI/S6MnrT5IQ8VMxPMe9VMM97F4TMN+ZMwo9y4sxefGwJ
 +GI/7SJP3hnRLMV2xme9RRMERuaAEL1ComPdqKwcAMzvZSpAHnDrWnjLrhBFyahl
@@ -20,8 +20,8 @@ abVHhCI+EJy1XX4ydQxFbqccMzhsz5g6Wim8q7pKliKT97uwV3r80f3DpjBUiG3e
 VNd6soFZl6R0F8V4tNR5CXwlMjgFogl6t2sKIGHUhHC7y1U01lYlRJNqmvCClD2N
 uvdK7q5ndg1XAgMBAAE=
 -----END RSA PUBLIC KEY-----"#;
-pub(super) const PRO_RELEASE_STAGING_KEY_ID: &str = "ctx-pro-release-staging-2026-07-30";
-pub(super) const PRO_RELEASE_STAGING_PUBLIC_KEY_PEM: &str = r#"-----BEGIN RSA PUBLIC KEY-----
+pub const PRO_RELEASE_STAGING_KEY_ID: &str = "ctx-pro-release-staging-2026-07-30";
+pub const PRO_RELEASE_STAGING_PUBLIC_KEY_PEM: &str = r#"-----BEGIN RSA PUBLIC KEY-----
 MIIBigKCAYEArDw7seuvC1i9TddKQOiakTnChzaHfgycUAbZ4gz4E60FJX3t54l8
 7NILgkA5unkUsDr9mTXM+vtzWnKaa5mVzr5/xJgnTqcy/3OSB1iLnyKuGqfQN+vo
 voHHiQ6EGtG7KpMWJq6dX/TG5lBrxyl7oCNQKcYH1wHsYfbxPE6HakaPXsoDT1Dx
@@ -35,13 +35,13 @@ ZBtC7rgoUXofAgMBAAE=
 "#;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(crate) enum ReleaseChannel {
+pub enum ReleaseChannel {
     Stable,
     Staging,
 }
 
 impl ReleaseChannel {
-    pub(crate) const fn wire_name(self) -> &'static str {
+    pub const fn wire_name(self) -> &'static str {
         match self {
             Self::Stable => "stable",
             Self::Staging => "staging",
@@ -50,13 +50,13 @@ impl ReleaseChannel {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ReleaseTrust {
-    pub(crate) channel: ReleaseChannel,
-    pub(crate) key_id: &'static str,
-    pub(crate) public_key_pem: &'static str,
+pub struct ReleaseTrust {
+    pub channel: ReleaseChannel,
+    pub key_id: &'static str,
+    pub public_key_pem: &'static str,
 }
 
-pub(crate) fn release_trust(channel: ReleaseChannel) -> Result<ReleaseTrust> {
+pub fn release_trust(channel: ReleaseChannel) -> Result<ReleaseTrust> {
     match channel {
         ReleaseChannel::Staging => Ok(ReleaseTrust {
             channel,
@@ -72,41 +72,41 @@ pub(crate) fn release_trust(channel: ReleaseChannel) -> Result<ReleaseTrust> {
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ProManifest {
-    pub(crate) schema_version: u32,
-    pub(crate) product: String,
-    pub(crate) channel: String,
-    pub(crate) version: String,
-    pub(crate) source_commit: String,
-    pub(crate) public_source_commit: String,
-    pub(crate) private_source_commit: String,
-    pub(crate) build_identity: String,
-    pub(crate) protocol_min: u16,
-    pub(crate) protocol_max: u16,
-    pub(crate) protocol_fingerprint: String,
-    pub(crate) target: String,
-    pub(crate) architecture: String,
-    pub(crate) artifact_object: String,
-    pub(crate) artifact_size: u64,
-    pub(crate) artifact_sha256: String,
-    pub(crate) public_artifact_sha256: String,
-    pub(crate) public_package_sha256: String,
-    pub(crate) private_package_sha256: String,
-    pub(crate) runtime_evidence_sha256: String,
-    pub(crate) runtime_run_id: String,
-    pub(crate) release_key_id: String,
+pub struct ProManifest {
+    pub schema_version: u32,
+    pub product: String,
+    pub channel: String,
+    pub version: String,
+    pub source_commit: String,
+    pub public_source_commit: String,
+    pub private_source_commit: String,
+    pub build_identity: String,
+    pub protocol_min: u16,
+    pub protocol_max: u16,
+    pub protocol_fingerprint: String,
+    pub target: String,
+    pub architecture: String,
+    pub artifact_object: String,
+    pub artifact_size: u64,
+    pub artifact_sha256: String,
+    pub public_artifact_sha256: String,
+    pub public_package_sha256: String,
+    pub private_package_sha256: String,
+    pub runtime_evidence_sha256: String,
+    pub runtime_run_id: String,
+    pub release_key_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(in crate::pro) struct ProInstallMarker {
+pub struct ProInstallMarker {
     schema_version: u32,
     manifest_base64: String,
     signature_base64: String,
 }
 
 impl ProInstallMarker {
-    pub(super) fn new(manifest_bytes: &[u8], signature: &[u8]) -> Result<Self> {
+    pub fn new(manifest_bytes: &[u8], signature: &[u8]) -> Result<Self> {
         let signature = std::str::from_utf8(signature)
             .context("invalid_response: manifest signature is not UTF-8 base64")?;
         Ok(Self {
@@ -116,7 +116,7 @@ impl ProInstallMarker {
         })
     }
 
-    pub(in crate::pro) fn signed_manifest(&self, public_key_pem: &str) -> Result<ProManifest> {
+    pub fn signed_manifest(&self, public_key_pem: &str) -> Result<ProManifest> {
         if self.schema_version != 1
             || self.manifest_base64.len() as u64 > MAX_INSTALL_MARKER_BYTES
             || self.signature_base64.len() as u64 > MAX_SIGNATURE_BYTES
@@ -141,7 +141,7 @@ impl ProInstallMarker {
     }
 }
 
-pub(crate) fn verified_manifest(
+pub fn verified_manifest(
     manifest_bytes: &[u8],
     signature: &[u8],
     public_key_pem: &str,
@@ -156,7 +156,7 @@ pub(crate) fn verified_manifest(
     Ok(manifest)
 }
 
-pub(crate) fn verified_manifest_for_trust(
+pub fn verified_manifest_for_trust(
     manifest_bytes: &[u8],
     signature: &[u8],
     trust: ReleaseTrust,
@@ -186,10 +186,7 @@ pub(crate) fn verified_manifest_for_trust(
     Ok(manifest)
 }
 
-pub(crate) fn validate_manifest_release_trust(
-    manifest: &ProManifest,
-    trust: ReleaseTrust,
-) -> Result<()> {
+pub fn validate_manifest_release_trust(manifest: &ProManifest, trust: ReleaseTrust) -> Result<()> {
     if manifest.schema_version != 1
         || manifest.channel != trust.channel.wire_name()
         || manifest.release_key_id != trust.key_id
@@ -199,7 +196,7 @@ pub(crate) fn validate_manifest_release_trust(
     Ok(())
 }
 
-pub(crate) fn validate_manifest(manifest: &ProManifest) -> Result<()> {
+pub fn validate_manifest(manifest: &ProManifest) -> Result<()> {
     validate_manifest_identity(manifest)?;
     if manifest.protocol_fingerprint != ctx_pro_host_protocol::PROTOCOL_FINGERPRINT {
         bail!(
@@ -284,7 +281,7 @@ fn is_canonical_uuid(value: &str) -> bool {
     }
 }
 
-pub(super) fn verify_signature_with_key(
+pub fn verify_signature_with_key(
     manifest: &[u8],
     signature: &[u8],
     public_key_pem: &str,
@@ -307,7 +304,7 @@ pub(super) fn verify_signature_with_key(
         .map_err(|_| anyhow!("invalid_response: Pro manifest signature verification failed"))
 }
 
-pub(crate) fn parse_release_version(version: &str) -> Result<(u64, u64, u64)> {
+pub fn parse_release_version(version: &str) -> Result<(u64, u64, u64)> {
     if version.is_empty() || version.len() > 64 {
         bail!("invalid_response: signed manifest contains invalid identity fields");
     }
@@ -332,7 +329,7 @@ pub(crate) fn parse_release_version(version: &str) -> Result<(u64, u64, u64)> {
     Ok(parsed)
 }
 
-pub(crate) fn platform_target() -> String {
+pub fn platform_target() -> String {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => "x86_64-unknown-linux-gnu".to_owned(),
         ("linux", "aarch64") => "aarch64-unknown-linux-gnu".to_owned(),

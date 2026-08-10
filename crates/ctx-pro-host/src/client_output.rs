@@ -5,7 +5,7 @@ use ctx_pro_host_protocol::{CoreMaterializationFinalizationPending, CoreMaterial
 
 use super::{protocol_error, ProClient, BATCH_TIMEOUT};
 
-pub(crate) enum CoreMaterializationSyncOutcome {
+pub enum CoreMaterializationSyncOutcome {
     Finished {
         receipt: CoreMaterializationReceipt,
         did_work: bool,
@@ -17,11 +17,12 @@ pub(crate) enum CoreMaterializationSyncOutcome {
 }
 
 /// Synchronizes Pro from one already-published, generation-pinned Core feed.
-pub(crate) fn sync_core_materialization(
+pub fn sync_core_materialization(
+    host: &(impl crate::InstalledProHost + ?Sized),
     data_root: &Path,
     index: &ctx_history_index::VerifiedIndex,
 ) -> Result<CoreMaterializationSyncOutcome> {
-    match core_materialization_feed::sync_generation_pinned_core(data_root, index)? {
+    match core_materialization_feed::sync_generation_pinned_core(host, data_root, index)? {
         core_materialization_feed::CoreMaterializationSyncProgress::Finished(report) => {
             Ok(CoreMaterializationSyncOutcome::Finished {
                 did_work: !report.replayed,
@@ -37,7 +38,7 @@ pub(crate) fn sync_core_materialization(
 
 #[path = "client_output/core_materialization_feed.rs"]
 mod core_materialization_feed;
-pub(crate) use core_materialization_feed::{
+pub use core_materialization_feed::{
     core_finalization_generation_lease, reconstruct_core_finalization_generation_lease,
     release_core_finalization_generation_lease, validate_core_finalization_generation_lease,
 };

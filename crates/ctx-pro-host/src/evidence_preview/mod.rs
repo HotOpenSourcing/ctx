@@ -10,8 +10,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
-pub(crate) const MAX_EVIDENCE_PREVIEW_CITATIONS: usize = 3;
-pub(crate) const MAX_EVIDENCE_PREVIEW_EXCERPT_BYTES: usize = 512;
+pub const MAX_EVIDENCE_PREVIEW_CITATIONS: usize = 3;
+pub const MAX_EVIDENCE_PREVIEW_EXCERPT_BYTES: usize = 512;
 
 /// Exact Core evidence whose generation and coordinates were verified by hydration and whose
 /// stored Core bytes are digest-verified during construction.
@@ -19,14 +19,14 @@ pub(crate) const MAX_EVIDENCE_PREVIEW_EXCERPT_BYTES: usize = 512;
 /// Construction is deliberately fail-closed. A caller cannot pass a bare Core record to the
 /// projector and accidentally bypass citation identity or current Core-contract checks.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct VerifiedEvidenceRecord<'a> {
+pub struct VerifiedEvidenceRecord<'a> {
     numbered: &'a NumberedEvidence,
     record: &'a CoreEventRecord,
 }
 
 impl<'a> VerifiedEvidenceRecord<'a> {
     #[must_use]
-    pub(crate) fn new(
+    pub fn new(
         numbered: &'a NumberedEvidence,
         hydrated_core_generation_id: &str,
         record: &'a CoreEventRecord,
@@ -50,8 +50,8 @@ impl<'a> VerifiedEvidenceRecord<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct EvidencePreviewModel {
-    pub(crate) previews: Vec<EvidencePreview>,
+pub struct EvidencePreviewModel {
+    pub previews: Vec<EvidencePreview>,
 }
 
 /// Provider-neutral evidence for one exact provider-native file-operation request.
@@ -60,22 +60,22 @@ pub(crate) struct EvidencePreviewModel {
 /// exact UTF-8 byte range copied from `CoreContent::normalized_body`; presentation sanitization is
 /// deliberately separate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct EvidencePreview {
-    pub(crate) citation_numbers: Vec<u32>,
-    pub(crate) operation: RepositoryFileInvocationKind,
-    pub(crate) path: String,
+pub struct EvidencePreview {
+    pub citation_numbers: Vec<u32>,
+    pub operation: RepositoryFileInvocationKind,
+    pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) prior_path: Option<String>,
-    pub(crate) tool_name: String,
+    pub prior_path: Option<String>,
+    pub tool_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) event_occurred_at_ms: Option<i64>,
-    pub(crate) excerpt: String,
+    pub event_occurred_at_ms: Option<i64>,
+    pub excerpt: String,
 }
 
 /// Projects bounded provider-neutral file invocation evidence without mutating the blame result
 /// or Core data.
 #[must_use]
-pub(crate) fn project_evidence_previews(
+pub fn project_evidence_previews(
     result: &BlameResult,
     verified: &[VerifiedEvidenceRecord<'_>],
 ) -> EvidencePreviewModel {

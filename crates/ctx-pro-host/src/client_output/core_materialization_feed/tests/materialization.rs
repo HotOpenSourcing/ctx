@@ -22,7 +22,7 @@ fn manifest_preflight_rebuild_required_finish_retry_is_bounded() {
 
     let error = sync_core_feed(&index, None, &mut consumer).unwrap_err();
 
-    assert_eq!(crate::pro::stable_error_code(&error), Some("needs_rebuild"));
+    assert_eq!(crate::stable_error_code(&error), Some("needs_rebuild"));
     assert_eq!(consumer.finish_requests.len(), 2);
     assert!(consumer.finish.is_none());
 }

@@ -6,9 +6,12 @@ mod commercial_config;
 mod commercial_deletion;
 mod commercial_lifecycle;
 mod commercial_production_record;
-mod core_worker_budget;
-pub(crate) mod diagnostic;
-pub(crate) mod evidence_preview;
+pub(crate) mod diagnostic {
+    pub(crate) use ctx_pro_host::diagnostic::*;
+}
+pub(crate) mod evidence_preview {
+    pub(crate) use ctx_pro_host::evidence_preview::*;
+}
 mod graph_key_deletion;
 mod helper_command;
 mod lifecycle;
@@ -20,7 +23,6 @@ mod render;
 mod setup_validation;
 #[cfg(ctx_pro_test_helper)]
 mod test_control;
-mod verified_executable;
 pub(crate) mod commercial_api {
     pub(crate) use ctx_pro_access::commercial_api::*;
 }

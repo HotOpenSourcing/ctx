@@ -3,8 +3,8 @@ use ctx_pro_host_protocol::{BlameTarget, ProtocolError};
 #[cfg(test)]
 use ctx_pro_host_protocol::{BlameDiagnosticDetails, BlameDiagnosticReason, ErrorClass};
 
-use super::super::diagnostic::BlameDiagnostic;
-pub(crate) use super::super::diagnostic::RESOURCE_NOT_FOUND_DIAGNOSTIC;
+use crate::diagnostic::BlameDiagnostic;
+pub use crate::diagnostic::RESOURCE_NOT_FOUND_DIAGNOSTIC;
 
 pub(super) fn protocol_error(error: ProtocolError) -> anyhow::Error {
     anyhow::Error::new(BlameDiagnostic::from_protocol_error(error))
@@ -14,14 +14,14 @@ pub(super) fn protocol_blame_error(error: ProtocolError, target: &BlameTarget) -
     anyhow::Error::new(BlameDiagnostic::from_protocol_error(error).with_core_search_for(target))
 }
 
-pub(crate) fn invalid_blame_request() -> anyhow::Error {
+pub fn invalid_blame_request() -> anyhow::Error {
     anyhow::Error::new(
         BlameDiagnostic::for_stable_error_code("invalid_request")
             .expect("invalid_request has a trusted blame diagnostic"),
     )
 }
 
-pub(crate) fn blame_boundary_error(error: anyhow::Error, target: &BlameTarget) -> anyhow::Error {
+pub fn blame_boundary_error(error: anyhow::Error, target: &BlameTarget) -> anyhow::Error {
     let diagnostic = blame_diagnostic(&error).unwrap_or_else(|| {
         BlameDiagnostic::for_stable_error_code("invalid_response")
             .expect("invalid_response has a trusted blame diagnostic")
@@ -29,17 +29,17 @@ pub(crate) fn blame_boundary_error(error: anyhow::Error, target: &BlameTarget) -
     anyhow::Error::new(diagnostic.with_core_search_for(target))
 }
 
-pub(crate) fn blame_diagnostic(error: &anyhow::Error) -> Option<BlameDiagnostic> {
+pub fn blame_diagnostic(error: &anyhow::Error) -> Option<BlameDiagnostic> {
     typed_blame_diagnostic(error)
         .cloned()
         .or_else(|| stable_error_code(error).and_then(BlameDiagnostic::for_stable_error_code))
 }
 
-pub(crate) fn typed_blame_diagnostic(error: &anyhow::Error) -> Option<&BlameDiagnostic> {
+pub fn typed_blame_diagnostic(error: &anyhow::Error) -> Option<&BlameDiagnostic> {
     error.downcast_ref::<BlameDiagnostic>()
 }
 
-pub(crate) fn stable_error_code(error: &anyhow::Error) -> Option<&'static str> {
+pub fn stable_error_code(error: &anyhow::Error) -> Option<&'static str> {
     if let Some(diagnostic) = typed_blame_diagnostic(error) {
         return Some(diagnostic.error_code);
     }
@@ -219,15 +219,15 @@ mod tests {
         for (code, reason) in [
             (
                 "operation_unavailable",
-                super::super::super::diagnostic::BlameDiagnosticReason::OperationNotCovered,
+                crate::diagnostic::BlameDiagnosticReason::OperationNotCovered,
             ),
             (
                 "entitlement_required",
-                super::super::super::diagnostic::BlameDiagnosticReason::EntitlementRequired,
+                crate::diagnostic::BlameDiagnosticReason::EntitlementRequired,
             ),
             (
                 "entitlement_invalid",
-                super::super::super::diagnostic::BlameDiagnosticReason::EntitlementInvalid,
+                crate::diagnostic::BlameDiagnosticReason::EntitlementInvalid,
             ),
         ] {
             let error = anyhow!("{code}: ignored legacy host detail");

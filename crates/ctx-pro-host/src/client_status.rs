@@ -18,72 +18,64 @@ use super::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ProSetupRepairability {
+pub enum ProSetupRepairability {
     NotNeeded,
     Automated,
     ManualDiagnosis,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct ProStatus {
-    pub(crate) schema_version: u32,
-    pub(crate) installed: bool,
-    pub(crate) ready: bool,
-    pub(crate) materialized: bool,
-    pub(crate) helper_path: PathBuf,
-    pub(crate) helper_version: Option<String>,
-    pub(crate) protocol_version: u16,
-    pub(crate) capabilities: Vec<String>,
-    pub(crate) error_code: Option<String>,
-    pub(crate) projection_currentness: Option<CoreProjectionCurrentness>,
-    pub(crate) materialized_coverage: Option<MaterializedCoverage>,
-    pub(crate) repository_coverage: Option<RepositoryCoverage>,
-    pub(crate) core_preparation_peak_workers: Option<u16>,
-    pub(crate) storage_evidence: Option<ProStorageEvidence>,
-    pub(crate) supported_operations: Option<BTreeSet<ProOperation>>,
-    pub(crate) available_operations: Option<BTreeSet<ProOperation>>,
-    pub(crate) access_state: Option<String>,
-    pub(crate) refresh_after_unix: Option<i64>,
-    pub(crate) access_deadline_unix: Option<i64>,
-    pub(crate) grace_deadline_unix: Option<i64>,
+pub struct ProStatus {
+    pub schema_version: u32,
+    pub installed: bool,
+    pub ready: bool,
+    pub materialized: bool,
+    pub helper_path: PathBuf,
+    pub helper_version: Option<String>,
+    pub protocol_version: u16,
+    pub capabilities: Vec<String>,
+    pub error_code: Option<String>,
+    pub projection_currentness: Option<CoreProjectionCurrentness>,
+    pub materialized_coverage: Option<MaterializedCoverage>,
+    pub repository_coverage: Option<RepositoryCoverage>,
+    pub core_preparation_peak_workers: Option<u16>,
+    pub storage_evidence: Option<ProStorageEvidence>,
+    pub supported_operations: Option<BTreeSet<ProOperation>>,
+    pub available_operations: Option<BTreeSet<ProOperation>>,
+    pub access_state: Option<String>,
+    pub refresh_after_unix: Option<i64>,
+    pub access_deadline_unix: Option<i64>,
+    pub grace_deadline_unix: Option<i64>,
     #[serde(skip)]
-    pub(crate) setup_repairability: ProSetupRepairability,
-}
-
-enum StatusCore<'a> {
-    Borrowed(&'a VerifiedIndex),
-    Owned(Box<crate::semantic::PinnedSourceBackedGeneration>),
-}
-
-impl StatusCore<'_> {
-    fn generation_id(&self) -> &str {
-        match self {
-            Self::Borrowed(index) => index.generation_id(),
-            Self::Owned(index) => index.generation_id(),
-        }
-    }
+    pub setup_repairability: ProSetupRepairability,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HelperSmoke {
-    pub(crate) protocol_version: u16,
-    pub(crate) protocol_fingerprint: String,
-    pub(crate) helper_version: String,
-    pub(crate) capabilities: BTreeSet<Capability>,
+pub struct HelperSmoke {
+    pub protocol_version: u16,
+    pub protocol_fingerprint: String,
+    pub helper_version: String,
+    pub capabilities: BTreeSet<Capability>,
 }
 
 /// Starts an explicit staged helper and completes the exact Protocol V3 hello.
 /// This does not consult or mutate the installed-helper lifecycle state.
-pub(crate) fn smoke_helper_at_path(data_root: &Path, path: &Path) -> Result<HelperSmoke> {
-    smoke_helper_at_path_with_authorization(data_root, path, None)
+pub fn smoke_helper_at_path(
+    host: &(impl InstalledProHost + ?Sized),
+    data_root: &Path,
+    path: &Path,
+) -> Result<HelperSmoke> {
+    smoke_helper_at_path_with_authorization(host, data_root, path, None)
 }
 
 pub(super) fn smoke_helper_at_path_with_authorization(
+    host: &(impl InstalledProHost + ?Sized),
     data_root: &Path,
     path: &Path,
     authorization: Option<&dyn AuthorizationProvider>,
 ) -> Result<HelperSmoke> {
     smoke_helper_at_path_with_authorization_observing_status(
+        host,
         data_root,
         path,
         None,
@@ -93,6 +85,7 @@ pub(super) fn smoke_helper_at_path_with_authorization(
 }
 
 fn smoke_helper_at_path_with_authorization_observing_status(
+    host: &(impl InstalledProHost + ?Sized),
     data_root: &Path,
     path: &Path,
     execution_guard: Option<VerifiedHelperExecutable>,
@@ -101,6 +94,7 @@ fn smoke_helper_at_path_with_authorization_observing_status(
 ) -> Result<HelperSmoke> {
     let required = BTreeSet::from([Capability::EntitlementAuthorization, Capability::Status]);
     let mut client = ProClient::connect_to_path_with_authorization_mode(
+        host,
         data_root,
         path,
         execution_guard,
@@ -119,45 +113,61 @@ fn smoke_helper_at_path_with_authorization_observing_status(
     Ok(smoke)
 }
 
-pub(crate) fn status(data_root: &Path) -> ProStatus {
-    status_with_helper_resolver(data_root, support::helper_path)
-}
-
-pub(crate) fn status_for_core(data_root: &Path, active_core: Option<&VerifiedIndex>) -> ProStatus {
-    status_with_helper_resolver_and_core(data_root, support::helper_path, || {
-        active_core.map(StatusCore::Borrowed).ok_or_else(|| {
-            anyhow::anyhow!("source_unavailable: active verified Core generation is missing")
-        })
+pub fn status<H: CoreGenerationHost + ?Sized>(host: &H, data_root: &Path) -> ProStatus {
+    status_with_helper_resolver(host, data_root, |data_root| {
+        support::helper_path(host, data_root)
     })
 }
 
-pub(crate) fn status_with_helper_resolver(
+pub fn status_for_core(
+    host: &(impl InstalledProHost + ?Sized),
+    data_root: &Path,
+    active_core: Option<&VerifiedIndex>,
+) -> ProStatus {
+    status_with_helper_resolver_and_core(
+        host,
+        data_root,
+        |data_root| support::helper_path(host, data_root),
+        || {
+            active_core
+                .map(|index| index.generation_id().to_owned())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "source_unavailable: active verified Core generation is missing"
+                    )
+                })
+        },
+    )
+}
+
+pub fn status_with_helper_resolver<H: CoreGenerationHost + ?Sized>(
+    host: &H,
     data_root: &Path,
     resolve_helper: impl FnOnce(&Path) -> Result<PathBuf>,
 ) -> ProStatus {
-    status_with_helper_resolver_and_core(data_root, resolve_helper, || {
-        crate::semantic::pin_active_verified_generation(data_root)
-            .map(|index| StatusCore::Owned(Box::new(index)))
+    status_with_helper_resolver_and_core(host, data_root, resolve_helper, || {
+        host.pin_active_core_generation(data_root)
+            .map(|index| index.generation_id().to_owned())
     })
 }
 
-fn status_with_helper_resolver_and_core<'a>(
+fn status_with_helper_resolver_and_core(
+    host: &(impl InstalledProHost + ?Sized),
     data_root: &Path,
     resolve_helper: impl FnOnce(&Path) -> Result<PathBuf>,
-    resolve_core: impl FnOnce() -> Result<StatusCore<'a>>,
+    resolve_core: impl FnOnce() -> Result<String>,
 ) -> ProStatus {
     let helper_path = match resolve_helper(data_root) {
         Ok(path) => path,
         Err(error) => {
             let error_code = support::error_code(&error);
-            let setup_repairability =
-                if crate::pro::lifecycle::is_setup_repair_required_error(&error) {
-                    ProSetupRepairability::Automated
-                } else if error_code == "pro_not_installed" {
-                    ProSetupRepairability::NotNeeded
-                } else {
-                    ProSetupRepairability::ManualDiagnosis
-                };
+            let setup_repairability = if host.setup_repair_required(&error) {
+                ProSetupRepairability::Automated
+            } else if error_code == "pro_not_installed" {
+                ProSetupRepairability::NotNeeded
+            } else {
+                ProSetupRepairability::ManualDiagnosis
+            };
             return ProStatus {
                 schema_version: 1,
                 installed: false,
@@ -211,8 +221,8 @@ fn status_with_helper_resolver_and_core<'a>(
             };
         }
     };
-    let active_core_generation_id = active_core.generation_id();
-    match ProClient::connect_for_status(data_root, &BTreeSet::from([Capability::Status])) {
+    let active_core_generation_id = active_core.as_str();
+    match ProClient::connect_for_status(host, data_root, &BTreeSet::from([Capability::Status])) {
         Ok(mut client) => {
             let helper_version = Some(client.helper_version.clone());
             let capabilities = client

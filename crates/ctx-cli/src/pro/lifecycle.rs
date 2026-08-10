@@ -18,7 +18,13 @@ use uuid::Uuid;
 use super::artifact_delivery::VerifiedArtifactBundle;
 use super::client::default_helper_path;
 use super::commercial_config::CommercialConfig;
-use super::verified_executable::VerifiedHelperExecutable;
+use ctx_pro_host::{
+    installed_helper::{
+        inspect_pair_at, load_pair_at, read_candidate, validate_pair_bytes, PairIdentity,
+        PairInspection, ValidatedPair,
+    },
+    VerifiedHelperExecutable,
+};
 use lifecycle_manifest::{
     parse_release_version, validate_manifest_release_trust, verified_manifest,
     verified_manifest_for_trust, ProInstallMarker, ProManifest, MAX_ARTIFACT_BYTES,
@@ -40,8 +46,7 @@ use lifecycle_lock::{
     transaction_journal_path, transaction_marker_path, validate_private_directory, LifecycleLock,
 };
 
-#[path = "lifecycle_manifest.rs"]
-pub(super) mod lifecycle_manifest;
+pub(super) use ctx_pro_host::lifecycle_manifest;
 
 #[path = "lifecycle_commands.rs"]
 mod commands;
@@ -76,15 +81,6 @@ impl ProInstallArgs {
             signature,
         }
     }
-}
-
-#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-struct PairIdentity {
-    artifact_size: u64,
-    artifact_sha256: String,
-    marker_sha256: String,
-    version: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -170,33 +166,12 @@ pub(in crate::pro) fn installation_artifacts_present(data_root: &Path) -> bool {
     })
 }
 
-#[derive(Debug, Clone)]
-pub(super) struct ValidatedPair {
-    identity: PairIdentity,
-    artifact: Vec<u8>,
-    marker: Vec<u8>,
-    manifest: ProManifest,
-}
-
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub(super) enum SetupInstallation {
     Current(ValidatedPair),
     Missing,
     RepairRequired,
-}
-
-#[allow(clippy::large_enum_variant)]
-enum PairInspection {
-    Absent,
-    Untrusted,
-    Valid(ValidatedPair),
-}
-
-impl PairInspection {
-    fn is_untrusted(&self) -> bool {
-        matches!(self, Self::Untrusted)
-    }
 }
 
 impl SetupInstallation {
@@ -215,17 +190,6 @@ impl SetupInstallation {
         match self {
             Self::Current(pair) => Some(pair),
             Self::Missing | Self::RepairRequired => None,
-        }
-    }
-}
-
-impl PairIdentity {
-    fn new(artifact: &[u8], marker: &[u8], manifest: &ProManifest) -> Self {
-        Self {
-            artifact_size: artifact.len() as u64,
-            artifact_sha256: format!("{:x}", Sha256::digest(artifact)),
-            marker_sha256: format!("{:x}", Sha256::digest(marker)),
-            version: manifest.version.clone(),
         }
     }
 }
@@ -776,13 +740,12 @@ fn find_pair(
             markers.push(bytes);
         }
     }
-    let artifact = artifacts.into_iter().find(|bytes| {
-        bytes.len() as u64 == identity.artifact_size
-            && format!("{:x}", Sha256::digest(bytes)) == identity.artifact_sha256
-    });
+    let artifact = artifacts
+        .into_iter()
+        .find(|bytes| identity.matches_artifact(bytes));
     let marker = markers
         .into_iter()
-        .find(|bytes| format!("{:x}", Sha256::digest(bytes)) == identity.marker_sha256);
+        .find(|bytes| identity.matches_marker(bytes));
     let (Some(artifact), Some(marker)) = (artifact, marker) else {
         return Ok(None);
     };
@@ -793,75 +756,6 @@ fn find_pair(
         return Ok(None);
     }
     Ok(Some(pair))
-}
-
-fn load_pair_at(
-    helper_path: &Path,
-    marker_path: &Path,
-    public_key_pem: &str,
-) -> Result<Option<ValidatedPair>> {
-    match inspect_pair_at(helper_path, marker_path, public_key_pem)? {
-        PairInspection::Absent => Ok(None),
-        PairInspection::Valid(pair) => Ok(Some(pair)),
-        PairInspection::Untrusted => {
-            bail!("invalid_response: Pro helper and marker do not form a trusted pair")
-        }
-    }
-}
-
-fn inspect_pair_at(
-    helper_path: &Path,
-    marker_path: &Path,
-    public_key_pem: &str,
-) -> Result<PairInspection> {
-    let helper = read_candidate(helper_path, MAX_ARTIFACT_BYTES)?;
-    let marker = read_candidate(marker_path, MAX_INSTALL_MARKER_BYTES)?;
-    match (helper, marker) {
-        (None, None) => Ok(PairInspection::Absent),
-        (Some(helper), Some(marker)) => match validate_pair_bytes(helper, marker, public_key_pem) {
-            Ok(pair) => Ok(PairInspection::Valid(pair)),
-            Err(_) => Ok(PairInspection::Untrusted),
-        },
-        _ => Ok(PairInspection::Untrusted),
-    }
-}
-
-fn validate_pair_bytes(
-    artifact: Vec<u8>,
-    marker_bytes: Vec<u8>,
-    public_key_pem: &str,
-) -> Result<ValidatedPair> {
-    let marker: ProInstallMarker = serde_json::from_slice(&marker_bytes)
-        .context("invalid_response: parse installed Pro marker")?;
-    let manifest = marker.signed_manifest(public_key_pem)?;
-    let identity = PairIdentity::new(&artifact, &marker_bytes, &manifest);
-    if artifact.len() as u64 != manifest.artifact_size
-        || !identity
-            .artifact_sha256
-            .eq_ignore_ascii_case(&manifest.artifact_sha256)
-    {
-        bail!("invalid_response: installed Pro helper does not match its signed marker");
-    }
-    Ok(ValidatedPair {
-        identity,
-        artifact,
-        marker: marker_bytes,
-        manifest,
-    })
-}
-
-fn read_candidate(path: &Path, maximum: u64) -> Result<Option<Vec<u8>>> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => bail!("invalid_request: inspect Pro transaction file"),
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > maximum {
-        bail!("invalid_response: Pro transaction file is invalid");
-    }
-    fs::read(path)
-        .map(Some)
-        .context("invalid_request: read Pro transaction file")
 }
 
 #[cfg(test)]

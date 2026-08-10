@@ -7,7 +7,7 @@ struct BorrowedHostEnvelope<'a> {
     message: &'a HostMessage,
 }
 
-pub(crate) struct ProClient {
+pub struct ProClient {
     pub(super) stdin: Option<ChildStdin>,
     pub(super) stdout: ChildStdout,
     pub(super) child: Arc<Mutex<Child>>,
@@ -21,26 +21,33 @@ pub(crate) struct ProClient {
 }
 
 impl ProClient {
-    pub(super) fn connect(data_root: &Path, required: &BTreeSet<Capability>) -> Result<Self> {
-        Self::connect_with_authorization_mode(data_root, required, None, false)
-    }
-
-    pub(super) fn connect_for_status(
+    pub(crate) fn connect(
+        host: &(impl InstalledProHost + ?Sized),
         data_root: &Path,
         required: &BTreeSet<Capability>,
     ) -> Result<Self> {
-        Self::connect_with_authorization_mode(data_root, required, None, true)
+        Self::connect_with_authorization_mode(host, data_root, required, None, false)
+    }
+
+    pub(super) fn connect_for_status(
+        host: &(impl InstalledProHost + ?Sized),
+        data_root: &Path,
+        required: &BTreeSet<Capability>,
+    ) -> Result<Self> {
+        Self::connect_with_authorization_mode(host, data_root, required, None, true)
     }
 
     pub(super) fn connect_with_authorization_mode(
+        host: &(impl InstalledProHost + ?Sized),
         data_root: &Path,
         required: &BTreeSet<Capability>,
         authorization: Option<&dyn AuthorizationProvider>,
         bind_status_identity: bool,
     ) -> Result<Self> {
-        let executable = helper_executable(data_root)?;
+        let executable = helper_executable(host, data_root)?;
         let path = executable.path().to_path_buf();
         Self::connect_to_path_with_authorization_mode(
+            host,
             data_root,
             &path,
             Some(executable),
@@ -51,6 +58,7 @@ impl ProClient {
     }
 
     pub(super) fn connect_to_path_with_authorization_mode(
+        host: &(impl InstalledProHost + ?Sized),
         data_root: &Path,
         path: &Path,
         execution_guard: Option<VerifiedHelperExecutable>,
@@ -60,11 +68,12 @@ impl ProClient {
     ) -> Result<Self> {
         let protocol_fingerprint = execution_guard
             .as_ref()
-            .map(|executable| protocol_session(executable, data_root))
+            .map(|executable| protocol_session(host, executable, data_root))
             .transpose()?
             .unwrap_or_else(|| PROTOCOL_FINGERPRINT.to_owned());
         validate_protocol_session(required, &protocol_fingerprint)?;
         Self::connect_to_path_with_protocol_session(
+            host,
             data_root,
             path,
             execution_guard,
@@ -77,6 +86,7 @@ impl ProClient {
 
     #[allow(clippy::too_many_arguments)]
     fn connect_to_path_with_protocol_session(
+        host: &(impl InstalledProHost + ?Sized),
         data_root: &Path,
         path: &Path,
         execution_guard: Option<VerifiedHelperExecutable>,
@@ -85,10 +95,10 @@ impl ProClient {
         bind_status_identity: bool,
         protocol_fingerprint: String,
     ) -> Result<Self> {
-        #[cfg(ctx_pro_qualification)]
+        #[cfg(feature = "qualification")]
         let qualification_authorization =
             QualificationAuthorizationProvider::from_process_environment()?;
-        #[cfg(ctx_pro_qualification)]
+        #[cfg(feature = "qualification")]
         let authorization = authorization.or_else(|| {
             qualification_authorization
                 .as_ref()
@@ -109,7 +119,18 @@ impl ProClient {
             .as_ref()
             .map(|execution| execution.program())
             .unwrap_or(path);
-        let mut command = helper_command::new(program, data_root, git_executable.as_deref())?;
+        let installation_id = host
+            .existing_installation_id(data_root)
+            .context("key_store_unavailable: load local Pro installation identity")?
+            .ok_or_else(|| {
+                anyhow!("key_store_unavailable: local Pro installation identity is missing")
+            })?;
+        let mut command = helper_command::new(
+            program,
+            data_root,
+            &installation_id,
+            git_executable.as_deref(),
+        )?;
         command
             .arg("serve-stdio")
             .stdin(Stdio::piped())
@@ -172,7 +193,7 @@ impl ProClient {
             Capability::Query,
             Capability::GitRead,
         ]);
-        let mut hello_request = HelloRequest::current(env!("CARGO_PKG_VERSION"), offered.clone());
+        let mut hello_request = HelloRequest::current(host.host_version(), offered.clone());
         hello_request.protocol_fingerprint = protocol_fingerprint.clone();
         let response = client.exchange(HostMessage::Hello(hello_request), HANDSHAKE_TIMEOUT)?;
         let hello = match response {
@@ -202,21 +223,18 @@ impl ProClient {
                             "protocol_mismatch: helper returned an invalid authorization challenge"
                         )
                     })?;
-            let stored;
-            let entitlement_schedule;
-            let provider: &dyn AuthorizationProvider = if let Some(provider) = authorization {
-                entitlement_schedule = None;
-                provider
-            } else if bind_status_identity {
-                stored = StoredAuthorizationProvider::load_for_status(data_root)?;
-                entitlement_schedule = Some(stored.entitlement_schedule());
-                &stored
+            let (request, entitlement_schedule) = if let Some(provider) = authorization {
+                (provider.authorization_for_challenge(&challenge)?, None)
             } else {
-                stored = StoredAuthorizationProvider::load(data_root)?;
-                entitlement_schedule = Some(stored.entitlement_schedule());
-                &stored
+                let mode = if bind_status_identity {
+                    crate::AuthorizationMode::Status
+                } else {
+                    crate::AuthorizationMode::Normal
+                };
+                let authorization =
+                    host.authorization_for_challenge(data_root, &challenge, mode)?;
+                (authorization.request, authorization.entitlement_schedule)
             };
-            let request = provider.authorization_for_challenge(&challenge)?;
             match client.exchange(HostMessage::Authorize(request), HANDSHAKE_TIMEOUT)? {
                 HelperMessage::Authorized(result) => {
                     client.authorization_state = Some(result.state);
@@ -362,21 +380,23 @@ pub(super) fn validate_hello_identity(
     Ok(())
 }
 
-fn protocol_session(executable: &VerifiedHelperExecutable, data_root: &Path) -> Result<String> {
+fn protocol_session(
+    host: &(impl InstalledProHost + ?Sized),
+    executable: &VerifiedHelperExecutable,
+    data_root: &Path,
+) -> Result<String> {
     let layout = ctx_pro_host_protocol::ProFilesystemLayout::new(data_root);
     let fingerprint = if executable.path() == layout.helper_path() {
         let marker_bytes = executable.read_marker(
             &layout.helper_marker_path(),
-            crate::pro::lifecycle::lifecycle_manifest::MAX_INSTALL_MARKER_BYTES,
+            crate::lifecycle_manifest::MAX_INSTALL_MARKER_BYTES,
         )?;
-        let marker: crate::pro::lifecycle::lifecycle_manifest::ProInstallMarker =
+        let marker: crate::lifecycle_manifest::ProInstallMarker =
             serde_json::from_slice(&marker_bytes)
                 .context("invalid_response: parse installed Pro marker")?;
-        let trust = crate::pro::commercial_config::CommercialConfig::production()?.release_trust;
+        let trust = host.release_trust()?;
         let manifest = marker.signed_manifest(trust.public_key_pem)?;
-        crate::pro::lifecycle::lifecycle_manifest::validate_manifest_release_trust(
-            &manifest, trust,
-        )?;
+        crate::lifecycle_manifest::validate_manifest_release_trust(&manifest, trust)?;
         manifest.protocol_fingerprint
     } else {
         PROTOCOL_FINGERPRINT.to_owned()

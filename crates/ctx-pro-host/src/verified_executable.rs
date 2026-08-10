@@ -16,26 +16,26 @@ use ctx_history_core::platform_security::{
     verify_private_directory_handle, verify_private_file_handle,
 };
 use ctx_pro_host_protocol::ProFilesystemLayout;
-#[cfg(any(test, ctx_pro_test_helper))]
+#[cfg(any(test, feature = "test-support"))]
 use sha2::{Digest as _, Sha256};
 
-pub(super) struct PreparedHelperExecution {
+pub struct PreparedHelperExecution {
     program: PathBuf,
 }
 
 impl PreparedHelperExecution {
-    pub(super) fn program(&self) -> &Path {
+    pub fn program(&self) -> &Path {
         &self.program
     }
 
-    pub(super) fn configure_command(&self, command: &mut std::process::Command) {
+    pub fn configure_command(&self, command: &mut std::process::Command) {
         let _ = command;
     }
 }
 
 /// Holds the exact installed helper and its controlled directory chain for the
 /// complete helper process lifetime.
-pub(super) struct VerifiedHelperExecutable {
+pub struct VerifiedHelperExecutable {
     path: PathBuf,
     artifact_sha256: String,
     _installation_guard: Option<Box<dyn std::any::Any>>,
@@ -48,8 +48,8 @@ pub(super) struct VerifiedHelperExecutable {
 }
 
 impl VerifiedHelperExecutable {
-    #[cfg(any(test, ctx_pro_test_helper))]
-    pub(super) fn open_developer(path: &Path) -> Result<Self> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_developer(path: &Path) -> Result<Self> {
         let metadata = fs::symlink_metadata(path)
             .context("pro_not_installed: inspect developer Pro helper")?;
         if !metadata.is_file() || metadata.file_type().is_symlink() {
@@ -82,7 +82,7 @@ impl VerifiedHelperExecutable {
         })
     }
 
-    pub(super) fn open(
+    pub fn open(
         data_root: &Path,
         path: &Path,
         marker: &Path,
@@ -141,19 +141,19 @@ impl VerifiedHelperExecutable {
         }
     }
 
-    pub(super) fn retain_installation_guard(&mut self, guard: impl std::any::Any) {
+    pub fn retain_installation_guard(&mut self, guard: impl std::any::Any) {
         self._installation_guard = Some(Box::new(guard));
     }
 
-    pub(super) fn artifact_sha256(&self) -> &str {
+    pub fn artifact_sha256(&self) -> &str {
         &self.artifact_sha256
     }
 
-    pub(super) fn path(&self) -> &Path {
+    pub fn path(&self) -> &Path {
         &self.path
     }
 
-    pub(super) fn prepare_execution(&self) -> Result<PreparedHelperExecution> {
+    pub fn prepare_execution(&self) -> Result<PreparedHelperExecution> {
         self.verify_execution_identity()?;
         Ok(PreparedHelperExecution {
             program: self.path.clone(),
@@ -162,7 +162,7 @@ impl VerifiedHelperExecutable {
 
     /// Reopens the execution pathname immediately before spawn and confirms it
     /// still resolves to the exact retained installed handle.
-    pub(super) fn verify_execution_identity(&self) -> Result<()> {
+    pub fn verify_execution_identity(&self) -> Result<()> {
         #[cfg(windows)]
         {
             let named = open_file_handle(&self.path)?;
@@ -171,7 +171,7 @@ impl VerifiedHelperExecutable {
         Ok(())
     }
 
-    pub(super) fn read_helper(&self, maximum: u64) -> Result<Vec<u8>> {
+    pub fn read_helper(&self, maximum: u64) -> Result<Vec<u8>> {
         #[cfg(windows)]
         {
             read_bounded_handle(&self.helper, maximum, "installed Pro helper")
@@ -180,7 +180,7 @@ impl VerifiedHelperExecutable {
         read_bounded_path(&self.path, maximum, "installed Pro helper")
     }
 
-    pub(super) fn read_marker(&self, marker_path: &Path, maximum: u64) -> Result<Vec<u8>> {
+    pub fn read_marker(&self, marker_path: &Path, maximum: u64) -> Result<Vec<u8>> {
         #[cfg(windows)]
         {
             let _ = marker_path;

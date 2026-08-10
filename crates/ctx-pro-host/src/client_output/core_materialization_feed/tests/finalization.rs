@@ -8,7 +8,49 @@ use std::{
 };
 
 #[cfg(unix)]
-use crate::pro::authorization::AuthorizationProvider;
+use ctx_pro_access::authorization::AuthorizationProvider;
+
+#[cfg(unix)]
+struct ProcessTestHost;
+
+#[cfg(unix)]
+impl crate::InstalledProHost for ProcessTestHost {
+    fn host_version(&self) -> &str {
+        "1.0.0"
+    }
+
+    fn existing_installation_id(&self, _data_root: &Path) -> Result<Option<String>> {
+        Ok(Some("00000000-0000-4000-8000-000000000000".to_owned()))
+    }
+
+    fn validated_installed_helper(
+        &self,
+        _data_root: &Path,
+    ) -> Result<crate::VerifiedHelperExecutable> {
+        bail!("pro_not_installed: process test uses an explicit helper")
+    }
+
+    fn release_trust(&self) -> Result<crate::lifecycle_manifest::ReleaseTrust> {
+        crate::lifecycle_manifest::release_trust(crate::lifecycle_manifest::ReleaseChannel::Stable)
+    }
+
+    fn authorization_for_challenge(
+        &self,
+        _data_root: &Path,
+        _challenge: &[u8; ctx_pro_host_protocol::AUTHORIZATION_CHALLENGE_BYTES],
+        _mode: crate::AuthorizationMode,
+    ) -> Result<crate::AuthorizationReceipt> {
+        bail!("authentication_denied: process test supplies an explicit provider")
+    }
+
+    fn setup_repair_required(&self, _error: &anyhow::Error) -> bool {
+        false
+    }
+
+    fn unix_time(&self) -> Result<i64> {
+        Ok(0)
+    }
+}
 
 fn finish_for(index: &VerifiedIndex, revision: &str) -> FinishCoreMaterializationRequest {
     let sources = core_source_states(index.manifest()).unwrap();
@@ -105,6 +147,7 @@ fn continuation_completion_rejects_changed_finish_digest_and_revision() {
             &status,
             &mut consumer,
             CoreWorkerLaunchSelection::explicit_test(1),
+            || Ok(0),
         )
         .unwrap_err();
         assert!(
@@ -181,6 +224,7 @@ fn finish_yields_once_then_one_restart_session_chains_pending_to_completion() {
         &status,
         &mut consumer,
         CoreWorkerLaunchSelection::explicit_test(1),
+        || Ok(0),
     )
     .unwrap() else {
         panic!("one continuation session should reach the terminal receipt");
@@ -250,6 +294,7 @@ fn continuation_chains_only_validated_nonstale_ordered_matching_cursors() {
             &status,
             &mut consumer,
             CoreWorkerLaunchSelection::explicit_test(1),
+            || Ok(0),
         )
         .unwrap_err();
         assert!(
@@ -634,6 +679,7 @@ fn lost_continue_response_restarts_from_the_helpers_durable_cursor() {
         &status,
         &mut first_session,
         CoreWorkerLaunchSelection::explicit_test(1),
+        || Ok(0),
     )
     .unwrap_err();
     assert!(error.to_string().contains("response_lost"));
@@ -962,7 +1008,6 @@ fn process_backed_index(data_root: &Path, name: &str) -> VerifiedIndex {
 fn initialize_process_data_root(data_root: &Path) {
     fs::create_dir_all(data_root).unwrap();
     fs::set_permissions(data_root, fs::Permissions::from_mode(0o700)).unwrap();
-    crate::identity::installation_id(data_root).unwrap();
 }
 
 #[cfg(unix)]
@@ -973,6 +1018,7 @@ fn run_authenticated_process_burst(
 ) -> CoreMaterializationSyncProgress {
     let required = BTreeSet::from([Capability::Status, Capability::CoreMaterialization]);
     let client = ProClient::connect_to_path_with_authorization_mode(
+        &ProcessTestHost,
         data_root,
         helper_path,
         None,
@@ -1002,6 +1048,7 @@ fn run_authenticated_process_burst(
         &status,
         &mut consumer,
         CoreWorkerLaunchSelection::explicit_test(1),
+        || Ok(0),
     )
     .unwrap()
 }
@@ -1240,3 +1287,4 @@ fn protocol_dispatch_maps_both_typed_finalization_responses() {
         .contains("non-Core-finalization")
     );
 }
+// Finalization characterization.

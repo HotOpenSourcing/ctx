@@ -10,11 +10,11 @@ use ctx_pro_host_protocol::{
     StatusResult,
 };
 
-use crate::pro::verified_executable::VerifiedHelperExecutable;
+use crate::{InstalledProHost, VerifiedHelperExecutable};
 
 const MAX_GIT_EXECUTABLE_PATH_BYTES: usize = 4 * 1024;
 
-pub(super) fn error_code(error: &anyhow::Error) -> String {
+pub(crate) fn error_code(error: &anyhow::Error) -> String {
     error
         .to_string()
         .split(':')
@@ -23,7 +23,7 @@ pub(super) fn error_code(error: &anyhow::Error) -> String {
         .to_owned()
 }
 
-pub(super) fn current_blame_request(
+pub(crate) fn current_blame_request(
     target: BlameTarget,
     limit: u32,
     cursor: Option<String>,
@@ -69,47 +69,39 @@ pub(super) fn current_blame_request(
     })
 }
 
-pub(crate) fn default_helper_path(data_root: &Path) -> PathBuf {
+pub fn default_helper_path(data_root: &Path) -> PathBuf {
     ProFilesystemLayout::new(data_root).helper_path()
 }
 
-pub(super) fn helper_path(data_root: &Path) -> Result<PathBuf> {
-    #[cfg(ctx_pro_test_helper)]
-    if let Some(path) = crate::pro::test_control::helper_path()? {
-        return Ok(path);
-    }
-
-    #[cfg(any(test, ctx_pro_test_helper))]
-    if let Some(value) = env::var_os("CTX_PRO_HELPER") {
-        let path = PathBuf::from(value);
-        if !path.is_absolute() {
-            bail!("pro_not_installed: developer Pro helper must be an absolute path");
-        }
+pub(crate) fn helper_path(
+    host: &(impl InstalledProHost + ?Sized),
+    data_root: &Path,
+) -> Result<PathBuf> {
+    #[cfg(any(test, feature = "test-support"))]
+    if let Some(path) = host.helper_override()? {
         return regular_helper_path(path);
     }
 
-    crate::pro::lifecycle::validated_installed_helper_path(data_root)
+    host.validated_installed_helper(data_root)
+        .map(|helper| helper.path().to_path_buf())
 }
 
-pub(super) fn helper_executable(data_root: &Path) -> Result<VerifiedHelperExecutable> {
-    #[cfg(ctx_pro_test_helper)]
-    if let Some(path) = crate::pro::test_control::helper_path()? {
-        return VerifiedHelperExecutable::open_developer(&path);
-    }
-
-    #[cfg(any(test, ctx_pro_test_helper))]
-    if let Some(value) = env::var_os("CTX_PRO_HELPER") {
-        let path = PathBuf::from(value);
+pub(crate) fn helper_executable(
+    host: &(impl InstalledProHost + ?Sized),
+    data_root: &Path,
+) -> Result<VerifiedHelperExecutable> {
+    #[cfg(any(test, feature = "test-support"))]
+    if let Some(path) = host.helper_override()? {
         if !path.is_absolute() {
             bail!("pro_not_installed: developer Pro helper must be an absolute path");
         }
         return VerifiedHelperExecutable::open_developer(&path);
     }
 
-    crate::pro::lifecycle::validated_installed_helper(data_root)
+    host.validated_installed_helper(data_root)
 }
 
-pub(crate) fn git_executable() -> Result<PathBuf> {
+pub fn git_executable() -> Result<PathBuf> {
     let search_path = env::var_os("PATH")
         .ok_or_else(|| anyhow!("repository_unavailable: Git is not available on PATH"))?;
     let current_directory = env::current_dir().context("repository_unavailable: resolve cwd")?;
@@ -156,8 +148,11 @@ fn git_executable_names() -> &'static [&'static str] {
     &["git"]
 }
 
-#[cfg(any(test, ctx_pro_test_helper))]
+#[cfg(any(test, feature = "test-support"))]
 fn regular_helper_path(path: PathBuf) -> Result<PathBuf> {
+    if !path.is_absolute() {
+        bail!("pro_not_installed: developer Pro helper must be an absolute path");
+    }
     let metadata = fs::symlink_metadata(&path)
         .with_context(|| format!("pro_not_installed: no Pro helper at {}", path.display()))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {

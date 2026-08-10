@@ -241,3 +241,4 @@ fn partial_restart_redecodes_the_changed_logical_source_for_jsonl_and_sqlite() {
         );
     }
 }
+// Replay proportionality characterization.

@@ -1,44 +1,49 @@
 use super::*;
 
-pub(crate) fn blame(
+pub fn blame<H: CoreGenerationHost + ?Sized>(
+    host: &H,
     data_root: &Path,
     target: &BlameTarget,
     limit: u32,
     cursor: Option<String>,
+    expected_active_generation: Option<String>,
 ) -> Result<HostedBlameResult> {
-    blame_with_policy(
+    blame_with_generation(
+        host,
         data_root,
         target,
         limit,
         cursor,
-        DEFAULT_BLAME_FRESHNESS_POLICY,
+        expected_active_generation,
     )
     .map_err(|error| errors::blame_boundary_error(error, target))
 }
 
-pub(super) fn blame_with_policy(
+pub(super) fn blame_with_generation<H: CoreGenerationHost + ?Sized>(
+    host: &H,
     data_root: &Path,
     target: &BlameTarget,
     limit: u32,
     cursor: Option<String>,
-    policy: BlameFreshnessPolicy,
+    expected_active_generation: Option<String>,
 ) -> Result<HostedBlameResult> {
-    let expected_active_generation = prepare_blame_freshness(data_root, policy)?;
     let active_before = expected_active_generation.clone().map_or_else(
         || {
-            crate::semantic::pin_active_verified_generation(data_root)
+            host.pin_active_core_generation(data_root)
                 .map(|pin| pin.generation_id().to_owned())
         },
         Ok,
     )?;
     let attempt = blame_once(
+        host,
         data_root,
         target,
         limit,
         cursor,
         expected_active_generation.as_deref(),
     )?;
-    let active_after = crate::semantic::pin_active_verified_generation(data_root)?
+    let active_after = host
+        .pin_active_core_generation(data_root)?
         .generation_id()
         .to_owned();
     if let Some(expected_generation) = expected_active_generation {
@@ -113,6 +118,7 @@ struct BlameAttempt {
 }
 
 fn blame_once(
+    host: &(impl InstalledProHost + ?Sized),
     data_root: &Path,
     target: &BlameTarget,
     limit: u32,
@@ -120,7 +126,7 @@ fn blame_once(
     expected_active_core_generation_id: Option<&str>,
 ) -> Result<BlameAttempt> {
     let capabilities = required_blame_capabilities(target);
-    let mut client = ProClient::connect(data_root, &capabilities)?;
+    let mut client = ProClient::connect(host, data_root, &capabilities)?;
     let status = helper_status(&mut client)?;
     let expected_core_generation_id =
         blame_core_generation(&status, expected_active_core_generation_id)?;
@@ -156,9 +162,9 @@ fn blame_once(
 }
 
 pub(super) fn is_generation_bound_negative(error: &anyhow::Error) -> bool {
-    use crate::pro::diagnostic::BlameDiagnosticReason;
+    use crate::diagnostic::BlameDiagnosticReason;
 
-    crate::pro::blame_diagnostic(error).is_some_and(|diagnostic| {
+    blame_diagnostic(error).is_some_and(|diagnostic| {
         matches!(
             diagnostic.reason,
             BlameDiagnosticReason::TargetNotIndexed
@@ -178,7 +184,7 @@ pub(super) fn is_generation_bound_negative(error: &anyhow::Error) -> bool {
 
 pub(super) fn stale_negative_diagnostic() -> anyhow::Error {
     anyhow::Error::new(
-        crate::pro::diagnostic::BlameDiagnostic::for_stable_error_code("stale_source")
+        crate::diagnostic::BlameDiagnostic::for_stable_error_code("stale_source")
             .expect("stale_source is a stable Pro blame diagnostic")
             .with_stale_committed(),
     )
