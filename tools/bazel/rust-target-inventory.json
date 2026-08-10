@@ -70,6 +70,15 @@
       "native_unit": "//crates/ctx-daemon-runtime:unit_tests",
       "feature_variants": ["//crates/ctx-daemon-runtime:qualification_lib"]
     },
+    "ctx-daemon-service": {
+      "manifest": "crates/ctx-daemon-service/Cargo.toml",
+      "targets": {"lib:ctx_daemon_service": "//crates/ctx-daemon-service:lib"},
+      "native_unit": "//crates/ctx-daemon-service:unit_tests",
+      "feature_variants": [
+        "//crates/ctx-daemon-service:qualification_lib",
+        "//crates/ctx-daemon-service:test_support_lib"
+      ]
+    },
     "ctx-history-capture": {
       "manifest": "crates/ctx-history-capture/Cargo.toml",
       "targets": {
