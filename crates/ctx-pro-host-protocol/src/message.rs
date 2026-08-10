@@ -479,7 +479,7 @@ impl ProStorageEvidence {
         // EventIndex read compatibility between those storage generations.
         if self.graph_manifest_schema != 3
             || self.flat_format_version != 2
-            || !matches!(self.materializer_checkpoint_version, 4 | 5 | 6)
+            || !matches!(self.materializer_checkpoint_version, 4..=6)
             || self.journal_pack_format_version != 3
             || self.legacy_journals_written != 0
         {
