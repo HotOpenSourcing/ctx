@@ -380,7 +380,7 @@ impl LocalToolBackend {
             Err(error) => Err(ToolExecutionError {
                 error,
                 usage: ToolUsageFacts::default(),
-                product_observation: Some(product_observation),
+                product_observation: Some(Box::new(product_observation)),
             }),
         }
     }
