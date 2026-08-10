@@ -243,24 +243,12 @@ fn render_search_text(value: &Value) -> String {
 }
 
 fn push_search_copied_lineage(out: &mut String, result: &Value) {
-    let Some(lineage) = result
-        .get("copied_lineage")
-        .filter(|value| value.is_object())
+    let Some((lineage, observed, resolution, selected_depth)) =
+        crate::commands::source_index::copied_lineage_summary(result)
     else {
         return;
     };
-    let observed = lineage
-        .get("observed_count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let resolution = lineage
-        .pointer("/resolution/state")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    let selected_depth = lineage
-        .get("selected_depth")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
+    let resolution = resolution.unwrap_or("unknown");
     if resolution != "resolved" || selected_depth != 0 {
         out.push_str(&format!(
             "   lineage_resolution: {resolution}, selected_depth={selected_depth}\n"
@@ -623,24 +611,12 @@ fn render_event_window_text(value: &Value) -> String {
 }
 
 fn push_event_copied_lineage(out: &mut String, value: &Value) {
-    let Some(lineage) = value
-        .get("copied_lineage")
-        .filter(|value| value.is_object())
+    let Some((lineage, observed, resolution, selected_depth)) =
+        crate::commands::source_index::copied_lineage_summary(value)
     else {
         return;
     };
-    let observed = lineage
-        .get("observed_count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let resolution = lineage
-        .pointer("/resolution/state")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    let selected_depth = lineage
-        .get("selected_depth")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
+    let resolution = resolution.unwrap_or("unknown");
     if observed == 0 && resolution == "resolved" && selected_depth == 0 {
         return;
     }
