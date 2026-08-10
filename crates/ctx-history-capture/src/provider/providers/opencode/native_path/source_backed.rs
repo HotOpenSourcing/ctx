@@ -856,7 +856,9 @@ fn open_root_authorized_snapshot_retained_with_hook_and_progress(
     let sqlite_authority =
         retain_sqlite_source_directory_authority(data_root, &parent_handle, parent)?;
     let sqlite_snapshot = sqlite_authority
-        .open_logical_online_backup_snapshot_with_progress(database_leaf, report_progress)
+        .open_logical_online_backup_snapshot_with_progress(database_leaf, |progress| {
+            report_progress(progress.into())
+        })
         .map_err(|error| match error {
             SqliteSourceProgressError::Source(error) => OpenCodeSourceBackedError::from(error),
             SqliteSourceProgressError::Progress(error) => OpenCodeSourceBackedError::from(error),

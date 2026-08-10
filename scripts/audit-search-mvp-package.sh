@@ -108,6 +108,7 @@ if grep_files 'work-[r]ecord-(publish|report|vcs)[[:space:]]*=' \
   crates/ctx-upgrade-engine/Cargo.toml \
   crates/ctx-history-capture/Cargo.toml \
   crates/ctx-history-capture-model/Cargo.toml \
+  crates/ctx-history-source-io/Cargo.toml \
   crates/ctx-history-core/Cargo.toml \
   crates/ctx-history-index-format/Cargo.toml \
   crates/ctx-history-index-generation/Cargo.toml \

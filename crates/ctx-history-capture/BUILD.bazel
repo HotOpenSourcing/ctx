@@ -64,6 +64,17 @@ CTX_HISTORY_CAPTURE_DEPS = [
     "//crates/ctx-history-index:lib",
     "//crates/ctx-history-jsonl:lib",
     "//crates/ctx-history-repository-evidence:lib",
+    "//crates/ctx-history-source-io:lib",
+    "//crates/ctx-pro-host-protocol:lib",
+]
+
+CTX_HISTORY_CAPTURE_TEST_DEPS = [
+    "//crates/ctx-history-capture-model:lib",
+    "//crates/ctx-history-core:lib",
+    "//crates/ctx-history-index:lib",
+    "//crates/ctx-history-jsonl:lib",
+    "//crates/ctx-history-repository-evidence:lib",
+    "//crates/ctx-history-source-io:test_support_lib",
     "//crates/ctx-pro-host-protocol:lib",
 ]
 
@@ -122,7 +133,7 @@ ctx_rust_test(
     deps = all_crate_deps(
         normal = True,
         normal_dev = True,
-    ) + CTX_HISTORY_CAPTURE_DEPS,
+    ) + CTX_HISTORY_CAPTURE_TEST_DEPS,
     proc_macro_deps = all_crate_deps(
         proc_macro = True,
         proc_macro_dev = True,
@@ -241,10 +252,12 @@ sh_test(
     srcs = ["tests/run-active-source-family-contracts.sh"],
     args = [
         "$(rootpath :unit_tests)",
+        "$(rootpath //crates/ctx-history-source-io:unit_tests)",
         "$(rootpath tests/active-source-family-contract-tests.txt)",
     ],
     data = [
         ":unit_tests",
+        "//crates/ctx-history-source-io:unit_tests",
         "tests/active-source-family-contract-tests.txt",
     ],
     size = "small",
