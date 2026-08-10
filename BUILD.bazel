@@ -1003,13 +1003,7 @@ sh_test(
     data = [
         "BUILD.bazel",
         "scripts/bazelw",
-        "//crates/ctx-cli:BUILD.bazel",
-        "//crates/ctx-cli:cargo_package_data",
-        "//crates/ctx-daemon-runtime:BUILD.bazel",
-        "//crates/ctx-daemon-runtime:cargo_package_data",
-        "//crates/ctx-history-core:BUILD.bazel",
-        "//crates/ctx-history-core:cargo_package_data",
-    ],
+    ] + CARGO_WORKSPACE_PACKAGE_DATA + LOC_CHECK_SOURCE_DATA,
     tags = [
         "build-graph",
         "no-cache",
