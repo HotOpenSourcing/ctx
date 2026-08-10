@@ -5,10 +5,10 @@ use ctx_history_core::default_data_root;
 
 use crate::{
     analytics::{
-        self, count_bucket, ClientOperationDraft, DocsTelemetry, DoctorTelemetry, ImportTelemetry,
-        IndexTelemetry, IntegrationTelemetry, LocateTelemetry, ProgressMode, RenderFormat,
-        SearchTelemetry, SetupTelemetry, ShowTelemetry, SourcesTelemetry, StatusTelemetry,
-        TargetKind, TranscriptModeKind, UpgradeMode, UpgradeOperation, UpgradeTelemetry,
+        self, count_bucket, ClientOperationDraft, DocsTelemetry, DoctorTelemetry, IndexTelemetry,
+        IntegrationTelemetry, LocateTelemetry, RenderFormat, SearchTelemetry, SetupTelemetry,
+        ShowTelemetry, SourcesTelemetry, StatusTelemetry, TargetKind, UpgradeMode,
+        UpgradeOperation, UpgradeTelemetry,
     },
     cli::{CommandRoot, DaemonCommand, DaemonTriggerCommandArg, ImportArgs, ShowArgs, ShowTarget},
     commands::{
@@ -728,7 +728,7 @@ pub(crate) fn command_operation_descriptor(command: &CommandRoot) -> OperationDe
             catalog_only: args.catalog_only,
             no_daemon: args.no_daemon,
             wait: args.wait,
-            progress_mode: ProgressMode::from_arg(args.progress),
+            progress_mode: crate::observability_product::progress_mode(args.progress),
             mode: None,
             providers_detected: None,
             cataloged_sessions: None,
@@ -738,7 +738,10 @@ pub(crate) fn command_operation_descriptor(command: &CommandRoot) -> OperationDe
             catalog_source_bytes: None,
             inventory_source_bytes: None,
             has_indexed_content: None,
-            import: ImportTelemetry::for_setup(args.progress, args.no_daemon),
+            import: crate::observability_product::setup_import_telemetry(
+                args.progress,
+                args.no_daemon,
+            ),
         }),
         CommandRoot::Status(_) => CliOperation::Status(StatusTelemetry::default()),
         CommandRoot::Stats(_) => CliOperation::Stats,
@@ -751,12 +754,14 @@ pub(crate) fn command_operation_descriptor(command: &CommandRoot) -> OperationDe
             providers_existing: None,
             providers_importable: None,
         }),
-        CommandRoot::Import(args) => CliOperation::Import(ImportTelemetry::from_args(args)),
+        CommandRoot::Import(args) => {
+            CliOperation::Import(crate::observability_product::import_telemetry(args))
+        }
         CommandRoot::Show(args) => match &args.target {
             ShowTarget::Session(args) => CliOperation::ShowSession(ShowTelemetry {
                 target_kind: TargetKind::Session,
-                transcript_mode: Some(TranscriptModeKind::from_mode(args.mode)),
-                output_format: RenderFormat::from_output_format(args.format),
+                transcript_mode: Some(crate::observability_product::transcript_mode(args.mode)),
+                output_format: crate::observability_product::render_format(args.format),
                 writes_out_file: args.out.is_some(),
                 provider_lookup: args.provider.is_some() || args.provider_session.is_some(),
                 window: None,
@@ -765,7 +770,7 @@ pub(crate) fn command_operation_descriptor(command: &CommandRoot) -> OperationDe
             ShowTarget::Event(args) => CliOperation::ShowEvent(ShowTelemetry {
                 target_kind: TargetKind::Event,
                 transcript_mode: None,
-                output_format: RenderFormat::from_output_format(args.format),
+                output_format: crate::observability_product::render_format(args.format),
                 writes_out_file: false,
                 provider_lookup: false,
                 window: Some(count_bucket(
@@ -791,12 +796,12 @@ pub(crate) fn command_operation_descriptor(command: &CommandRoot) -> OperationDe
         CommandRoot::Locate(args) => match &args.target {
             crate::LocateTarget::Session(args) => CliOperation::Locate(LocateTelemetry {
                 target_kind: TargetKind::Session,
-                output_format: RenderFormat::from_json_output_format(args.format),
+                output_format: crate::observability_product::json_render_format(args.format),
                 provider_lookup: args.provider.is_some() || args.provider_session.is_some(),
             }),
             crate::LocateTarget::Event(args) => CliOperation::Locate(LocateTelemetry {
                 target_kind: TargetKind::Event,
-                output_format: RenderFormat::from_json_output_format(args.format),
+                output_format: crate::observability_product::json_render_format(args.format),
                 provider_lookup: false,
             }),
         },
@@ -915,6 +920,7 @@ mod tests {
 
     use super::*;
     use crate::cli::Cli;
+    use crate::operation_descriptor::LocalUsageOperation;
     use crate::ui::{ColorMode, RenderContext, StreamKind, TestContext};
 
     fn daemon_autostart_trigger(args: &[&str]) -> Option<DaemonTriggerCommandArg> {
@@ -945,7 +951,7 @@ mod tests {
     }
 
     #[test]
-    fn stats_is_excluded_from_local_and_remote_analytics() {
+    fn stats_is_excluded_from_remote_analytics() {
         for args in [
             &["stats"][..],
             &["stats", "--detail"][..],
@@ -961,7 +967,44 @@ mod tests {
                 .is_none(),
                 "{args:?}"
             );
+        }
+    }
+
+    #[test]
+    fn show_commands_are_typed_and_status_and_stats_are_excluded_from_local_usage() {
+        for (args, expected) in [
+            (&["show", "session", "abc"][..], "show_session"),
+            (&["show", "event", "abc"][..], "show_event"),
+            (&["list", "events"][..], "show_event"),
+        ] {
+            let cli = Cli::try_parse_from(std::iter::once("ctx").chain(args.iter().copied()))
+                .unwrap_or_else(|error| panic!("failed to parse {args:?}: {error}"));
             let descriptor = command_operation_descriptor(&cli.command);
+            let local_operation = match &descriptor {
+                OperationDescriptor::Cli(operation) => operation.local_usage_operation(),
+                _ => None,
+            };
+            assert_eq!(
+                local_operation.map(LocalUsageOperation::as_str),
+                Some(expected)
+            );
+            assert!(
+                local_usage::CliUsage::from_descriptor(&descriptor)
+                    .completed(true, std::time::Duration::ZERO)
+                    .is_some(),
+                "{args:?}"
+            );
+        }
+
+        for args in [&["status"][..], &["stats"][..]] {
+            let cli = Cli::try_parse_from(std::iter::once("ctx").chain(args.iter().copied()))
+                .unwrap_or_else(|error| panic!("failed to parse {args:?}: {error}"));
+            let descriptor = command_operation_descriptor(&cli.command);
+            let local_operation = match &descriptor {
+                OperationDescriptor::Cli(operation) => operation.local_usage_operation(),
+                _ => None,
+            };
+            assert!(local_operation.is_none(), "{args:?}");
             assert!(
                 local_usage::CliUsage::from_descriptor(&descriptor)
                     .completed(true, std::time::Duration::ZERO)

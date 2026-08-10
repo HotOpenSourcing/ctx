@@ -53,6 +53,12 @@
       },
       "native_unit": "//crates/ctx-cli:unit_tests"
     },
+    "ctx-client-observability": {
+      "manifest": "crates/ctx-client-observability/Cargo.toml",
+      "targets": {"lib:ctx_client_observability": "//crates/ctx-client-observability:lib"},
+      "native_unit": "//crates/ctx-client-observability:unit_tests",
+      "feature_variants": ["//crates/ctx-client-observability:test_support_lib"]
+    },
     "ctx-daemon-runtime": {
       "manifest": "crates/ctx-daemon-runtime/Cargo.toml",
       "targets": {"lib:ctx_daemon_runtime": "//crates/ctx-daemon-runtime:lib"},

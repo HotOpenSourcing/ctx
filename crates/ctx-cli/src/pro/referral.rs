@@ -1229,12 +1229,16 @@ mod tests {
         ] {
             let cli =
                 Cli::try_parse_from(std::iter::once("ctx").chain(args.iter().copied())).unwrap();
-            assert!(
-                crate::analytics::ClientOperationDraft::from_command(&cli.command, false).is_none()
-            );
-            assert!(crate::local_usage::CliUsage::from_command(&cli.command)
-                .completed(true, std::time::Duration::ZERO)
-                .is_none());
+            assert!(crate::analytics::ClientOperationDraft::from_descriptor(
+                crate::dispatch::command_operation_descriptor(&cli.command),
+                false
+            )
+            .is_none());
+            assert!(crate::local_usage::CliUsage::from_descriptor(
+                &crate::dispatch::command_operation_descriptor(&cli.command)
+            )
+            .completed(true, std::time::Duration::ZERO)
+            .is_none());
         }
     }
 

@@ -1,6 +1,7 @@
 """Canonical public format and ci/nightly test inventories."""
 
 RUST_FORMAT_TARGETS = [
+    "//crates/ctx-client-observability:unit_tests",
     "//crates/ctx-cli:analytics_identity_tests",
     "//crates/ctx-cli:analytics_tests",
     "//crates/ctx-cli:analytics_policy_tests",
@@ -90,6 +91,7 @@ _CI_PROVIDER_TESTS = [
 
 _CI_RUST_TESTS = [
     ":native_ctx_binary_smoke",
+    "//crates/ctx-client-observability:unit_tests",
     "//crates/ctx-cli:analytics_identity_tests",
     "//crates/ctx-cli:analytics_tests",
     "//crates/ctx-cli:analytics_policy_tests",
@@ -155,6 +157,7 @@ CI_TESTS = [
     ":cli_build_cfg_parity_check",
     ":cli_ux_capture_cleanup_tests",
     ":cli_ux_observer_tests",
+    ":client_observability_dependency_boundary_check",
     ":daemon_runtime_dependency_boundary_check",
     ":dependency_advisory_gate_tests",
     ":detached_debug_symbols_tests",
