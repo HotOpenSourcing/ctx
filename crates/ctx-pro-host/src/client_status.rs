@@ -12,6 +12,8 @@ use ctx_pro_host_protocol::{
 };
 use serde::Serialize;
 
+use crate::{CoreGenerationHost, CoreGenerationPin as _, InstalledProHost};
+
 use super::{
     default_helper_path, helper_status, protocol_error, support, AuthorizationProvider, ProClient,
     VerifiedHelperExecutable, HANDSHAKE_TIMEOUT,

@@ -4,6 +4,7 @@ use anyhow::Result;
 use ctx_pro_host_protocol::{CoreMaterializationFinalizationPending, CoreMaterializationReceipt};
 
 use super::{protocol_error, ProClient, BATCH_TIMEOUT};
+use crate::InstalledProHost;
 
 pub enum CoreMaterializationSyncOutcome {
     Finished {
@@ -18,7 +19,7 @@ pub enum CoreMaterializationSyncOutcome {
 
 /// Synchronizes Pro from one already-published, generation-pinned Core feed.
 pub fn sync_core_materialization(
-    host: &(impl crate::InstalledProHost + ?Sized),
+    host: &(impl InstalledProHost + ?Sized),
     data_root: &Path,
     index: &ctx_history_index::VerifiedIndex,
 ) -> Result<CoreMaterializationSyncOutcome> {

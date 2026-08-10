@@ -1,4 +1,5 @@
 use super::*;
+use crate::CoreGenerationPin as _;
 
 pub fn blame<H: CoreGenerationHost + ?Sized>(
     host: &H,

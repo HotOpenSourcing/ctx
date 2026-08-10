@@ -368,10 +368,8 @@ mod release_tests {
     }
 
     fn release_version_contract() -> ReleaseVersionContract {
-        serde_json::from_str(include_str!(
-            "../../../../contracts/release-version-v1.json"
-        ))
-        .expect("release-version contract must be valid JSON")
+        serde_json::from_str(include_str!("../../../contracts/release-version-v1.json"))
+            .expect("release-version contract must be valid JSON")
     }
 
     #[test]

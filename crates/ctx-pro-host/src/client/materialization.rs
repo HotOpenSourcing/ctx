@@ -6,9 +6,6 @@ pub enum BlameFreshnessPolicy {
     WaitForCurrent,
 }
 
-pub(super) const DEFAULT_BLAME_FRESHNESS_POLICY: BlameFreshnessPolicy =
-    BlameFreshnessPolicy::LatestCommitted;
-
 pub fn prepare_blame_freshness_with(
     policy: BlameFreshnessPolicy,
     wake_daemon: impl FnOnce() -> Result<()>,

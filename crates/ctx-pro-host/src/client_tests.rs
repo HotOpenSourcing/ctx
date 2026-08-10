@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
+use crate::{AuthorizationMode, AuthorizationReceipt, CoreGenerationPin};
 use ctx_pro_host_protocol::{
     BlameAttribution, BlameCoverage, BlameCoverageUnit, BlameOutcome, BlameResult,
     CoreMaterializationFinalizationPhase, CoreMaterializationFinalizationProgress,

@@ -7,9 +7,6 @@
 //! transport, protocol operations, and the generation-pinned Core feed.
 
 mod client;
-mod client_output;
-mod client_status;
-mod client_support;
 mod core_worker_budget;
 pub mod diagnostic;
 pub mod evidence_preview;
@@ -25,16 +22,14 @@ pub use client::{
     blame, blame_boundary_error, blame_diagnostic, core_finalization_generation_lease,
     finish_materialization, invalid_blame_request, preflight_core_materialization,
     prepare_blame_freshness_with, reconstruct_core_finalization_generation_lease,
-    release_core_finalization_generation_lease, selected_helper_artifact_sha256, stable_error_code,
-    start_materialization, sync_core_materialization, typed_blame_diagnostic,
-    validate_core_finalization_generation_lease, BlameFreshnessPolicy, BlameResultFreshness,
-    CoreMaterializationSyncOutcome, HostedBlameResult, MaterializationFinalizationReceipt,
-    MaterializationStartReceipt, ProClient, RESOURCE_NOT_FOUND_DIAGNOSTIC,
+    release_core_finalization_generation_lease, selected_helper_artifact_sha256,
+    smoke_helper_at_path, stable_error_code, start_materialization, status, status_for_core,
+    sync_core_materialization, typed_blame_diagnostic, validate_core_finalization_generation_lease,
+    BlameFreshnessPolicy, BlameResultFreshness, CoreMaterializationSyncOutcome, HelperSmoke,
+    HostedBlameResult, MaterializationFinalizationReceipt, MaterializationStartReceipt, ProClient,
+    ProSetupRepairability, ProStatus, RESOURCE_NOT_FOUND_DIAGNOSTIC,
 };
-pub use client_status::{
-    smoke_helper_at_path, status, status_for_core, HelperSmoke, ProSetupRepairability, ProStatus,
-};
-pub use client_support::{default_helper_path, git_executable};
+pub use client::{default_helper_path, git_executable};
 pub use host_port::{
     AuthorizationMode, AuthorizationReceipt, CoreGenerationHost, CoreGenerationPin,
     InstalledProHost,
@@ -42,4 +37,4 @@ pub use host_port::{
 pub use verified_executable::{PreparedHelperExecution, VerifiedHelperExecutable};
 
 #[cfg(any(test, feature = "test-support"))]
-pub use client_status::status_with_helper_resolver;
+pub use client::status_with_helper_resolver;
