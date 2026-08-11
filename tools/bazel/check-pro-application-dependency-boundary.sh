@@ -200,4 +200,11 @@ if grep -REn --include='*.rs' \
   exit 1
 fi
 
+if grep -REn --include='*.rs' \
+  'enum ReferralAuthMode|fn (prepare_referral_identity|is_country_required_error|payout_country_required_error|valid_referral_codename)\b|result\.validate_at\(' \
+  "${cli_pro}"; then
+  echo 'superseded referral admission, retry, codename, or result-validation authority remains in ctx-cli' >&2
+  exit 1
+fi
+
 printf 'ctx-pro-application dependency, locality, and single-authority boundary ok\n'
