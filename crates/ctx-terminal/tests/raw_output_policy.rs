@@ -307,6 +307,14 @@ fn lex(source: &str) -> Vec<Token> {
                 }
             }
             _ => {
+                if let Some((identifier_start, end)) = raw_identifier_bounds(source, index) {
+                    tokens.push(Token {
+                        text: source[identifier_start..end].to_owned(),
+                        line,
+                    });
+                    index = end;
+                    continue;
+                }
                 if let Some(end) = literal_end(source, index) {
                     let token_line = line;
                     let text = source[index..end].to_owned();
@@ -340,6 +348,25 @@ fn lex(source: &str) -> Vec<Token> {
         }
     }
     tokens
+}
+
+fn raw_identifier_bounds(source: &str, start: usize) -> Option<(usize, usize)> {
+    let bytes = source.as_bytes();
+    let identifier_start = start + 2;
+    if bytes.get(start) != Some(&b'r')
+        || bytes.get(start + 1) != Some(&b'#')
+        || !bytes
+            .get(identifier_start)
+            .copied()
+            .is_some_and(is_ident_start)
+    {
+        return None;
+    }
+    let mut end = identifier_start + 1;
+    while end < bytes.len() && is_ident_continue(bytes[end]) {
+        end += 1;
+    }
+    Some((identifier_start, end))
 }
 
 fn literal_end(source: &str, start: usize) -> Option<usize> {
@@ -926,7 +953,8 @@ fn primitive_at(
     document_catalog: &DocumentCatalog,
 ) -> Option<Primitive> {
     let text = tokens[index].text.as_str();
-    if origins.aliases.is_standard_print_macro_import(index)
+    if origins.aliases.is_standard_module_alias_declaration(index)
+        || origins.aliases.is_standard_print_macro_import(index)
         || origins.aliases.is_standard_print_macro_call(tokens, index)
     {
         return Some(Primitive::PrintMacro);
@@ -1453,7 +1481,7 @@ fn assert_terminal_print_macros_are_absent(sites: &[Site]) {
         .collect::<String>();
     assert!(
         bypasses.is_empty(),
-        "ctx-terminal production print macros bypass OutputMeasurement; use the explicit measured output API:\n{bypasses}"
+        "ctx-terminal production print macros bypass OutputMeasurement; standard-module aliases and re-exports are rejected at declaration; use the explicit measured output API:\n{bypasses}"
     );
 }
 
