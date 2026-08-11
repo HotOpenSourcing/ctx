@@ -34,8 +34,8 @@ use crate::{
             JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf,
             JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyTerminalProof,
             JsonlFamilyWorkerContext, JsonlPendingExchangeLookup, JsonlPendingExchangeRemember,
-            JsonlPendingExchangeState, JsonlReader, JsonlRecordRef, JsonlSourceIdentity,
-            JsonlTerminalAuthority, JsonlTerminalObservationRegion,
+            JsonlPendingExchangeState, JsonlReader, JsonlRecordRef, JsonlTerminalAuthority,
+            JsonlTerminalObservationRegion,
         },
     },
     provider_sources::{provider_source_for_path, ProviderSourceStatus},
@@ -81,7 +81,6 @@ struct Binding {
     native_session_id: String,
     index: Value,
     native_session_family: OpenClawNativeSessionFamily,
-    terminal_ambiguity_fingerprint: [u8; 32],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,7 +112,7 @@ impl JsonlFamilyAdapter for OpenClawJsonlAdapter {
     }
 
     fn append_mode(&self) -> JsonlFamilyAppendMode {
-        JsonlFamilyAppendMode::CertifiedSuffix
+        JsonlFamilyAppendMode::ProjectorPreflight(true)
     }
 
     fn discover(&self, root: &Path) -> Result<JsonlFamilyInventory> {
@@ -170,7 +169,6 @@ impl JsonlFamilyAdapter for OpenClawJsonlAdapter {
                 &path,
                 &index_relative_path,
                 Arc::clone(&transcript),
-                &source,
             )?;
             transcript.revalidate()?;
             if exact_dependency_paths.insert(index_relative_path.clone()) {
@@ -188,9 +186,6 @@ impl JsonlFamilyAdapter for OpenClawJsonlAdapter {
                 native_session_id,
                 index: compound.index,
                 native_session_family: compound.native_session_family,
-                terminal_ambiguity_fingerprint: compound
-                    .terminal_authority
-                    .ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
             };
             leaves.push(JsonlFamilyLeaf::observe(
                 source,
@@ -237,14 +232,9 @@ impl JsonlFamilyAdapter for OpenClawJsonlAdapter {
             leaf.source_path(),
             &binding.index_relative_path,
             Arc::clone(&source_file),
-            leaf.source(),
         )?;
         if compound.index != binding.index
             || compound.native_session_family != binding.native_session_family
-            || compound
-                .terminal_authority
-                .ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
-                != binding.terminal_ambiguity_fingerprint
         {
             return Err(CaptureError::SourceChangedDuringCapture);
         }
@@ -257,6 +247,7 @@ impl JsonlFamilyAdapter for OpenClawJsonlAdapter {
             imported_at,
             session_id,
         )?;
+        let replacement_session = session.checkpoint();
         let restored = checkpoint
             .map(|checkpoint| decode_projector_checkpoint(checkpoint, &binding))
             .transpose()?;
@@ -276,11 +267,12 @@ impl JsonlFamilyAdapter for OpenClawJsonlAdapter {
             native_session_id: binding.native_session_id,
             session_id,
             session,
+            replacement_session,
             index_file: compound.index_file,
             authority: Arc::clone(leaf.authority()),
             pending_calls,
             running_processes,
-            terminal_authority: compound.terminal_authority,
+            terminal_authority: OpenClawTerminalAuthority::default(),
             linkage_capacity_exceeded,
             fallback_identities: match (mode, base_event_lookup) {
                 (JsonlFamilyProjectionMode::CertifiedAppend, Some(base_lookup)) => {
@@ -297,6 +289,7 @@ struct OpenClawProjector {
     native_session_id: String,
     session_id: StableEntityId,
     session: SessionState,
+    replacement_session: SessionCheckpoint,
     index_file: Option<OpenedProviderSourceFile>,
     authority: Arc<ProviderSourceRoot>,
     pending_calls: HashMap<String, PendingCallState>,

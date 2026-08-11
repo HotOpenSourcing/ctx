@@ -1,25 +1,30 @@
 use super::*;
 use crate::common::json::{exact_bounded_string_alias, ExactJsonStringAlias};
 
-const TERMINAL_AUTHORITY_POLICY_REVISION: &str = "openclaw-terminal-result-authority-v1";
 pub(super) const TERMINAL_CALL_ID_DOMAIN: &[u8] = b"ctx/openclaw/terminal-call-id/v1\0";
-pub(super) const TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN: &[u8] =
-    b"ctx/openclaw/terminal-ambiguity-fingerprint/v1\0";
 
 pub(super) type OpenClawTerminalAuthority = JsonlTerminalAuthority;
 
-fn observe_terminal(authority: &mut OpenClawTerminalAuthority, call_id: &str) {
+fn observe_terminal(
+    authority: &mut OpenClawTerminalAuthority,
+    call_id: &str,
+    region: JsonlTerminalObservationRegion,
+) {
     if !authority.exhausted() && !call_id.is_empty() {
         authority.observe(
             TERMINAL_CALL_ID_DOMAIN,
             call_id,
-            JsonlTerminalObservationRegion::WholeSource,
+            region,
             MAX_TERMINAL_CALL_IDS,
         );
     }
 }
 
-fn observe_terminal_record(authority: &mut OpenClawTerminalAuthority, record: &[u8]) {
+pub(super) fn observe_terminal_record(
+    authority: &mut OpenClawTerminalAuthority,
+    record: &[u8],
+    region: JsonlTerminalObservationRegion,
+) {
     if !crate::common::json::raw_object_keys_are_unique(record) {
         authority.observe_ambiguous_terminal();
     }
@@ -30,38 +35,9 @@ fn observe_terminal_record(authority: &mut OpenClawTerminalAuthority, record: &[
         if result.ambiguous_linkage {
             authority.observe_ambiguous_terminal();
         } else if let Some(call_id) = result.call_id {
-            observe_terminal(authority, call_id);
+            observe_terminal(authority, call_id, region);
         }
     }
-}
-
-pub(super) fn terminal_authority_for_source(
-    source: &SourceKey,
-    source_path: &Path,
-    source_file: Arc<OpenedProviderSourceFile>,
-) -> Result<OpenClawTerminalAuthority> {
-    let identity = JsonlSourceIdentity::new(
-        CaptureProvider::OpenClaw.as_str(),
-        PARSER_REVISION,
-        TERMINAL_AUTHORITY_POLICY_REVISION,
-        source.exact_descriptor_digest(),
-        source_path,
-    );
-    let mut reader = JsonlReader::open(identity, source_file, None, None)?;
-    let mut authority = OpenClawTerminalAuthority::available();
-    while reader
-        .visit_page(&mut |record| -> Result<()> {
-            observe_terminal_record(&mut authority, record.bytes());
-            Ok(())
-        })?
-        .is_some()
-    {}
-    if reader.outcome().is_none() {
-        return Err(CaptureError::SystemInvariant(
-            "OpenClaw terminal authority scan has no terminal evidence",
-        ));
-    }
-    Ok(authority)
 }
 
 #[cfg(test)]
@@ -74,7 +50,11 @@ pub(super) fn terminal_authority_for_values<'a>(
             if result.ambiguous_linkage {
                 authority.observe_ambiguous_terminal();
             } else if let Some(call_id) = result.call_id {
-                observe_terminal(&mut authority, call_id);
+                observe_terminal(
+                    &mut authority,
+                    call_id,
+                    JsonlTerminalObservationRegion::WholeSource,
+                );
             }
         }
     }
@@ -87,7 +67,11 @@ pub(super) fn terminal_authority_for_records<'a>(
 ) -> OpenClawTerminalAuthority {
     let mut authority = OpenClawTerminalAuthority::available();
     for record in records {
-        observe_terminal_record(&mut authority, record);
+        observe_terminal_record(
+            &mut authority,
+            record,
+            JsonlTerminalObservationRegion::WholeSource,
+        );
     }
     authority
 }
@@ -216,7 +200,6 @@ pub(super) struct CompoundAdmission {
     pub(super) index: Value,
     pub(super) index_file: Option<OpenedProviderSourceFile>,
     pub(super) native_session_family: OpenClawNativeSessionFamily,
-    pub(super) terminal_authority: OpenClawTerminalAuthority,
 }
 
 pub(super) fn admit_compound(
@@ -224,7 +207,6 @@ pub(super) fn admit_compound(
     path: &Path,
     index_relative_path: &Path,
     transcript: Arc<OpenedProviderSourceFile>,
-    source: &SourceKey,
 ) -> Result<CompoundAdmission> {
     let index_file = match authority.open_file(index_relative_path) {
         Ok(index) => Some(index),
@@ -243,7 +225,6 @@ pub(super) fn admit_compound(
         .and_then(|bytes| serde_json::from_slice::<Value>(bytes).ok())
         .map(|index| native_session_family(path, &index))
         .unwrap_or(OpenClawNativeSessionFamily::Absent);
-    let terminal_authority = terminal_authority_for_source(source, path, Arc::clone(&transcript))?;
     let observation = super::super::super::OpenClawSessionObservation::from_admitted(
         path.to_path_buf(),
         transcript.metadata(),
@@ -256,7 +237,6 @@ pub(super) fn admit_compound(
         index: observation.index,
         index_file,
         native_session_family,
-        terminal_authority,
     })
 }
 

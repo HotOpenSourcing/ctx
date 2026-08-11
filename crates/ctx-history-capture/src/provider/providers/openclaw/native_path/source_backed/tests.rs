@@ -1,8 +1,9 @@
 use super::*;
 use crate::{
     provider::source_backed::{
-        refresh_source_backed_generation, register_landed_source_backed_route,
-        SourceBackedProviderRegistry, SourceBackedRouteSelection,
+        family::jsonl::set_after_jsonl_semantic_preflight_hook, refresh_source_backed_generation,
+        register_landed_source_backed_route, SourceBackedProviderRegistry,
+        SourceBackedRouteSelection, SourceBackedSourceFailureClass,
     },
     repository_attribution::RepositoryAttributor,
     ProviderCatalogSupport, ProviderImportSupport, ProviderSource, ProviderSourceKind,
@@ -136,6 +137,146 @@ fn openclaw_cold_noop_and_append_refreshes_preserve_the_source() {
 }
 
 #[test]
+fn openclaw_preflight_preserves_unique_append_and_replaces_cross_boundary_duplicate() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let root = temp.path().join("openclaw");
+    let transcript = openclaw_lifecycle_transcript(&root);
+    let first_call = serde_json::json!({
+        "type": "message",
+        "id": "call-a",
+        "timestamp": "2026-08-06T12:00:00Z",
+        "message": {"role": "assistant", "content": [{"type": "toolCall", "id": "call-a", "name": "exec", "arguments": {"command": "ctx search a"}}]}
+    });
+    let first_result = serde_json::json!({
+        "type": "message",
+        "id": "result-a",
+        "timestamp": "2026-08-06T12:00:01Z",
+        "message": {"role": "toolResult", "toolCallId": "call-a", "content": "result a", "details": {"status": "completed", "exitCode": 0}}
+    });
+    let second_call = serde_json::json!({
+        "type": "message",
+        "id": "call-b",
+        "timestamp": "2026-08-06T12:00:02Z",
+        "message": {"role": "assistant", "content": [{"type": "toolCall", "id": "call-b", "name": "exec", "arguments": {"command": "ctx search b"}}]}
+    });
+    let second_result = serde_json::json!({
+        "type": "message",
+        "id": "result-b",
+        "timestamp": "2026-08-06T12:00:03Z",
+        "message": {"role": "toolResult", "toolCallId": "call-b", "content": "result b", "details": {"status": "completed", "exitCode": 0}}
+    });
+    let duplicate_result = serde_json::json!({
+        "type": "message",
+        "id": "result-a-duplicate",
+        "timestamp": "2026-08-06T12:00:04Z",
+        "message": {"role": "toolResult", "toolCallId": "call-a", "content": "result a again", "details": {"status": "completed", "exitCode": 0}}
+    });
+    write_openclaw_lifecycle_transcript(&transcript, &[first_call, first_result]);
+    let registry = openclaw_lifecycle_registry(&root);
+    let index = temp.path().join("index");
+
+    let initial =
+        refresh_source_backed_generation(&index, &registry, openclaw_lifecycle_writer_options())
+            .unwrap();
+    assert!(initial.failed_routes.is_empty());
+
+    append_openclaw_lifecycle_transcript(&transcript, &second_call);
+    append_openclaw_lifecycle_transcript(&transcript, &second_result);
+    let appended =
+        refresh_source_backed_generation(&index, &registry, openclaw_lifecycle_writer_options())
+            .unwrap();
+    assert!(appended.failed_routes.is_empty());
+    let appended_records = indexed_openclaw_lifecycle_records(&index, &transcript);
+    assert_eq!(appended_records.len(), 4);
+    for body in ["result a", "result b"] {
+        let result = appended_records
+            .iter()
+            .find(|record| record.content.normalized_body.as_deref() == Some(body))
+            .unwrap();
+        assert!(retrieval_excluded(result), "{body}");
+    }
+    append_openclaw_lifecycle_transcript(&transcript, &duplicate_result);
+    let replaced =
+        refresh_source_backed_generation(&index, &registry, openclaw_lifecycle_writer_options())
+            .unwrap();
+    assert!(replaced.failed_routes.is_empty());
+    let replaced_records = indexed_openclaw_lifecycle_records(&index, &transcript);
+    assert_eq!(replaced_records.len(), 5);
+    for body in ["result a", "result a again"] {
+        let result = replaced_records
+            .iter()
+            .find(|record| record.content.normalized_body.as_deref() == Some(body))
+            .unwrap();
+        assert!(!retrieval_excluded(result), "{body}");
+        assert!(result.repository_abstentions.iter().any(|abstention| {
+            abstention.reason == RepositoryAbstentionReason::ProviderOutputUnjoined
+                && abstention.detail.as_deref() == Some("openclaw_tool_result_call_id_is_ambiguous")
+        }));
+    }
+    let unique_result = replaced_records
+        .iter()
+        .find(|record| record.content.normalized_body.as_deref() == Some("result b"))
+        .unwrap();
+    assert!(retrieval_excluded(unique_result));
+}
+
+#[test]
+fn openclaw_projector_preflight_rejects_same_length_interpass_rewrite() {
+    let temp = crate::test_support_paths::tempdir().unwrap();
+    let root = temp.path().join("openclaw");
+    let transcript = openclaw_lifecycle_transcript(&root);
+    write_openclaw_lifecycle_transcript(
+        &transcript,
+        &[serde_json::json!({
+            "type": "message",
+            "id": "stable-record",
+            "timestamp": "2026-08-06T12:00:00Z",
+            "message": {"role": "user", "content": "stable baseline"}
+        })],
+    );
+    let registry = openclaw_lifecycle_registry(&root);
+    let index = temp.path().join("index");
+    let initial =
+        refresh_source_backed_generation(&index, &registry, openclaw_lifecycle_writer_options())
+            .unwrap();
+    assert!(initial.failed_routes.is_empty());
+
+    append_openclaw_lifecycle_transcript(
+        &transcript,
+        &serde_json::json!({
+            "type": "message",
+            "id": "racing-record",
+            "timestamp": "2026-08-06T12:00:01Z",
+            "message": {"role": "assistant", "content": "race-before"}
+        }),
+    );
+    let hook_path = fs::canonicalize(&transcript).unwrap();
+    set_after_jsonl_semantic_preflight_hook(hook_path.clone(), move || {
+        let before = fs::read_to_string(&hook_path).unwrap();
+        let after = before.replace("race-before", "race-after!");
+        assert_eq!(before.len(), after.len());
+        assert_ne!(before, after);
+        fs::write(hook_path, after).unwrap();
+    });
+
+    let failed =
+        refresh_source_backed_generation(&index, &registry, openclaw_lifecycle_writer_options())
+            .unwrap();
+    assert_eq!(failed.failed_routes.len(), 1);
+    assert_eq!(
+        failed.failed_routes[0].class,
+        SourceBackedSourceFailureClass::SourceChanged
+    );
+    assert!(failed.failed_routes[0].carried_forward);
+    let retained = indexed_openclaw_lifecycle_records(&index, &transcript);
+    assert_eq!(retained.len(), 1);
+    assert_eq!(
+        retained[0].content.normalized_body.as_deref(),
+        Some("stable baseline")
+    );
+}
+
+#[test]
 fn openclaw_discovered_leaf_rejects_mutation_before_scan() {
     let temp = crate::test_support_paths::tempdir().unwrap();
     let root = temp.path().join("openclaw");
@@ -182,6 +323,7 @@ fn test_projector_with_lineage(
         session_id,
     )
     .unwrap();
+    let replacement_session = session.checkpoint();
     (
         temp,
         OpenClawProjector {
@@ -189,6 +331,7 @@ fn test_projector_with_lineage(
             native_session_id: native_session_id.to_owned(),
             session_id,
             session,
+            replacement_session,
             index_file: None,
             authority,
             pending_calls: HashMap::new(),
@@ -228,11 +371,13 @@ fn project_session_event(
         session_id,
     )
     .unwrap();
+    let replacement_session = session.checkpoint();
     let mut projector = OpenClawProjector {
         source,
         native_session_id: native_session_id.to_owned(),
         session_id,
         session,
+        replacement_session,
         index_file: None,
         authority,
         pending_calls: HashMap::new(),
@@ -333,22 +478,6 @@ impl LegacyOpenClawTerminalAuthority {
                     .get(&legacy_openclaw_terminal_digest(call_id))
                     .is_some_and(|count| *count == 1))
     }
-
-    fn ambiguity_fingerprint(&self) -> [u8; 32] {
-        let mut ambiguous = self
-            .call_ids
-            .iter()
-            .filter_map(|(digest, count)| (*count > 1).then_some(*digest))
-            .collect::<Vec<_>>();
-        ambiguous.sort_unstable();
-        let mut hasher = Sha256::new();
-        hasher.update(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN);
-        hasher.update([u8::from(self.exhausted)]);
-        for digest in ambiguous {
-            hasher.update(digest);
-        }
-        hasher.finalize().into()
-    }
 }
 
 fn legacy_openclaw_terminal_digest(call_id: &str) -> [u8; 32] {
@@ -356,10 +485,6 @@ fn legacy_openclaw_terminal_digest(call_id: &str) -> [u8; 32] {
     hasher.update(TERMINAL_CALL_ID_DOMAIN);
     hasher.update(call_id.as_bytes());
     hasher.finalize().into()
-}
-
-fn digest_hex(digest: [u8; 32]) -> String {
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[derive(Clone, Copy)]
@@ -391,11 +516,6 @@ fn openclaw_shared_terminal_authority_matches_legacy_duplicate_overflow_matrix()
             shared_unscanned.is_unique(TERMINAL_CALL_ID_DOMAIN, call_id)
         );
     }
-    assert_eq!(
-        legacy_unscanned.ambiguity_fingerprint(),
-        shared_unscanned.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
-    );
-
     let matrix: &[&[TerminalObservation<'_>]] = &[
         &[],
         &[Call("")],
@@ -434,10 +554,6 @@ fn openclaw_shared_terminal_authority_matches_legacy_duplicate_overflow_matrix()
                     legacy.call_ids,
                     shared.digest_counts().collect::<HashMap<_, _>>()
                 );
-                assert_eq!(
-                    legacy.ambiguity_fingerprint(),
-                    shared.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
-                );
                 for call_id in ["", "alpha", "beta", "missing"] {
                     assert_eq!(
                         legacy.is_unique(call_id),
@@ -447,41 +563,6 @@ fn openclaw_shared_terminal_authority_matches_legacy_duplicate_overflow_matrix()
             }
         }
     }
-}
-
-#[test]
-fn openclaw_terminal_ambiguity_digest_wire_goldens_are_unchanged() {
-    let empty = OpenClawTerminalAuthority::available();
-    assert_eq!(
-        digest_hex(empty.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)),
-        "6120df961ec6205c5a6858ba4231c961315cbd492a61d69001a3ab37913313c9"
-    );
-
-    let mut duplicate = OpenClawTerminalAuthority::available();
-    for _ in 0..2 {
-        duplicate.observe(
-            TERMINAL_CALL_ID_DOMAIN,
-            "alpha",
-            JsonlTerminalObservationRegion::WholeSource,
-            1,
-        );
-    }
-    assert_eq!(
-        digest_hex(duplicate.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)),
-        "7f18f41f46aaa6cfd7b5b5da99f7e0edd7783cd9100abf46aa64ea3ac82ad4c6"
-    );
-
-    let mut exhausted = OpenClawTerminalAuthority::available();
-    exhausted.observe(
-        TERMINAL_CALL_ID_DOMAIN,
-        "overflow",
-        JsonlTerminalObservationRegion::WholeSource,
-        0,
-    );
-    assert_eq!(
-        digest_hex(exhausted.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)),
-        "f66dd43c08f6a7e2a5bb531bf51fc4f906c491e92b44c053168ec5ba84f3a84f"
-    );
 }
 
 #[cfg(unix)]
@@ -1035,8 +1116,6 @@ fn openclaw_running_retrieval_survives_checkpoint_and_continuation_linkage() {
         native_session_id: projector.native_session_id.clone(),
         index: Value::Null,
         native_session_family: OpenClawNativeSessionFamily::Absent,
-        terminal_ambiguity_fingerprint: OpenClawTerminalAuthority::available()
-            .ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
     };
     let restored = decode_projector_checkpoint(&checkpoint, &binding).unwrap();
     assert!(matches!(
@@ -2089,145 +2168,6 @@ fn source_wide_reused_result_id_keeps_both_results_searchable() {
 }
 
 #[test]
-fn terminal_ambiguity_fingerprint_invalidates_only_affected_append() {
-    let temp = tempfile::tempdir().unwrap();
-    let transcript_path = temp.path().join("session.jsonl");
-    let source = source_key("main/fingerprint-session").unwrap();
-    let authority = ProviderSourceRoot::open(temp.path()).unwrap();
-    let scan = |values: &[Value]| {
-        let mut bytes = Vec::new();
-        for value in values {
-            serde_json::to_writer(&mut bytes, value).unwrap();
-            bytes.push(b'\n');
-        }
-        fs::write(&transcript_path, bytes).unwrap();
-        let opened = Arc::new(authority.open_file(Path::new("session.jsonl")).unwrap());
-        terminal_authority_for_source(&source, &transcript_path, opened).unwrap()
-    };
-    let first_call = serde_json::json!({
-        "type": "message",
-        "id": "call-a",
-        "timestamp": "2026-08-05T12:00:00Z",
-        "message": {"role": "assistant", "content": [{"type": "toolCall", "id": "call-a", "name": "exec", "arguments": {"command": "ctx search a"}}]}
-    });
-    let first_result = serde_json::json!({
-        "type": "message",
-        "id": "result-a",
-        "timestamp": "2026-08-05T12:00:01Z",
-        "message": {"role": "toolResult", "toolCallId": "call-a", "content": "a", "details": {"status": "completed", "exitCode": 0}}
-    });
-    let second_call = serde_json::json!({
-        "type": "message",
-        "id": "call-b",
-        "timestamp": "2026-08-05T12:00:02Z",
-        "message": {"role": "assistant", "content": [{"type": "toolCall", "id": "call-b", "name": "exec", "arguments": {"command": "ctx search b"}}]}
-    });
-    let second_result = serde_json::json!({
-        "type": "message",
-        "id": "result-b",
-        "timestamp": "2026-08-05T12:00:03Z",
-        "message": {"role": "toolResult", "toolCallId": "call-b", "content": "b", "details": {"status": "completed", "exitCode": 0}}
-    });
-    let reused_result = serde_json::json!({
-        "type": "message",
-        "id": "result-a-reused",
-        "timestamp": "2026-08-05T12:00:04Z",
-        "message": {"role": "toolResult", "toolCallId": "call-a", "content": "a again", "details": {"status": "completed", "exitCode": 0}}
-    });
-
-    let prefix = scan(&[first_call.clone(), first_result.clone()]);
-    let unique_append = scan(&[
-        first_call.clone(),
-        first_result.clone(),
-        second_call.clone(),
-        second_result.clone(),
-    ]);
-    assert_eq!(
-        prefix.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
-        unique_append.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
-    );
-    assert!(unique_append.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-a"));
-    assert!(unique_append.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-b"));
-
-    let duplicate_append = scan(&[
-        first_call.clone(),
-        first_result.clone(),
-        second_call,
-        second_result,
-        reused_result.clone(),
-    ]);
-    assert_ne!(
-        prefix.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
-        duplicate_append.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
-    );
-    assert!(!duplicate_append.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-a"));
-    assert!(duplicate_append.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-b"));
-
-    let mut malformed_bytes = Vec::new();
-    for value in [first_call.clone(), first_result.clone()] {
-        serde_json::to_writer(&mut malformed_bytes, &value).unwrap();
-        malformed_bytes.push(b'\n');
-    }
-    serde_json::to_writer(&mut malformed_bytes, &reused_result).unwrap();
-    malformed_bytes.extend_from_slice(b" trailing terminal bytes\n");
-    fs::write(&transcript_path, malformed_bytes).unwrap();
-    let opened = Arc::new(authority.open_file(Path::new("session.jsonl")).unwrap());
-    let malformed_append =
-        terminal_authority_for_source(&source, &transcript_path, opened).unwrap();
-    assert_ne!(
-        prefix.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
-        malformed_append.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
-    );
-    assert!(!malformed_append.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-a"));
-
-    let selector_appends = [
-        serde_json::json!({
-            "type": "message",
-            "message": {"role": "toolResult", "toolCallId": "call-a", "tool_call_id": "other", "content": "conflict"}
-        }),
-        serde_json::json!({
-            "type": "message",
-            "message": {"role": "toolResult", "toolCallId": 7, "content": "non-string"}
-        }),
-        serde_json::json!({
-            "type": "message",
-            "message": {"role": "toolResult", "toolCallId": "", "content": "empty"}
-        }),
-        serde_json::json!({
-            "type": "message",
-            "message": {"role": "toolResult", "toolCallId": "x".repeat(MAX_SELECTOR_CALL_ID_BYTES + 1), "content": "oversized"}
-        }),
-    ];
-    for appended in selector_appends {
-        let authority = scan(&[first_result.clone(), appended]);
-        assert_ne!(
-            prefix.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
-            authority.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
-        );
-        assert!(!authority.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-a"));
-    }
-
-    let mut duplicate_selector_bytes = Vec::new();
-    for value in [first_call, first_result] {
-        serde_json::to_writer(&mut duplicate_selector_bytes, &value).unwrap();
-        duplicate_selector_bytes.push(b'\n');
-    }
-    duplicate_selector_bytes.extend_from_slice(
-        br#"{"type":"message","message":{"role":"toolResult","toolCallId":"call-a","toolCallId":"other","content":"duplicate selector"}}"#,
-    );
-    duplicate_selector_bytes.push(b'\n');
-    fs::write(&transcript_path, duplicate_selector_bytes).unwrap();
-    let opened = Arc::new(authority.open_file(Path::new("session.jsonl")).unwrap());
-    let duplicate_selector =
-        terminal_authority_for_source(&source, &transcript_path, opened).unwrap();
-    assert_ne!(
-        prefix.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
-        duplicate_selector.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
-    );
-    assert!(!duplicate_selector.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-a"));
-}
-
-#[test]
 fn fallback_event_ids_survive_insert_and_delete_before_with_stable_duplicates() {
     let baseline = fallback_event_ids(&["prefix", "target", "suffix"]);
     let inserted = fallback_event_ids(&["inserted", "prefix", "target", "suffix"]);
@@ -2253,8 +2193,6 @@ fn append_after_prior_duplicate_probes_base_and_restores_call_ambiguity() {
         native_session_id: native_session_id.to_owned(),
         index: Value::Null,
         native_session_family: OpenClawNativeSessionFamily::Absent,
-        terminal_ambiguity_fingerprint: OpenClawTerminalAuthority::available()
-            .ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
     };
     let source = source_key(native_session_id).unwrap();
     let session_id = session_identity(&source, native_session_id).unwrap();
@@ -2268,6 +2206,7 @@ fn append_after_prior_duplicate_probes_base_and_restores_call_ambiguity() {
         session_id,
     )
     .unwrap();
+    let replacement_session = session.checkpoint();
     let mut cold_identity_state = FallbackEventIdentityState::default();
     let prefix_events = [0, 1]
         .into_iter()
@@ -2304,6 +2243,7 @@ fn append_after_prior_duplicate_probes_base_and_restores_call_ambiguity() {
         native_session_id: native_session_id.to_owned(),
         session_id,
         session,
+        replacement_session,
         index_file: None,
         authority,
         pending_calls,

@@ -66,7 +66,6 @@ where
 pub(crate) struct CodexSessionRow {
     pub(crate) native_session_id: String,
     pub(crate) parent_native_session_id: Option<String>,
-    pub(crate) advisory_session_id: Option<String>,
     pub(crate) root_native_session_id: Option<String>,
     pub(crate) session_relationship: SessionRelationshipKind,
     pub(crate) started_at: DateTime<Utc>,
@@ -101,7 +100,6 @@ pub(crate) struct CodexCoreRecordDraft {
     pub(crate) discovery_exclusion: Option<CoreDiscoveryExclusion>,
     pub(crate) mcp_tool_call: Option<McpToolCallAttribution>,
     pub(crate) mcp_exchange: Option<McpExchangeContent>,
-    pub(crate) touched_paths: Vec<String>,
     pub(crate) repository_tools: Vec<CodexRepositoryToolEvidence>,
     pub(crate) repository_result: Option<CodexRepositoryResultEvidence>,
     pub(crate) repository_files: Vec<UnscopedFileObservation>,
@@ -170,7 +168,6 @@ impl CodexCoreRecordDraft {
             item.server.capacity().checked_add(item.tool.capacity())
         })?;
         let allocation_count = 3_usize
-            .checked_add(self.touched_paths.len())?
             .checked_add(self.repository_files.len())?
             .checked_add(usize::from(matches!(
                 self.repository_result_origin,
@@ -200,10 +197,6 @@ impl CodexCoreRecordDraft {
                 .and_then(encoded_json_len)
                 .unwrap_or(0),
             self.session_cwd.as_ref().map_or(0, String::capacity),
-            self.touched_paths
-                .capacity()
-                .checked_mul(size_of::<String>())?,
-            checked_string_capacities(self.touched_paths.iter().map(Some))?,
             repository_bytes,
             repository_result_bytes,
             repository_file_bytes,
@@ -313,7 +306,6 @@ pub(super) fn build_source_backed_event_row(
             discovery_exclusion,
             mcp_tool_call: None,
             mcp_exchange: None,
-            touched_paths: Vec::new(),
             repository_tools,
             repository_result: None,
             repository_files: Vec::new(),
@@ -367,7 +359,6 @@ pub(super) fn build_source_backed_sparse_output_row(
         discovery_exclusion,
         mcp_tool_call,
         mcp_exchange,
-        touched_paths: Vec::new(),
         repository_tools: Vec::new(),
         repository_result,
         repository_files: Vec::new(),
