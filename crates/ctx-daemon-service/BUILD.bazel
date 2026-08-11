@@ -46,6 +46,7 @@ CTX_DAEMON_SERVICE_TEST_DEPS = [
     "//crates/ctx-client-observability:test_support_lib",
     "//crates/ctx-daemon-runtime:lib",
     "//crates/ctx-history-capture:lib",
+    "//crates/ctx-history-capture-model:lib",
     "//crates/ctx-history-core:lib",
     "//crates/ctx-history-index:lib",
     "//crates/ctx-history-refresh:test_support_lib",

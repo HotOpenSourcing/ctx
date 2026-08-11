@@ -66,6 +66,7 @@ printf '%s\n' \
   '//crates/ctx-client-observability:test_support_lib' \
   '//crates/ctx-daemon-runtime:lib' \
   '//crates/ctx-daemon-service:test_support_lib' \
+  '//crates/ctx-history-capture-model:lib' \
   '//crates/ctx-history-capture:lib' \
   '//crates/ctx-history-core:lib' \
   '//crates/ctx-history-index:lib' \
@@ -142,6 +143,7 @@ if dependencies != allowed:
     )
 expected_dev = {
     "ctx-client-observability",
+    "ctx-history-capture-model",
     "ctx-history-refresh",
     "ctx-semantic-index",
     "ctx-semantic-model",

@@ -7,16 +7,16 @@ use std::path::{Component, Path, PathBuf};
 
 #[cfg(test)]
 use outcome_plan::bounded_outcome_operation;
-pub(crate) use outcome_plan::{
+pub use outcome_plan::{
     bounded_outcome_evidence_can_be_positive, bounded_outcome_evidence_relevant,
     bounded_outcome_plan, BoundedCommitProducer, BoundedOutcomeOperation, BoundedOutcomePlan,
     BoundedOutcomePlanDisposition,
 };
-pub(crate) use pull_request::bounded_pull_request_association_query;
+pub use pull_request::bounded_pull_request_association_query;
 
 use ctx_history_core::{RepositoryAbstentionReason, RepositoryEvidenceKind};
 
-pub(crate) const MAX_COMMAND_BYTES: usize = 1024 * 1024;
+pub const MAX_COMMAND_BYTES: usize = 1024 * 1024;
 const MAX_TOKENS: usize = 16_384;
 const MAX_SEGMENTS: usize = 4_096;
 const MAX_PATH_BYTES: usize = 16 * 1024;
@@ -43,7 +43,7 @@ pub(super) struct CommandRepositoryPath {
     pub(super) evidence_kind: RepositoryEvidenceKind,
 }
 
-pub(crate) fn lexical_absolute(value: &str, base: Option<&Path>) -> Option<PathBuf> {
+pub fn lexical_absolute(value: &str, base: Option<&Path>) -> Option<PathBuf> {
     if value.is_empty()
         || value == "-"
         || value.starts_with('~')

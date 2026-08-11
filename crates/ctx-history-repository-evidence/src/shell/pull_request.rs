@@ -7,7 +7,7 @@ use super::super::association::canonical_url_authority;
 use super::{strip_comments_and_bound_heredocs, tokenize, MAX_COMMAND_BYTES};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BoundedPullRequestAssociationQuery {
+pub struct BoundedPullRequestAssociationQuery {
     pub(crate) repository_path: PathBuf,
     pub(crate) forge_repository: Option<RepositoryAlias>,
     pub(crate) number: u64,
@@ -18,7 +18,7 @@ pub(crate) struct BoundedPullRequestAssociationQuery {
 /// Exact source query for a forge-reported pull-request merge association.
 /// A bounded newline tail may contain only literal Git fetch/log commands;
 /// those commands authorize output noise but never contribute identity.
-pub(crate) fn bounded_pull_request_association_query(
+pub fn bounded_pull_request_association_query(
     command: &str,
     base: &Path,
 ) -> Option<BoundedPullRequestAssociationQuery> {

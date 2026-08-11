@@ -82,7 +82,7 @@ if grep_files 'dashboard|shim|shims|pull request|pull-request|pr evidence|pr-evi
 fi
 
 if grep_files '/home/[d]addy|/home/[^[:space:]]+/(code|Documents|Desktop)|/Users/[^[:space:]]+/(code|Documents|Desktop)|ctx-[p]rivate|ctx-multi-repo-workspace|\.ctx/worktrees' \
-  .bazelignore .bazelrc .bazelversion .buildkite .gitignore README.md SECURITY.md docs skills plugins scripts crates/ctx-agent-integrations/src crates/ctx-cli/src crates/ctx-client-observability/src crates/ctx-daemon-runtime/src crates/ctx-daemon-service/src crates/ctx-history-query/src crates/ctx-pro-access/src crates/ctx-pro-host/src crates/ctx-pro-lifecycle/src crates/ctx-upgrade-engine/src >/dev/null 2>&1; then
+  .bazelignore .bazelrc .bazelversion .buildkite .gitignore README.md SECURITY.md docs skills plugins scripts crates/ctx-agent-integrations/src crates/ctx-cli/src crates/ctx-client-observability/src crates/ctx-daemon-runtime/src crates/ctx-daemon-service/src crates/ctx-history-query/src crates/ctx-pro-access/src crates/ctx-pro-host/src crates/ctx-pro-lifecycle/src crates/ctx-upgrade-engine/src crates/ctx-history-capture-model/src crates/ctx-history-repository-evidence/src >/dev/null 2>&1; then
   fail 'public package surface contains private host or workspace paths'
 fi
 
@@ -91,7 +91,7 @@ if ! diff -u skills/ctx-agent-history-search/SKILL.md plugins/ctx-agent-history-
 fi
 
 if grep_files '[W]ork Recorder|[w]ork recorder|ctx publish|ctx evidence|ctx pr([^[:alnum:]_]|$)|ctx link-pr|ctx context|ctx update([[:space:]]+--|[^[:alnum:]_ -]|[[:space:]]*$)|ctx uninstall|update checks|auto-update|update-state|auto_update|CTX_UPDATE|provider-live|completion-certificate|freebsd-native-release-proof|r2-|dashboard export|gh CLI|GhCli|upsert_github|write-shim-command|write_shim_command|capture_shim_command|shim_command_envelope|\bADE\b|[Aa]mpcode' \
-  .bazelignore .bazelrc .bazelversion .buildkite .gitignore README.md SECURITY.md docs skills scripts crates/ctx-agent-integrations/src crates/ctx-cli/src crates/ctx-client-observability/src crates/ctx-daemon-runtime/src crates/ctx-daemon-service/src crates/ctx-history-query/src crates/ctx-pro-access/src crates/ctx-pro-host/src crates/ctx-pro-lifecycle/src crates/ctx-upgrade-engine/src >/dev/null 2>&1; then
+  .bazelignore .bazelrc .bazelversion .buildkite .gitignore README.md SECURITY.md docs skills scripts crates/ctx-agent-integrations/src crates/ctx-cli/src crates/ctx-client-observability/src crates/ctx-daemon-runtime/src crates/ctx-daemon-service/src crates/ctx-history-query/src crates/ctx-pro-access/src crates/ctx-pro-host/src crates/ctx-pro-lifecycle/src crates/ctx-upgrade-engine/src crates/ctx-history-capture-model/src crates/ctx-history-repository-evidence/src >/dev/null 2>&1; then
   fail 'public docs/help/release path contains removed product-surface text'
 fi
 
@@ -107,12 +107,14 @@ if grep_files 'work-[r]ecord-(publish|report|vcs)[[:space:]]*=' \
   crates/ctx-pro-lifecycle/Cargo.toml \
   crates/ctx-upgrade-engine/Cargo.toml \
   crates/ctx-history-capture/Cargo.toml \
+  crates/ctx-history-capture-model/Cargo.toml \
   crates/ctx-history-core/Cargo.toml \
   crates/ctx-history-index-format/Cargo.toml \
   crates/ctx-history-index-generation/Cargo.toml \
   crates/ctx-history-index/Cargo.toml \
   crates/ctx-history-index-query/Cargo.toml \
   crates/ctx-history-query/Cargo.toml \
+  crates/ctx-history-repository-evidence/Cargo.toml \
   crates/ctx-history-search/Cargo.toml >/dev/null 2>&1; then
   fail 'default crate manifests depend on publish/report/vcs crates'
 fi

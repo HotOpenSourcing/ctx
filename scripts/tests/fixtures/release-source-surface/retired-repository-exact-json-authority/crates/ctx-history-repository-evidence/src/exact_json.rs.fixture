@@ -1,0 +1,3 @@
+pub fn raw_object_keys_are_unique(_input: &[u8]) -> bool {
+    true
+}

@@ -7,7 +7,7 @@ use serde_json::Value;
 use url::{Host, Url};
 
 use super::shell::bounded_pull_request_association_query;
-use crate::common::json::exact_value as exact_json_value;
+use ctx_history_jsonl::exact_json_value;
 
 const MAX_ASSOCIATION_OUTPUT_BYTES: usize = 1024 * 1024;
 
@@ -39,14 +39,14 @@ fn default_port(scheme: &str) -> Option<u16> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct UnscopedPullRequestAssociationObservation {
-    pub(crate) repository_path: String,
-    pub(crate) pull_request: RepositoryPullRequestIdentity,
-    pub(crate) merged_as: GitObjectId,
-    pub(crate) linkage: RepositoryOutcomeLinkage,
+pub struct UnscopedPullRequestAssociationObservation {
+    pub repository_path: String,
+    pub pull_request: RepositoryPullRequestIdentity,
+    pub merged_as: GitObjectId,
+    pub linkage: RepositoryOutcomeLinkage,
 }
 
-pub(crate) fn exact_pull_request_association(
+pub fn exact_pull_request_association(
     command: &str,
     declared_workdir: &str,
     output: &Value,

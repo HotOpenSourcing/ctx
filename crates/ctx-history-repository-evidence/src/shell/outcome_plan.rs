@@ -8,7 +8,7 @@ use super::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-pub(crate) enum BoundedCommitProducer {
+pub enum BoundedCommitProducer {
     Commit,
     Merge,
     Rebase,
@@ -16,7 +16,7 @@ pub(crate) enum BoundedCommitProducer {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BoundedOutcomeOperation {
+pub enum BoundedOutcomeOperation {
     Commit {
         producer: BoundedCommitProducer,
         /// Compatibility discriminator for provider integrations that only
@@ -30,18 +30,18 @@ pub(crate) enum BoundedOutcomeOperation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BoundedOutcomePlan {
-    pub(crate) operation: BoundedOutcomeOperation,
-    pub(crate) operation_source_oid: Option<String>,
-    pub(crate) operation_repository_path: PathBuf,
-    pub(crate) output_repository_path: Option<PathBuf>,
-    pub(crate) machine_output_isolated: bool,
-    pub(crate) expected_pr_repository_path: Option<Vec<String>>,
-    pub(crate) expected_pr_number: Option<u64>,
+pub struct BoundedOutcomePlan {
+    pub operation: BoundedOutcomeOperation,
+    pub operation_source_oid: Option<String>,
+    pub operation_repository_path: PathBuf,
+    pub output_repository_path: Option<PathBuf>,
+    pub machine_output_isolated: bool,
+    pub expected_pr_repository_path: Option<Vec<String>>,
+    pub expected_pr_number: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum BoundedOutcomePlanDisposition {
+pub enum BoundedOutcomePlanDisposition {
     Unrecognized,
     Planned(BoundedOutcomePlan),
     Abstained {
@@ -62,14 +62,14 @@ pub(super) fn bounded_outcome_operation(command: &str) -> Option<BoundedOutcomeO
     }
 }
 
-pub(crate) fn bounded_outcome_evidence_relevant(command: &str) -> bool {
+pub fn bounded_outcome_evidence_relevant(command: &str) -> bool {
     !matches!(
         bounded_outcome_plan(command, Path::new("/")),
         BoundedOutcomePlanDisposition::Unrecognized
     )
 }
 
-pub(crate) fn bounded_outcome_evidence_can_be_positive(command: &str) -> bool {
+pub fn bounded_outcome_evidence_can_be_positive(command: &str) -> bool {
     matches!(
         bounded_outcome_plan(command, Path::new("/")),
         BoundedOutcomePlanDisposition::Planned(_)
@@ -92,7 +92,7 @@ mod repository_candidate_tests {
     }
 }
 
-pub(crate) fn bounded_outcome_plan(command: &str, base: &Path) -> BoundedOutcomePlanDisposition {
+pub fn bounded_outcome_plan(command: &str, base: &Path) -> BoundedOutcomePlanDisposition {
     if command.is_empty() || command.len() > MAX_COMMAND_BYTES {
         return BoundedOutcomePlanDisposition::Unrecognized;
     }

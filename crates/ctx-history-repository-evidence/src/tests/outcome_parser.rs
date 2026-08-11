@@ -7,7 +7,6 @@ use serde_json::Value;
 use super::super::{
     linked_outcome_evidence, BoundedCommitProducer, LinkedOutcomeInput, UnscopedOutcomeObservation,
 };
-use crate::OutputOutcome;
 
 fn exact_outcome(value: &UnscopedOutcomeObservation) -> &RepositoryOutcomeObservation {
     match value {
@@ -32,7 +31,7 @@ fn input<'a>(command: &'a str, output: &'a Value) -> LinkedOutcomeInput<'a> {
         continuation_call_id_sha256: &[],
         result_record_sha256: [9; 32],
         observed_at_unix_ms: 10,
-        result_outcome: OutputOutcome::Success,
+        result_outcome: ctx_history_capture_model::OutputOutcome::Success,
         result_output: output,
         structured_commit_oid: None,
         output_repository_path: Some("/repo"),
@@ -449,7 +448,7 @@ fn native_cherry_pick_stdout_is_deferred_but_failures_and_ambiguity_abstain() {
     assert_eq!(deferred.result_subject, "Apply exact lineage");
 
     let mut failed = input(&command, &output);
-    failed.result_outcome = OutputOutcome::Failure;
+    failed.result_outcome = ctx_history_capture_model::OutputOutcome::Failure;
     let failed = linked_outcome_evidence(failed).unwrap();
     assert!(failed.outcomes.is_empty());
     assert_eq!(

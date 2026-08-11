@@ -859,6 +859,7 @@ dependencies = [
  "ctx-client-observability",
  "ctx-daemon-runtime",
  "ctx-history-capture",
+ "ctx-history-capture-model",
  "ctx-history-core",
  "ctx-history-index",
  "ctx-history-refresh",
@@ -883,9 +884,11 @@ version = "0.26.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "ctx-history-capture-model",
  "ctx-history-core",
  "ctx-history-index",
  "ctx-history-jsonl",
+ "ctx-history-repository-evidence",
  "ctx-pro-host-protocol",
  "directories",
  "json5",
@@ -906,6 +909,17 @@ dependencies = [
  "uuid",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "ctx-history-capture-model"
+version = "0.26.0"
+dependencies = [
+ "ctx-history-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "uuid",
 ]
 
 [[package]]
@@ -1036,6 +1050,7 @@ version = "0.26.0"
 dependencies = [
  "anyhow",
  "ctx-history-capture",
+ "ctx-history-capture-model",
  "ctx-history-core",
  "ctx-history-index",
  "ctx-history-refresh-execution",
@@ -1052,6 +1067,7 @@ version = "0.26.0"
 dependencies = [
  "anyhow",
  "ctx-history-capture",
+ "ctx-history-capture-model",
  "ctx-history-core",
  "ctx-history-index",
  "rusqlite",
@@ -1059,6 +1075,23 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "ctx-history-repository-evidence"
+version = "0.26.0"
+dependencies = [
+ "chrono",
+ "ctx-history-capture-model",
+ "ctx-history-core",
+ "ctx-history-jsonl",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

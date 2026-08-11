@@ -86,11 +86,15 @@
         "lib:ctx_history_capture": "//crates/ctx-history-capture:lib",
         "test:codex_direct_result": "//crates/ctx-history-capture:codex_direct_result_tests",
         "test:ctx_retrieval_classifier": "//crates/ctx-history-capture:ctx_retrieval_classifier_tests",
-        "test:repository_shell_outcomes": "//crates/ctx-history-capture:repository_shell_outcomes_tests",
         "test:self_contained_core_final_locator_removal": "//crates/ctx-history-capture:self_contained_core_final_locator_removal_tests"
       },
       "native_unit": "//crates/ctx-history-capture:unit_tests",
       "feature_variants": ["//crates/ctx-history-capture:qualification_lib"]
+    },
+    "ctx-history-capture-model": {
+      "manifest": "crates/ctx-history-capture-model/Cargo.toml",
+      "targets": {"lib:ctx_history_capture_model": "//crates/ctx-history-capture-model:lib"},
+      "native_unit": "//crates/ctx-history-capture-model:unit_tests"
     },
     "ctx-history-core": {
       "manifest": "crates/ctx-history-core/Cargo.toml",
@@ -148,6 +152,11 @@
       "targets": {"lib:ctx_history_refresh_execution": "//crates/ctx-history-refresh-execution:lib"},
       "native_unit": "//crates/ctx-history-refresh-execution:unit_tests",
       "feature_variants": ["//crates/ctx-history-refresh-execution:test_support_lib"]
+    },
+    "ctx-history-repository-evidence": {
+      "manifest": "crates/ctx-history-repository-evidence/Cargo.toml",
+      "targets": {"lib:ctx_history_repository_evidence": "//crates/ctx-history-repository-evidence:lib"},
+      "native_unit": "//crates/ctx-history-repository-evidence:unit_tests"
     },
     "ctx-semantic-index": {
       "manifest": "crates/ctx-semantic-index/Cargo.toml",

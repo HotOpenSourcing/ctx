@@ -14,20 +14,16 @@ use ctx_history_core::{
 };
 use serde_json::Value;
 
-pub(crate) use association::{
-    exact_pull_request_association, UnscopedPullRequestAssociationObservation,
-};
-pub(crate) use attributor::RepositoryAttributor;
-#[cfg(test)]
-pub(crate) use engine::attribute;
-pub(crate) use engine::MAX_REPOSITORY_CANDIDATES;
+pub use association::{exact_pull_request_association, UnscopedPullRequestAssociationObservation};
+pub use attributor::RepositoryAttributor;
+pub use engine::{attribute, MAX_REPOSITORY_CANDIDATES};
 use engine::{ScopedFileInput, ScopedRepositoryFileInvocationEvidence, ScopedVcsInput};
 use git::CertifiedCandidate;
 use identity::push_abstention;
-pub(crate) use outcome::{
+pub use outcome::{
     linked_outcome_evidence, LinkedOutcomeEvidence, LinkedOutcomeInput, UnscopedOutcomeObservation,
 };
-pub(crate) use shell::{
+pub use shell::{
     bounded_outcome_evidence_can_be_positive, bounded_outcome_evidence_relevant,
     bounded_outcome_plan, bounded_pull_request_association_query, lexical_absolute,
     BoundedCommitProducer, BoundedOutcomeOperation, BoundedOutcomePlan,
@@ -35,10 +31,10 @@ pub(crate) use shell::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct UnscopedFileObservation {
-    pub(crate) path: String,
-    pub(crate) prior_path: Option<String>,
-    pub(crate) kind: RepositoryFileObservationKind,
+pub struct UnscopedFileObservation {
+    pub path: String,
+    pub prior_path: Option<String>,
+    pub kind: RepositoryFileObservationKind,
 }
 
 /// Exact request-side file intent supplied by a provider adapter.
@@ -46,46 +42,46 @@ pub(crate) struct UnscopedFileObservation {
 /// Callers must not synthesize this from generic file observations,
 /// recursively discovered paths, structured JSON, or tool results.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct UnscopedRepositoryFileInvocationEvidence {
-    pub(crate) operation_ordinal: u32,
-    pub(crate) path: String,
-    pub(crate) prior_path: Option<String>,
-    pub(crate) kind: RepositoryFileInvocationKind,
-    pub(crate) tool_name: Option<String>,
-    pub(crate) normalized_text_range: Option<RepositoryFileInvocationTextRange>,
+pub struct UnscopedRepositoryFileInvocationEvidence {
+    pub operation_ordinal: u32,
+    pub path: String,
+    pub prior_path: Option<String>,
+    pub kind: RepositoryFileInvocationKind,
+    pub tool_name: Option<String>,
+    pub normalized_text_range: Option<RepositoryFileInvocationTextRange>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct UnscopedVcsObservation {
-    pub(crate) path: Option<String>,
-    pub(crate) kind: RepositoryVcsObservationKind,
-    pub(crate) object_id: Option<GitObjectId>,
-    pub(crate) parent_object_ids: Vec<GitObjectId>,
-    pub(crate) reference: Option<String>,
+pub struct UnscopedVcsObservation {
+    pub path: Option<String>,
+    pub kind: RepositoryVcsObservationKind,
+    pub object_id: Option<GitObjectId>,
+    pub parent_object_ids: Vec<GitObjectId>,
+    pub reference: Option<String>,
 }
 
 #[derive(Debug, Default, Clone)]
-pub(crate) struct AttributionInput {
-    pub(crate) activity_at_unix_ms: Option<i64>,
-    pub(crate) provider_native_repository_aliases: Vec<RepositoryAlias>,
-    pub(crate) session_cwd: Option<String>,
-    pub(crate) declared_tool_workdir: Option<String>,
-    pub(crate) command: Option<String>,
-    pub(crate) command_disposition: CommandEvidenceDisposition,
-    pub(crate) provider_native_context_ambiguous: bool,
-    pub(crate) structured_content: Option<Value>,
-    pub(crate) repository_file_invocation_evidence: Vec<UnscopedRepositoryFileInvocationEvidence>,
-    pub(crate) file_observations: Vec<UnscopedFileObservation>,
-    pub(crate) vcs_observations: Vec<UnscopedVcsObservation>,
-    pub(crate) outcome_operation_repository_path: Option<String>,
-    pub(crate) outcome_output_repository_path: Option<String>,
-    pub(crate) outcome_observations: Vec<UnscopedOutcomeObservation>,
-    pub(crate) pull_request_associations: Vec<UnscopedPullRequestAssociationObservation>,
-    pub(crate) outcome_abstentions: Vec<(RepositoryAbstentionReason, &'static str)>,
+pub struct AttributionInput {
+    pub activity_at_unix_ms: Option<i64>,
+    pub provider_native_repository_aliases: Vec<RepositoryAlias>,
+    pub session_cwd: Option<String>,
+    pub declared_tool_workdir: Option<String>,
+    pub command: Option<String>,
+    pub command_disposition: CommandEvidenceDisposition,
+    pub provider_native_context_ambiguous: bool,
+    pub structured_content: Option<Value>,
+    pub repository_file_invocation_evidence: Vec<UnscopedRepositoryFileInvocationEvidence>,
+    pub file_observations: Vec<UnscopedFileObservation>,
+    pub vcs_observations: Vec<UnscopedVcsObservation>,
+    pub outcome_operation_repository_path: Option<String>,
+    pub outcome_output_repository_path: Option<String>,
+    pub outcome_observations: Vec<UnscopedOutcomeObservation>,
+    pub pull_request_associations: Vec<UnscopedPullRequestAssociationObservation>,
+    pub outcome_abstentions: Vec<(RepositoryAbstentionReason, &'static str)>,
 }
 
 impl AttributionInput {
-    pub(crate) fn apply_linked_outcome(&mut self, linked: LinkedOutcomeEvidence) {
+    pub fn apply_linked_outcome(&mut self, linked: LinkedOutcomeEvidence) {
         self.provider_native_repository_aliases = linked.provider_native_repository_aliases;
         self.outcome_operation_repository_path = linked.outcome_operation_repository_path;
         self.outcome_output_repository_path = linked.outcome_output_repository_path;
@@ -96,13 +92,13 @@ impl AttributionInput {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CommandEvidenceDisposition {
+pub enum CommandEvidenceDisposition {
     #[default]
     Analyze,
     CommandTooLarge,
 }
 
-pub(crate) fn apply_annotation(
+pub fn apply_annotation(
     record: &mut ctx_history_core::CoreRecord,
     annotation: CoreRecordAnnotation,
 ) -> CoreRecordResult<()> {
@@ -120,7 +116,7 @@ pub(crate) fn apply_annotation(
 
 /// Merge independently attributed repository activities into one record
 /// annotation without treating provider content or MCP identity as mergeable.
-pub(crate) fn merge_repository_annotation(
+pub fn merge_repository_annotation(
     target: &mut CoreRecordAnnotation,
     mut additional: CoreRecordAnnotation,
 ) {

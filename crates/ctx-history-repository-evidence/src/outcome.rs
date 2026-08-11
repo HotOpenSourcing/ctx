@@ -1,5 +1,6 @@
 use std::{collections::HashSet, path::Path};
 
+use ctx_history_capture_model::OutputOutcome;
 use ctx_history_core::{
     GitObjectFormat, GitObjectId, RepositoryAbstentionReason, RepositoryAlias,
     RepositoryCommitMapping, RepositoryCommitOperationEvent, RepositoryCommitOperationKind,
@@ -20,14 +21,13 @@ use super::{
     BoundedOutcomeOperation, BoundedOutcomePlan, BoundedOutcomePlanDisposition,
     UnscopedPullRequestAssociationObservation,
 };
-use crate::OutputOutcome;
 
 const MAX_EXACT_OUTCOME_OBJECTS: usize = 256;
 const MAX_LINKAGE_CALL_ID_BYTES: usize = 16 * 1024;
 const MAX_EXACT_OUTCOME_OUTPUT_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub(crate) enum UnscopedOutcomeObservation {
+pub enum UnscopedOutcomeObservation {
     Exact(Box<RepositoryOutcomeObservation>),
     DeferredCommit(DeferredCommitObservation),
     DeferredCommitOperation(DeferredCommitOperationObservation),
@@ -41,66 +41,64 @@ impl From<RepositoryOutcomeObservation> for UnscopedOutcomeObservation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub(crate) struct DeferredCommitObservation {
-    pub(crate) oid_prefix: String,
-    pub(crate) subject: String,
-    pub(crate) producer: BoundedCommitProducer,
-    pub(crate) observed_at_unix_ms: i64,
-    pub(crate) linkage: RepositoryOutcomeLinkage,
+pub struct DeferredCommitObservation {
+    pub oid_prefix: String,
+    pub subject: String,
+    pub producer: BoundedCommitProducer,
+    pub observed_at_unix_ms: i64,
+    pub linkage: RepositoryOutcomeLinkage,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub(crate) struct DeferredCommitOperationObservation {
-    pub(crate) kind: RepositoryCommitOperationKind,
-    pub(crate) mappings: Vec<RepositoryCommitMapping>,
-    pub(crate) command_pre_head: Option<GitObjectId>,
-    pub(crate) sequencer_pre_head: Option<GitObjectId>,
-    pub(crate) command_post_head: GitObjectId,
-    pub(crate) observed_at_unix_ms: i64,
-    pub(crate) linkage: RepositoryOutcomeLinkage,
+pub struct DeferredCommitOperationObservation {
+    pub kind: RepositoryCommitOperationKind,
+    pub mappings: Vec<RepositoryCommitMapping>,
+    pub command_pre_head: Option<GitObjectId>,
+    pub sequencer_pre_head: Option<GitObjectId>,
+    pub command_post_head: GitObjectId,
+    pub observed_at_unix_ms: i64,
+    pub linkage: RepositoryOutcomeLinkage,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub(crate) struct DeferredCherryPickObservation {
-    pub(crate) source: GitObjectId,
-    pub(crate) result_oid_prefix: String,
-    pub(crate) result_subject: String,
-    pub(crate) observed_at_unix_ms: i64,
-    pub(crate) linkage: RepositoryOutcomeLinkage,
+pub struct DeferredCherryPickObservation {
+    pub source: GitObjectId,
+    pub result_oid_prefix: String,
+    pub result_subject: String,
+    pub observed_at_unix_ms: i64,
+    pub linkage: RepositoryOutcomeLinkage,
 }
 
-pub(crate) struct LinkedOutcomeInput<'a> {
-    pub(crate) provider: &'static str,
-    pub(crate) command: &'a str,
-    pub(crate) session_cwd: Option<&'a str>,
-    pub(crate) declared_workdir: Option<&'a str>,
-    pub(crate) origin_call_id: &'a str,
-    pub(crate) result_call_id: &'a str,
-    pub(crate) origin_event_sequence: u64,
-    pub(crate) continuation_call_id_sha256: &'a [[u8; 32]],
-    pub(crate) result_record_sha256: [u8; 32],
-    pub(crate) observed_at_unix_ms: i64,
-    pub(crate) result_outcome: OutputOutcome,
-    pub(crate) result_output: &'a Value,
+pub struct LinkedOutcomeInput<'a> {
+    pub provider: &'static str,
+    pub command: &'a str,
+    pub session_cwd: Option<&'a str>,
+    pub declared_workdir: Option<&'a str>,
+    pub origin_call_id: &'a str,
+    pub result_call_id: &'a str,
+    pub origin_event_sequence: u64,
+    pub continuation_call_id_sha256: &'a [[u8; 32]],
+    pub result_record_sha256: [u8; 32],
+    pub observed_at_unix_ms: i64,
+    pub result_outcome: OutputOutcome,
+    pub result_output: &'a Value,
     /// A provider-native commit field has first-present precedence. A present
     /// short or malformed value fails closed instead of falling back to text.
-    pub(crate) structured_commit_oid: Option<&'a str>,
-    pub(crate) output_repository_path: Option<&'a str>,
+    pub structured_commit_oid: Option<&'a str>,
+    pub output_repository_path: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LinkedOutcomeEvidence {
-    pub(crate) provider_native_repository_aliases: Vec<RepositoryAlias>,
-    pub(crate) outcome_operation_repository_path: Option<String>,
-    pub(crate) outcome_output_repository_path: Option<String>,
-    pub(crate) outcomes: Vec<UnscopedOutcomeObservation>,
-    pub(crate) pull_request_associations: Vec<UnscopedPullRequestAssociationObservation>,
-    pub(crate) abstentions: Vec<(RepositoryAbstentionReason, &'static str)>,
+pub struct LinkedOutcomeEvidence {
+    pub provider_native_repository_aliases: Vec<RepositoryAlias>,
+    pub outcome_operation_repository_path: Option<String>,
+    pub outcome_output_repository_path: Option<String>,
+    pub outcomes: Vec<UnscopedOutcomeObservation>,
+    pub pull_request_associations: Vec<UnscopedPullRequestAssociationObservation>,
+    pub abstentions: Vec<(RepositoryAbstentionReason, &'static str)>,
 }
 
-pub(crate) fn linked_outcome_evidence(
-    input: LinkedOutcomeInput<'_>,
-) -> Option<LinkedOutcomeEvidence> {
+pub fn linked_outcome_evidence(input: LinkedOutcomeInput<'_>) -> Option<LinkedOutcomeEvidence> {
     let declared_base = input
         .declared_workdir
         .and_then(|value| lexical_absolute(value, None));

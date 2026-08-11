@@ -46,6 +46,7 @@ WORKSPACE_RELEASE_PACKAGES = {
     "ctx-daemon-service",
     "ctx-pro-host",
     "ctx-pro-lifecycle",
+    "ctx-history-capture-model",
     "ctx-history-core",
     "ctx-history-index-format",
     "ctx-history-index",
@@ -53,6 +54,7 @@ WORKSPACE_RELEASE_PACKAGES = {
     "ctx-history-jsonl",
     "ctx-history-refresh-execution",
     "ctx-history-query",
+    "ctx-history-repository-evidence",
     "ctx-semantic-index",
 }
 NOTICE_BASENAMES = (
