@@ -221,7 +221,7 @@ const MAIN: &str = "src/main.rs";
 const MCP_MODULE: &str = "src/mcp.rs";
 const OUTPUT: &str = "crates/ctx-terminal/src/output.rs";
 const PRO_LIFECYCLE: &str = "src/pro/lifecycle_commands.rs";
-const PRO_SETUP_REPLAY: &str = "src/pro/lifecycle_commands/setup_replay.rs";
+const PRO_SETUP_OUTPUT: &str = "src/pro/lifecycle_commands/setup_output.rs";
 const PRO_UNINSTALL: &str = "src/pro/lifecycle_commands/uninstall.rs";
 const PRO_PENDING: &str = "src/pro/pending_materialization.rs";
 const PRO_REFERRAL: &str = "src/pro/referral.rs";
@@ -802,7 +802,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
         PRO
     ),
     allow!(
-        PRO_SETUP_REPLAY,
+        PRO_SETUP_OUTPUT,
         "write_setup_result#1@79342920bb593fd0",
         PrintMacro,
         MachineProtocol,
@@ -819,7 +819,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         PRO_PENDING,
-        "defer_setup#1@a86ba39c2a24c819",
+        "write_deferred_setup_result#1@a86ba39c2a24c819",
         PrintMacro,
         MachineProtocol,
         JSON_PROTOCOL,
