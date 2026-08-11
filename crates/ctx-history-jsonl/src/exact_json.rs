@@ -4,7 +4,7 @@ use serde::{
     de::{DeserializeSeed, MapAccess, SeqAccess, Visitor},
     Deserializer,
 };
-use serde_json::{json, Value};
+use serde_json::Value;
 
 /// Provider envelopes and tool payloads are far smaller than 65,536 object
 /// members. Keeping this limit high avoids excluding legitimate shapes while
@@ -135,10 +135,6 @@ impl<'de> Visitor<'de> for UniqueJsonShapeVisitor<'_> {
         }
         Ok(UniqueJsonShape)
     }
-}
-
-pub fn default_metadata() -> Value {
-    json!({})
 }
 
 #[cfg(test)]

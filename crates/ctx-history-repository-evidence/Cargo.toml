@@ -13,6 +13,7 @@ publish = false
 chrono.workspace = true
 ctx-history-capture-model = { path = "../ctx-history-capture-model" }
 ctx-history-core = { path = "../ctx-history-core" }
+ctx-history-jsonl = { path = "../ctx-history-jsonl" }
 libc.workspace = true
 serde.workspace = true
 serde_json.workspace = true

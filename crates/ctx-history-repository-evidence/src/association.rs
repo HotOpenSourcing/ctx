@@ -7,7 +7,7 @@ use serde_json::Value;
 use url::{Host, Url};
 
 use super::shell::bounded_pull_request_association_query;
-use crate::exact_json_value;
+use ctx_history_jsonl::exact_json_value;
 
 const MAX_ASSOCIATION_OUTPUT_BYTES: usize = 1024 * 1024;
 

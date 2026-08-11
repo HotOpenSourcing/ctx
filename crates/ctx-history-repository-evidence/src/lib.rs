@@ -1,7 +1,6 @@
 mod association;
 mod attributor;
 mod engine;
-mod exact_json;
 mod git;
 mod identity;
 mod outcome;
@@ -19,7 +18,6 @@ pub use association::{exact_pull_request_association, UnscopedPullRequestAssocia
 pub use attributor::RepositoryAttributor;
 pub use engine::{attribute, MAX_REPOSITORY_CANDIDATES};
 use engine::{ScopedFileInput, ScopedRepositoryFileInvocationEvidence, ScopedVcsInput};
-pub use exact_json::{default_metadata, exact_json_value, raw_object_keys_are_unique};
 use git::CertifiedCandidate;
 use identity::push_abstention;
 pub use outcome::{

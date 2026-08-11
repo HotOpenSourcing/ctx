@@ -23,6 +23,7 @@ PROD_SRCS = glob(["src/**/*.rs"], exclude = RUST_PROD_SRC_EXCLUDES)
 REPOSITORY_EVIDENCE_DEPS = [
     "//crates/ctx-history-capture-model:lib",
     "//crates/ctx-history-core:lib",
+    "//crates/ctx-history-jsonl:lib",
 ]
 
 rust_library(
