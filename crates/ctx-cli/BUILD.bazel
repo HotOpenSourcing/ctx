@@ -432,6 +432,12 @@ ctx_cli_integration_test(
 )
 
 ctx_cli_integration_test(
+    name = "daemon_rendering_tests",
+    src = "tests/daemon_rendering.rs",
+    extra_crates = ["fs2"],
+)
+
+ctx_cli_integration_test(
     name = "explicit_path_revision_upgrade_tests",
     src = "tests/explicit_path_revision_upgrade.rs",
 )

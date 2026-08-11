@@ -31,11 +31,6 @@ mod identity {
     pub fn home_dir() -> Option<std::path::PathBuf> {
         crate::composition::host().home_dir()
     }
-
-    #[cfg(test)]
-    pub fn install_path(data_root: &std::path::Path) -> std::path::PathBuf {
-        data_root.join("install.json")
-    }
 }
 
 mod analytics {
@@ -43,9 +38,7 @@ mod analytics {
 
     use ctx_client_observability::analytics::PublicEventV1;
 
-    use crate::AppConfig;
-
-    pub fn send_batch(data_root: &Path, _config: &AppConfig, events: &[PublicEventV1]) {
+    pub fn send_batch(data_root: &Path, events: &[PublicEventV1]) {
         crate::composition::host().deliver_daemon_events(data_root, events);
     }
 }
@@ -254,6 +247,20 @@ pub use daemon_autostart::{
     replacement_helper_owns_daemon_handoff, DaemonHandoff, DaemonSetupHandoff,
     DaemonUpgradeHandoff,
 };
+
+/// Persists the final-binary restart intent consumed only after daemon readiness.
+pub fn publish_daemon_restart_intent(
+    data_root: &std::path::Path,
+    trigger: DaemonTriggerCommandArg,
+    request_id: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    daemon_autostart::write_daemon_restart_request(data_root, trigger, request_id)
+}
+
+/// Reports whether a recognized final-binary restart intent remains durable.
+pub fn daemon_restart_intent_pending(data_root: &std::path::Path) -> bool {
+    daemon_autostart::read_daemon_restart_request(data_root).is_some()
+}
 mod health_search;
 #[cfg(test)]
 mod tests;

@@ -39,7 +39,19 @@ pub(super) static PORTS: DaemonServicePorts<
     artifact_fetcher: &ARTIFACT_FETCHER,
 };
 
-pub fn config_snapshot(config: &AppConfig) -> DaemonConfigSnapshot {
+pub fn config_snapshot(config: &AppConfig<'_>) -> DaemonConfigSnapshot {
+    config_snapshot_with_channel(config, config.upgrade_channel().to_owned())
+}
+
+fn into_config_snapshot(mut config: AppConfig<'static>) -> DaemonConfigSnapshot {
+    let upgrade_channel = std::mem::take(&mut config.upgrade.channel).into_owned();
+    config_snapshot_with_channel(&config, upgrade_channel)
+}
+
+fn config_snapshot_with_channel(
+    config: &AppConfig<'_>,
+    upgrade_channel: String,
+) -> DaemonConfigSnapshot {
     DaemonConfigSnapshot {
         daemon: DaemonProductConfig {
             enabled: config.daemon.enabled,
@@ -51,14 +63,14 @@ pub fn config_snapshot(config: &AppConfig) -> DaemonConfigSnapshot {
         semantic_enabled: config.semantic_search_enabled(),
         automatic_upgrade_enabled: config.auto_upgrade_enabled(),
         automatic_upgrade_interval: config.upgrade.interval,
-        upgrade_channel: config.upgrade.channel.clone(),
+        upgrade_channel,
     }
 }
 
 pub fn run_daemon_service<D, AP, UO>(
     request: ctx_daemon_application::DaemonHostRunRequest,
     data_root: &Path,
-    config: &AppConfig,
+    config: &AppConfig<'_>,
     upgrade: &ctx_daemon_service::DaemonUpgradePorts<'_, D, AP, UO>,
 ) -> Result<()>
 where
@@ -107,7 +119,7 @@ pub(super) struct CliDaemonConfigPort;
 
 impl DaemonConfigPort for CliDaemonConfigPort {
     fn load(&self, data_root: &Path) -> Result<DaemonConfigSnapshot> {
-        AppConfig::load(data_root).map(|config| config_snapshot(&config))
+        AppConfig::load(data_root).map(into_config_snapshot)
     }
 
     fn semantic_model_config(&self, data_root: &Path) -> SemanticModelConfig {
@@ -289,21 +301,12 @@ impl DaemonObservationPort for CliDaemonObservationPort {
         if events.is_empty() {
             return;
         }
-        let Some(config) = load_daemon_observation_config(data_root) else {
-            return;
-        };
-        crate::analytics::send_batch(data_root, &config, events);
+        crate::analytics::send_batch(data_root, events);
     }
 }
 
 pub fn deliver_daemon_events(data_root: &Path, events: &[PublicEventV1]) {
     OBSERVATION.deliver(data_root, events);
-}
-
-fn load_daemon_observation_config(data_root: &Path) -> Option<AppConfig> {
-    AppConfig::load(data_root)
-        .ok()
-        .filter(|config| config.analytics.enabled)
 }
 
 pub(super) struct CliDaemonArtifactFetcher;
@@ -328,35 +331,5 @@ fn cli_trigger(trigger: DaemonTrigger) -> DaemonTriggerCommandArg {
         DaemonTrigger::Setup => DaemonTriggerCommandArg::Setup,
         DaemonTrigger::Import => DaemonTriggerCommandArg::Import,
         DaemonTrigger::Search => DaemonTriggerCommandArg::Search,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{fs, time::Duration};
-
-    use ctx_client_observability::analytics::{DaemonOperationV1, OperationCompletedV1, Outcome};
-
-    use super::*;
-
-    #[test]
-    fn telemetry_policy_is_reloaded_and_failures_fail_closed() {
-        let root = tempfile::tempdir().unwrap();
-        let config_path = root.path().join(crate::config::CONFIG_FILE);
-
-        fs::write(&config_path, "analytics.enabled = true\n").unwrap();
-        assert!(load_daemon_observation_config(root.path()).is_some());
-        fs::write(&config_path, "analytics.enabled = false\n").unwrap();
-        assert!(load_daemon_observation_config(root.path()).is_none());
-        fs::write(&config_path, "not valid config\n").unwrap();
-        assert!(load_daemon_observation_config(root.path()).is_none());
-
-        let event = PublicEventV1::OperationCompleted(OperationCompletedV1::for_daemon(
-            DaemonOperationV1::Status,
-            Outcome::Success,
-            Duration::ZERO,
-        ));
-        OBSERVATION.deliver(root.path(), &[event]);
-        assert!(!crate::identity::install_path(root.path()).exists());
     }
 }

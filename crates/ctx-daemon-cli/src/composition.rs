@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     io::Write,
     path::{Path, PathBuf},
     sync::OnceLock,
@@ -41,26 +42,26 @@ pub struct AnalyticsConfig {
 }
 
 #[derive(Debug, Clone)]
-pub struct UpgradeConfig {
-    pub auto: String,
-    pub channel: String,
+pub struct UpgradeConfig<'a> {
+    automatic_upgrade_enabled: bool,
+    pub channel: Cow<'a, str>,
     pub interval: Duration,
 }
 
 #[derive(Debug, Clone)]
-pub struct AppConfig {
+pub struct AppConfig<'a> {
     pub analytics: AnalyticsConfig,
-    pub upgrade: UpgradeConfig,
+    pub upgrade: UpgradeConfig<'a>,
     pub daemon: DaemonConfig,
     semantic_enabled: bool,
     semantic_source: &'static str,
 }
 
-impl AppConfig {
+impl<'a> AppConfig<'a> {
     pub fn new(
         analytics_enabled: bool,
         automatic_upgrade_enabled: bool,
-        upgrade_channel: String,
+        upgrade_channel: Cow<'a, str>,
         upgrade_interval: Duration,
         daemon: DaemonConfig,
         semantic_enabled: bool,
@@ -71,11 +72,7 @@ impl AppConfig {
                 enabled: analytics_enabled,
             },
             upgrade: UpgradeConfig {
-                auto: if automatic_upgrade_enabled {
-                    "apply".to_owned()
-                } else {
-                    "off".to_owned()
-                },
+                automatic_upgrade_enabled,
                 channel: upgrade_channel,
                 interval: upgrade_interval,
             },
@@ -85,12 +82,16 @@ impl AppConfig {
         }
     }
 
-    pub fn load(data_root: &Path) -> Result<Self> {
+    pub fn load(data_root: &Path) -> Result<AppConfig<'static>> {
         host().load_config(data_root)
     }
 
-    pub fn auto_upgrade_enabled(&self) -> bool {
-        self.upgrade.auto.eq_ignore_ascii_case("apply")
+    pub const fn auto_upgrade_enabled(&self) -> bool {
+        self.upgrade.automatic_upgrade_enabled
+    }
+
+    pub fn upgrade_channel(&self) -> &str {
+        self.upgrade.channel.as_ref()
     }
 
     pub const fn semantic_search_enabled(&self) -> bool {
@@ -102,12 +103,12 @@ impl AppConfig {
     }
 }
 
-impl Default for AppConfig {
+impl Default for AppConfig<'static> {
     fn default() -> Self {
         Self::new(
             true,
             true,
-            "stable".to_owned(),
+            Cow::Borrowed("stable"),
             Duration::from_secs(24 * 60 * 60),
             DaemonConfig {
                 enabled: true,
@@ -120,14 +121,14 @@ impl Default for AppConfig {
 }
 
 pub trait DaemonCliHost: Send + Sync {
-    fn load_config(&self, data_root: &Path) -> Result<AppConfig>;
+    fn load_config(&self, data_root: &Path) -> Result<AppConfig<'static>>;
     fn set_daemon_enabled(&self, data_root: &Path, enabled: bool) -> Result<()>;
     fn home_dir(&self) -> Option<PathBuf>;
     fn run_daemon_service(
         &self,
         data_root: &Path,
         request: crate::DaemonHostRunRequest,
-        config: &AppConfig,
+        config: &AppConfig<'_>,
     ) -> Result<()>;
     fn deliver_daemon_events(&self, data_root: &Path, events: &[PublicEventV1]);
     fn fetch_to_writer(
@@ -217,7 +218,7 @@ impl TestHost {
 
 #[cfg(test)]
 impl DaemonCliHost for TestHost {
-    fn load_config(&self, data_root: &Path) -> Result<AppConfig> {
+    fn load_config(&self, data_root: &Path) -> Result<AppConfig<'static>> {
         let document = self.parsed_config(data_root)?;
         let mut config = AppConfig::default();
         if let Some(enabled) =
@@ -272,7 +273,7 @@ impl DaemonCliHost for TestHost {
         &self,
         _data_root: &Path,
         _request: crate::DaemonHostRunRequest,
-        _config: &AppConfig,
+        _config: &AppConfig<'_>,
     ) -> Result<()> {
         Err(anyhow!("test daemon service host is unavailable"))
     }
