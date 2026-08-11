@@ -1370,6 +1370,7 @@ fn production_source_paths(root: &Path) -> Vec<PathBuf> {
     let daemon_runtime_root = workspace_root.join("crates/ctx-daemon-runtime");
     let pro_host_root = workspace_root.join("crates/ctx-pro-host");
     let engine_root = workspace_root.join("crates/ctx-upgrade-engine");
+    let history_cli_root = workspace_root.join("crates/ctx-history-cli");
     let terminal_root = workspace_root.join("crates/ctx-terminal");
     let mut paths = vec![
         root.join("build.rs"),
@@ -1379,6 +1380,7 @@ fn production_source_paths(root: &Path) -> Vec<PathBuf> {
     visit_production_source_files(&application_root.join("src"), &mut paths);
     visit_production_source_files(&integrations_root.join("src"), &mut paths);
     visit_production_source_files(&root.join("src"), &mut paths);
+    visit_production_source_files(&history_cli_root.join("src"), &mut paths);
     visit_production_source_files(&terminal_root.join("src"), &mut paths);
     visit_production_source_files(&daemon_runtime_root.join("src"), &mut paths);
     visit_production_source_files(&pro_host_root.join("src"), &mut paths);
@@ -1415,6 +1417,7 @@ fn scan_package() -> Vec<Site> {
     let daemon_runtime_root = workspace_root.join("crates/ctx-daemon-runtime");
     let pro_host_root = workspace_root.join("crates/ctx-pro-host");
     let engine_root = workspace_root.join("crates/ctx-upgrade-engine");
+    let history_cli_root = workspace_root.join("crates/ctx-history-cli");
     let terminal_root = workspace_root.join("crates/ctx-terminal");
     let mut sources = Vec::new();
     for path in production_source_paths(&root) {
@@ -1448,6 +1451,11 @@ fn scan_package() -> Vec<Site> {
         } else if let Ok(relative) = path.strip_prefix(&terminal_root) {
             format!(
                 "crates/ctx-terminal/{}",
+                relative.to_string_lossy().replace('\\', "/")
+            )
+        } else if let Ok(relative) = path.strip_prefix(&history_cli_root) {
+            format!(
+                "crates/ctx-history-cli/{}",
                 relative.to_string_lossy().replace('\\', "/")
             )
         } else {

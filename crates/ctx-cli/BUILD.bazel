@@ -161,7 +161,6 @@ CTX_CLI_COMPILE_DATA = [
 ]
 
 CTX_CLI_TEST_COMPILE_DATA = CTX_CLI_COMPILE_DATA + glob([
-    "src/commands/source_index/render/goldens/**",
     "testdata/**",
 ]) + [
     "//:release_contracts",
@@ -172,16 +171,10 @@ CTX_CLI_TEST_COMPILE_DATA = CTX_CLI_COMPILE_DATA + glob([
 
 RUST_SRCS = glob(["src/**/*.rs"])
 
-# These files are test-only after parsing, but their parent modules reach them
-# through unconditional include! calls, so production rustc actions need them.
-PROD_INCLUDE_SRCS = [
-    "src/commands/source_index/tests.rs",
-]
-
 PROD_SRCS = glob(
     ["src/**/*.rs"],
     exclude = RUST_PROD_SRC_EXCLUDES,
-) + PROD_INCLUDE_SRCS
+)
 
 ctx_rust_binary(
     name = "ctx",

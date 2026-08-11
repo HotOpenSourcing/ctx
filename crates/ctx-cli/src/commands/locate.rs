@@ -49,5 +49,42 @@ pub(crate) fn run_locate(
     local_usage: &mut CliUsage,
     ui: &mut Ui,
 ) -> Result<()> {
-    crate::commands::source_index::run_locate(args, data_root, local_usage, ui)
+    let target = match args.target {
+        LocateTarget::Session(args) => {
+            ctx_history_cli::LocateTarget::Session(ctx_history_cli::LocateSessionArgs {
+                id: args.id,
+                provider: args.provider.map(history_provider),
+                provider_session: args.provider_session,
+                format: history_format(args.format),
+            })
+        }
+        LocateTarget::Event(args) => {
+            ctx_history_cli::LocateTarget::Event(ctx_history_cli::LocateEventArgs {
+                id: args.id,
+                format: history_format(args.format),
+            })
+        }
+    };
+    ctx_history_cli::run_locate(
+        ctx_history_cli::LocateArgs { target },
+        data_root,
+        local_usage,
+        ui,
+    )
+}
+
+fn history_provider(provider: ProviderArg) -> ctx_history_cli::ProviderArg {
+    let capture = provider.capture_provider();
+    ctx_history_cli::ProviderArg(if capture == ctx_history_core::CaptureProvider::Custom {
+        ctx_history_cli::HistoryProvider::Custom
+    } else {
+        ctx_history_cli::HistoryProvider::Native(capture.as_str().to_owned())
+    })
+}
+
+fn history_format(format: JsonOutputFormat) -> ctx_history_cli::JsonOutputFormat {
+    match format {
+        JsonOutputFormat::Text => ctx_history_cli::JsonOutputFormat::Text,
+        JsonOutputFormat::Json => ctx_history_cli::JsonOutputFormat::Json,
+    }
 }

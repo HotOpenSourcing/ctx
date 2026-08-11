@@ -130,12 +130,8 @@ impl LocalToolBackend {
             }
         };
         let (structured, observation, compact) =
-            crate::commands::source_index::mcp_search_with_compact(
-                request,
-                &self.data_root,
-                &config,
-            )
-            .map_err(classify_mcp_search_error)?;
+            crate::commands::source_index::mcp_search_with_compact(request, &self.data_root)
+                .map_err(classify_mcp_search_error)?;
         let search = observation
             .complete_byte_totals()
             .map(|(delivered, matched)| ToolSearchUsageFacts::complete(delivered, matched))
@@ -172,7 +168,11 @@ impl LocalToolBackend {
         crate::commands::source_index::mcp_show_session_application(
             &self.data_root,
             &request.selector,
-            mode,
+            match mode {
+                crate::TranscriptMode::Full => ctx_history_cli::TranscriptMode::Full,
+                crate::TranscriptMode::Lite => ctx_history_cli::TranscriptMode::Lite,
+                crate::TranscriptMode::Log => ctx_history_cli::TranscriptMode::Log,
+            },
             request.limit,
             request.cursor.as_deref(),
             request.output_limit_bytes,

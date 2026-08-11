@@ -66,8 +66,8 @@ const INDEX: TestOwner = TestOwner::behavioral(
     &["IndexWaitHumanOutput", "print_final", "rendered"],
 );
 const SOURCE_INDEX_MACHINE_ERROR: TestOwner = TestOwner::behavioral(
-    "src/commands/source_index/tests/recovery.rs::show_and_search_generation_races_use_the_stable_retryable_json_envelope",
-    &["src/commands/source_index/shared.rs"],
+    "crates/ctx-history-cli/src/source_index/tests/recovery.rs::show_and_search_generation_races_use_the_stable_retryable_json_envelope",
+    &["crates/ctx-history-cli/src/source_index/shared.rs"],
     &["render_show_error", "render_search_error", "from_str"],
 );
 const QUERY_AUTHORITY_DISPATCH_MACHINE_ERROR: TestOwner = TestOwner::behavioral(
@@ -80,18 +80,23 @@ const QUERY_AUTHORITY_DISPATCH_MACHINE_ERROR: TestOwner = TestOwner::behavioral(
     ],
 );
 const SOURCE_INDEX_STREAM: TestOwner = TestOwner::behavioral(
-    "src/commands/source_index/tests.rs::unbounded_cli_show_streams_valid_json_beyond_4096_events_in_order",
-    &["src/commands/source_index/show.rs"],
+    "crates/ctx-history-cli/src/source_index/tests.rs::unbounded_cli_show_streams_valid_json_beyond_4096_events_in_order",
+    &["crates/ctx-history-cli/src/source_index/show.rs"],
     &["stream_cli_session", "events_returned", "from_slice"],
 );
+const HISTORY_CLI_TERMINAL_PORT: TestOwner = TestOwner::behavioral(
+    "crates/ctx-history-cli/src/ports.rs::terminal_port_preserves_selected_stream_bytes",
+    &["crates/ctx-history-cli/src/ports.rs"],
+    &["TerminalPort", "OutputStream", "write", "assert_eq"],
+);
 const LIST_EVENTS_STREAM: TestOwner = TestOwner::behavioral(
-    "src/commands/list/events/tests.rs::jsonl_flushes_each_event_before_fetching_the_next_page_and_completes_once",
-    &["src/commands/list/events.rs"],
+    "crates/ctx-history-cli/src/list_events/tests.rs::jsonl_flushes_each_event_before_fetching_the_next_page_and_completes_once",
+    &["crates/ctx-history-cli/src/list_events.rs"],
     &["write_jsonl_pages", "flush_offsets", "completion"],
 );
 const LIST_EVENTS_ERROR: TestOwner = TestOwner::behavioral(
-    "src/commands/list/events/tests.rs::run_writes_typed_resource_errors_only_to_the_selected_machine_stderr",
-    &["src/commands/list/events.rs"],
+    "crates/ctx-history-cli/src/list_events/tests.rs::run_writes_typed_resource_errors_only_to_the_selected_machine_stderr",
+    &["crates/ctx-history-cli/src/list_events.rs"],
     &["run", "stderr_copy", "from_slice"],
 );
 const STATS: TestOwner = TestOwner::behavioral(
@@ -208,9 +213,9 @@ const ENGINE_BUILD: &str = "crates/ctx-upgrade-engine/build.rs";
 const ANALYTICS_SENDER: &str = "src/analytics.rs";
 const BLAME: &str = "src/commands/blame.rs";
 const INDEX_COMMAND: &str = "src/commands/index.rs";
-const LIST_EVENTS: &str = "src/commands/list/events.rs";
-const SOURCE_INDEX_SHOW: &str = "src/commands/source_index/show.rs";
-const SOURCE_INDEX_SHARED: &str = "src/commands/source_index/shared.rs";
+const LIST_EVENTS: &str = "crates/ctx-history-cli/src/list_events.rs";
+const SOURCE_INDEX_SHOW: &str = "crates/ctx-history-cli/src/source_index/show.rs";
+const SOURCE_INDEX_SHARED: &str = "crates/ctx-history-cli/src/source_index/shared.rs";
 const STATS_COMMAND: &str = "src/commands/stats.rs";
 const STATUS_USAGE: &str = "src/commands/status/usage.rs";
 const DISPATCH: &str = "src/dispatch.rs";
@@ -229,7 +234,6 @@ const PRO_RENDER: &str = "src/pro/render.rs";
 const RELEASE_IDENTITY: &str = "src/release_build_identity.rs";
 const SKILL_INSTALL: &str = "src/skill/install.rs";
 const SKILL_SELECTION: &str = "src/skill/selection.rs";
-const TRANSCRIPT: &str = "src/transcript.rs";
 const UI_DOCUMENT: &str = "crates/ctx-terminal/src/ui/document.rs";
 const UI_MODULE: &str = "crates/ctx-terminal/src/ui/mod.rs";
 const UI_WRITER: &str = "crates/ctx-terminal/src/ui/writer.rs";
@@ -424,6 +428,46 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
         MachineProtocol,
         JSON_PROTOCOL,
         SOURCE_INDEX_MACHINE_ERROR
+    ),
+    allow!(
+        "crates/ctx-history-cli/src/ports.rs",
+        "write#1@835e4aa3042c909d",
+        DirectWrite,
+        Infrastructure,
+        RAW_INFRASTRUCTURE,
+        HISTORY_CLI_TERMINAL_PORT
+    ),
+    allow!(
+        "crates/ctx-history-cli/src/ports.rs",
+        "write#1@835e4aa3042c909d",
+        UiRawWriter,
+        Infrastructure,
+        RAW_INFRASTRUCTURE,
+        HISTORY_CLI_TERMINAL_PORT
+    ),
+    allow!(
+        "crates/ctx-history-cli/src/ports.rs",
+        "write#2@054d53ac226176a9",
+        DirectWrite,
+        Infrastructure,
+        RAW_INFRASTRUCTURE,
+        HISTORY_CLI_TERMINAL_PORT
+    ),
+    allow!(
+        "crates/ctx-history-cli/src/ports.rs",
+        "write#2@054d53ac226176a9",
+        UiRawWriter,
+        Infrastructure,
+        RAW_INFRASTRUCTURE,
+        HISTORY_CLI_TERMINAL_PORT
+    ),
+    allow!(
+        SOURCE_INDEX_SHOW,
+        "run_show_inner#1@958205ea7e234562",
+        UiRawWriter,
+        Infrastructure,
+        SPECIALIZED_STREAM,
+        SOURCE_INDEX_STREAM
     ),
     allow!(
         STATS_COMMAND,
@@ -960,22 +1004,6 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
         InteractivePrompt,
         INTERACTIVE_PICKER,
         SKILL_PROMPT
-    ),
-    allow!(
-        TRANSCRIPT,
-        "write_output#1@2954ed28462f771b",
-        PrintMacro,
-        MachineProtocol,
-        MACHINE_BODY,
-        UNIT
-    ),
-    allow!(
-        TRANSCRIPT,
-        "write_output#2@3e43deb9ab19a3bf",
-        PrintMacro,
-        MachineProtocol,
-        MACHINE_BODY,
-        UNIT
     ),
     allow!(
         UI_DOCUMENT,
