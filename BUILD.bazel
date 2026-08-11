@@ -39,6 +39,32 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+sh_test(
+    name = "history_source_discovery_dependency_boundary_check",
+    srcs = ["//tools/bazel:check-history-source-discovery-boundary.sh"],
+    args = ["$(rootpath BUILD.bazel)"],
+    data = [
+        "BUILD.bazel",
+        "Cargo.toml",
+        "scripts/bazelw",
+        "//crates/ctx-history-capture-model:BUILD.bazel",
+        "//crates/ctx-history-capture-model:cargo_package_data",
+        "//crates/ctx-history-core:BUILD.bazel",
+        "//crates/ctx-history-core:cargo_package_data",
+        "//crates/ctx-history-source-discovery:BUILD.bazel",
+        "//crates/ctx-history-source-discovery:cargo_package_data",
+        "//crates/ctx-history-source-io:BUILD.bazel",
+        "//crates/ctx-history-source-io:cargo_package_data",
+        "//tools/bazel:check_history_source_discovery_boundary.py",
+    ],
+    tags = [
+        "build-graph",
+        "exclusive",
+        "no-cache",
+        "no-sandbox",
+    ],
+)
+
 config_setting(
     name = "dev_linux",
     define_values = {"ctx_dev_linux": "true"},
@@ -108,6 +134,7 @@ CARGO_WORKSPACE_PACKAGE_DATA = [
     "//crates/ctx-history-refresh:cargo_package_data",
     "//crates/ctx-history-refresh-execution:cargo_package_data",
     "//crates/ctx-history-repository-evidence:cargo_package_data",
+    "//crates/ctx-history-source-discovery:cargo_package_data",
     "//crates/ctx-history-source-io:cargo_package_data",
     "//crates/ctx-pro-host:cargo_package_data",
     "//crates/ctx-pro-lifecycle:cargo_package_data",
@@ -140,6 +167,7 @@ LOC_CHECK_SOURCE_DATA = [
     "//crates/ctx-history-refresh:loc_check_inputs",
     "//crates/ctx-history-refresh-execution:loc_check_inputs",
     "//crates/ctx-history-repository-evidence:loc_check_inputs",
+    "//crates/ctx-history-source-discovery:loc_check_inputs",
     "//crates/ctx-history-source-io:loc_check_inputs",
     "//crates/ctx-pro-host:loc_check_inputs",
     "//crates/ctx-pro-lifecycle:loc_check_inputs",
@@ -340,6 +368,16 @@ py_test(
         "//crates/ctx-agent-integrations:BUILD.bazel",
         "//crates/ctx-agent-integrations:Cargo.toml",
     ] + CARGO_WORKSPACE_PACKAGE_DATA,
+)
+
+py_test(
+    name = "history_source_discovery_boundary_mutation_tests",
+    srcs = [
+        "//tools/bazel:check_history_source_discovery_boundary.py",
+        "//tools/bazel:check_history_source_discovery_boundary_test.py",
+    ],
+    imports = ["tools/bazel"],
+    main = "//tools/bazel:check_history_source_discovery_boundary_test.py",
 )
 
 py_test(
@@ -743,6 +781,7 @@ configured_license_materials(
         "//crates/ctx-history-refresh:Cargo.toml",
         "//crates/ctx-history-refresh-execution:Cargo.toml",
         "//crates/ctx-history-repository-evidence:Cargo.toml",
+        "//crates/ctx-history-source-discovery:Cargo.toml",
         "//crates/ctx-history-source-io:Cargo.toml",
         "//crates/ctx-semantic-index:Cargo.toml",
         "//crates/ctx-pro-access:Cargo.toml",

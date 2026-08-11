@@ -889,6 +889,7 @@ dependencies = [
  "ctx-history-index",
  "ctx-history-jsonl",
  "ctx-history-repository-evidence",
+ "ctx-history-source-discovery",
  "ctx-history-source-io",
  "ctx-pro-host-protocol",
  "directories",
@@ -1093,6 +1094,29 @@ dependencies = [
  "tempfile",
  "url",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "ctx-history-source-discovery"
+version = "0.26.0"
+dependencies = [
+ "chrono",
+ "ctx-history-capture-model",
+ "ctx-history-core",
+ "ctx-history-source-io",
+ "directories",
+ "json5",
+ "jsonc-parser",
+ "libc",
+ "quick-xml",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "toml_edit 0.22.27",
 ]
 
 [[package]]

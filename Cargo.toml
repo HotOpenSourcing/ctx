@@ -20,6 +20,7 @@ members = [
     "crates/ctx-history-refresh-execution",
     "crates/ctx-history-repository-evidence",
     "crates/ctx-history-source-io",
+    "crates/ctx-history-source-discovery",
     "crates/ctx-pro-host",
     "crates/ctx-pro-lifecycle",
     "crates/ctx-semantic-index",
