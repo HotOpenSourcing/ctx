@@ -556,15 +556,6 @@ pub(crate) enum DaemonStartModeArg {
     Manual,
 }
 
-impl DaemonStartModeArg {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Manual => "manual",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub(crate) enum DaemonTriggerCommandArg {
     Setup,
