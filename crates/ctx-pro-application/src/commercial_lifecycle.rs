@@ -20,6 +20,7 @@ use ctx_pro_lifecycle::{
 };
 
 use super::CommercialConfig;
+use crate::ReferralAuthMode;
 
 const ENTITLEMENT_REFRESH_RETRY_SECONDS: i64 = 60 * 60;
 const CHECKOUT_POLL_INITIAL_SECONDS: u64 = 3;
@@ -285,6 +286,32 @@ impl<'a, H: CommercialHost + ?Sized> CommercialLifecycle<'a, H> {
             }
         }
         self.persist_tokens(self.host.refresh_session(&session)?)
+    }
+
+    pub fn referral_access_token<C, I>(
+        &self,
+        auth_mode: ReferralAuthMode,
+        clock: &C,
+        interaction: &mut I,
+    ) -> Result<H::AccessToken>
+    where
+        C: CommercialClock + ?Sized,
+        I: CommercialInteraction + ?Sized,
+    {
+        match auth_mode {
+            ReferralAuthMode::Interactive { .. } => self.access_token(clock, interaction),
+            ReferralAuthMode::CachedOnly => {
+                self.access_token_noninteractive(clock).map_err(|error| {
+                    if stable_error_code(&error) == Some("authentication_required") {
+                        anyhow!(
+                            "authentication_required: rerun the referral command without --format json to sign in"
+                        )
+                    } else {
+                        error
+                    }
+                })
+            }
+        }
     }
 
     pub fn stored_access_kind(&self) -> Result<Option<EntitlementAccessKind>> {

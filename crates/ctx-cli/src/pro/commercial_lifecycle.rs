@@ -12,7 +12,7 @@ use ctx_pro_application::{
     acquire_latest_artifact, AnonymousTrialRefresh, ArtifactDeliveryConfig,
     CommercialArtifactDelivery, CommercialClock, CommercialEvent, CommercialInteraction,
     CommercialLifecycle, CommercialService, CommercialVault, InstallationChallengeSigner,
-    SetupAccessPolicy,
+    ReferralAuthMode, SetupAccessPolicy,
 };
 use ctx_pro_host_protocol::INSTALLATION_PUBLIC_KEY_BYTES;
 use ctx_pro_lifecycle::{
@@ -188,24 +188,25 @@ impl CommercialLifecycleService {
             .refresh_entitlement_if_due(&CliLifecycleClock::new())
     }
 
-    pub(super) fn access_token(
+    pub(super) fn referral_access_token(
         &self,
+        auth_mode: ReferralAuthMode,
         ui: &mut Ui,
-        human_output: bool,
-        browser_enabled: bool,
     ) -> Result<WorkOsAccessToken> {
+        let (human_output, browser_enabled) = match auth_mode {
+            ReferralAuthMode::Interactive { browser_enabled } => (true, browser_enabled),
+            ReferralAuthMode::CachedOnly => (false, false),
+        };
         let mut interaction = CliCommercialInteraction {
             ui,
             human_output,
             browser_enabled,
         };
-        self.application()
-            .access_token(&CliLifecycleClock::new(), &mut interaction)
-    }
-
-    pub(super) fn access_token_noninteractive(&self) -> Result<WorkOsAccessToken> {
-        self.application()
-            .access_token_noninteractive(&CliLifecycleClock::new())
+        self.application().referral_access_token(
+            auth_mode,
+            &CliLifecycleClock::new(),
+            &mut interaction,
+        )
     }
 }
 

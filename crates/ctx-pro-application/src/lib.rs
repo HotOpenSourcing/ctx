@@ -14,6 +14,7 @@ mod commercial_lifecycle;
 mod commercial_production_record;
 mod evidence;
 mod lifecycle_commands;
+mod referral;
 mod setup_validation;
 mod status;
 mod uninstall;
@@ -47,6 +48,12 @@ pub use lifecycle_commands::{
     ManageAccess, ManageCommandOutcome, ManagePlan, MaterializationFact, ReconcileFact,
     SetupAccess, SetupAccessRequest, SetupAdmission, SetupCommandHost, SetupCommandOutcome,
     SetupCompletion, SetupPlan, SetupStart,
+};
+pub use referral::{
+    admit_referral, execute_referral, is_iso_country_code, retry_referral_payout,
+    validate_referral_codename, validate_referral_country, ReferralAdmission, ReferralAuthMode,
+    ReferralClock, ReferralCommand, ReferralIdentity, ReferralOutcome, ReferralPayoutResponse,
+    ReferralPayoutRetry, ReferralRequest, ReferralService,
 };
 pub use setup_validation::{setup_artifact, validate_account_state, validate_staged_helper};
 pub use status::{lifecycle_status_value, LifecycleStatus};

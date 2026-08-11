@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use ctx_pro_application::AuthorizationProvider as _;
 use ctx_pro_application::{
-    CoreOrchestration, Identity, ProApplication, SetupCommandHost, StoredAuthorizationProvider,
+    CoreOrchestration, Identity, ProApplication, ReferralAdmission, ReferralIdentity,
+    SetupCommandHost, StoredAuthorizationProvider,
 };
 use ctx_pro_host::{
     AuthorizationMode, AuthorizationReceipt, CoreGenerationHost, CoreGenerationPin,
@@ -43,6 +44,29 @@ impl Identity for CtxInstalledProHost {
     fn existing_installation_id(&self, data_root: &Path) -> Result<Option<String>> {
         <Self as InstalledProHost>::existing_installation_id(self, data_root)
     }
+}
+
+impl ReferralIdentity for CtxInstalledProHost {
+    fn existing_referral_identity(&self, data_root: &Path) -> Result<Option<String>> {
+        crate::identity::existing_installation_id(data_root)
+    }
+
+    fn initialize_referral_identity(&self, data_root: &Path) -> Result<()> {
+        crate::identity::installation_id(data_root).map(|_| ())
+    }
+}
+
+pub(super) fn admit_referral(
+    data_root: &Path,
+    cached_identity_only: bool,
+    create_lifecycle_root: bool,
+) -> Result<ReferralAdmission> {
+    ctx_pro_application::admit_referral(
+        &HOST,
+        data_root,
+        cached_identity_only,
+        create_lifecycle_root,
+    )
 }
 
 impl SetupCommandHost<SetupArtifactBundle> for CtxInstalledProHost {

@@ -5,8 +5,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{bail, Result};
 use clap::{Args, Subcommand};
+use ctx_pro_application::{
+    execute_referral, is_iso_country_code, retry_referral_payout, validate_referral_codename,
+    ReferralAuthMode, ReferralClock, ReferralCommand as ApplicationReferralCommand,
+    ReferralOutcome, ReferralPayoutResponse, ReferralRequest as ApplicationReferralRequest,
+    ReferralService as ApplicationReferralService,
+};
 use serde::Serialize;
 use uuid::Uuid;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -18,7 +24,6 @@ use super::{
     commercial_config::selected_channel,
     commercial_lifecycle::{open_browser, CommercialLifecycleService},
     lifecycle::lifecycle_manifest::ReleaseChannel,
-    workos_device::WorkOsAccessToken,
 };
 use crate::{
     output::JsonOutputFormat,
@@ -31,8 +36,6 @@ use render::{
     payout_country_prompt as render_payout_country_prompt, status as render_status_human,
 };
 
-const REFERRAL_CODENAME_MIN_BYTES: usize = 3;
-const REFERRAL_CODENAME_MAX_BYTES: usize = 32;
 const REFERRAL_CTA_MARKER_PREFIX: &str = ".referral-cta-v1";
 
 #[derive(Debug, Args)]
@@ -128,14 +131,7 @@ impl ReferralCodename {
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
-        if !valid_referral_codename(&self.0) {
-            bail!(
-                "invalid_request: referral codename must be \
-                 {REFERRAL_CODENAME_MIN_BYTES}-{REFERRAL_CODENAME_MAX_BYTES} lowercase ASCII \
-                 letters, digits, or single hyphens, and must start with a letter"
-            );
-        }
-        Ok(())
+        validate_referral_codename(&self.0)
     }
 }
 
@@ -167,25 +163,8 @@ pub(super) fn parse_referral_codename_unchecked(
     Ok(ReferralCodename(value.to_owned()))
 }
 
-pub(super) fn valid_referral_codename(value: &str) -> bool {
-    (REFERRAL_CODENAME_MIN_BYTES..=REFERRAL_CODENAME_MAX_BYTES).contains(&value.len())
-        && value.is_ascii()
-        && value.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        && !value.as_bytes().windows(2).any(|pair| pair == b"--")
-        && value
-            .as_bytes()
-            .last()
-            .is_some_and(u8::is_ascii_alphanumeric)
-}
-
 fn parse_country_code(value: &str) -> Result<CountryCode, String> {
-    if value.len() != 2
-        || !value.bytes().all(|byte| byte.is_ascii_uppercase())
-        || !is_iso_country_code(value)
-    {
+    if !is_iso_country_code(value) {
         return Err(
             "country must be a two-letter uppercase ISO country code, for example US".to_owned(),
         );
@@ -204,10 +183,6 @@ fn parse_country_input(value: &str) -> Result<CountryCode, &'static str> {
         };
     }
     country_code_for_name(value).map(|code| CountryCode(code.to_owned()))
-}
-
-fn is_iso_country_code(value: &str) -> bool {
-    ISO_COUNTRIES.iter().any(|(_, code)| *code == value)
 }
 
 fn country_code_for_name(value: &str) -> Result<&'static str, &'static str> {
@@ -485,13 +460,7 @@ const ISO_COUNTRY_ALIASES: &[(&str, &str)] = &[
     ("North Korea", "KP"),
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ReferralAuthMode {
-    Interactive { browser_enabled: bool },
-    CachedOnly,
-}
-
-pub(super) trait ReferralService {
+pub(super) trait UiReferralService {
     fn create(
         &mut self,
         codename: &str,
@@ -504,35 +473,45 @@ pub(super) trait ReferralService {
         country: Option<&str>,
         auth_mode: ReferralAuthMode,
         ui: &mut Ui,
-    ) -> Result<ReferralPayoutResult>;
+    ) -> Result<ReferralPayoutResponse>;
 }
 
-impl CommercialLifecycleService {
-    fn referral_access_token(
-        &self,
+struct ApplicationServiceAdapter<'a> {
+    service: &'a mut dyn UiReferralService,
+    ui: &'a mut Ui,
+}
+
+impl ApplicationReferralService for ApplicationServiceAdapter<'_> {
+    fn create(
+        &mut self,
+        codename: &str,
         auth_mode: ReferralAuthMode,
-        ui: &mut Ui,
-    ) -> Result<WorkOsAccessToken> {
-        match auth_mode {
-            ReferralAuthMode::Interactive { browser_enabled } => {
-                self.access_token(ui, true, browser_enabled)
-            }
-            ReferralAuthMode::CachedOnly => {
-                self.access_token_noninteractive().map_err(|error| {
-                    if crate::pro::stable_error_code(&error) == Some("authentication_required") {
-                        anyhow::anyhow!(
-                            "authentication_required: rerun the referral command without --format json to sign in"
-                        )
-                    } else {
-                        error
-                    }
-                })
-            }
-        }
+    ) -> Result<ReferralCreateResult> {
+        self.service.create(codename, auth_mode, self.ui)
+    }
+
+    fn status(&mut self, auth_mode: ReferralAuthMode) -> Result<ReferralStatusResult> {
+        self.service.status(auth_mode, self.ui)
+    }
+
+    fn payout(
+        &mut self,
+        country: Option<&str>,
+        auth_mode: ReferralAuthMode,
+    ) -> Result<ReferralPayoutResponse> {
+        self.service.payout(country, auth_mode, self.ui)
     }
 }
 
-impl ReferralService for CommercialLifecycleService {
+struct CliReferralClock;
+
+impl ReferralClock for CliReferralClock {
+    fn unix_time(&self) -> Result<i64> {
+        super::commercial_lifecycle::unix_time()
+    }
+}
+
+impl UiReferralService for CommercialLifecycleService {
     fn create(
         &mut self,
         codename: &str,
@@ -553,9 +532,11 @@ impl ReferralService for CommercialLifecycleService {
         country: Option<&str>,
         auth_mode: ReferralAuthMode,
         ui: &mut Ui,
-    ) -> Result<ReferralPayoutResult> {
+    ) -> Result<ReferralPayoutResponse> {
         let access_token = self.referral_access_token(auth_mode, ui)?;
-        self.api.referral_payout(&access_token, country)
+        self.api
+            .referral_payout(&access_token, country)
+            .map(ReferralPayoutResponse::Unvalidated)
     }
 }
 
@@ -577,22 +558,14 @@ pub(crate) fn run(args: ReferralArgs, data_root: PathBuf, ui: &mut Ui) -> Result
     let _lifecycle_lock = if test_control_active {
         None
     } else {
-        prepare_referral_identity(&data_root, json_output)?;
-        let lifecycle_lock =
-            super::lifecycle::acquire_commercial_lifecycle_lock(&data_root, !json_output)?;
-        Some(lifecycle_lock.ok_or_else(referral_lifecycle_lock_required)?)
+        Some(super::client::admit_referral(
+            &data_root,
+            json_output,
+            !json_output,
+        )?)
     };
     #[cfg(not(ctx_pro_test_helper))]
-    prepare_referral_identity(&data_root, json_output)?;
-    #[cfg(not(ctx_pro_test_helper))]
-    let lifecycle_lock =
-        super::lifecycle::acquire_commercial_lifecycle_lock(&data_root, !json_output)?;
-    #[cfg(not(ctx_pro_test_helper))]
-    let _lifecycle_lock = lifecycle_lock.ok_or_else(|| {
-        anyhow::anyhow!(
-            "authentication_required: rerun the referral command without --format=json to sign in"
-        )
-    })?;
+    let _lifecycle_lock = super::client::admit_referral(&data_root, json_output, !json_output)?;
     #[cfg(ctx_pro_test_helper)]
     let result = if let Some(mut service) = super::test_control::referral_service()? {
         run_with_service_with_input(
@@ -745,32 +718,10 @@ fn rollback_cta_marker(data_root: &Path, channel: ReleaseChannel) {
     }
 }
 
-fn prepare_referral_identity(data_root: &Path, json_output: bool) -> Result<()> {
-    if json_output {
-        if crate::identity::existing_installation_id(data_root)
-            .context("authentication_required: load cached ctx identity")?
-            .is_none()
-        {
-            bail!("authentication_required: rerun the referral command without --format json to sign in");
-        }
-    } else {
-        crate::identity::installation_id(data_root)
-            .context("key_store_unavailable: initialize local ctx identity")?;
-    }
-    Ok(())
-}
-
-#[cfg(ctx_pro_test_helper)]
-fn referral_lifecycle_lock_required() -> anyhow::Error {
-    anyhow::anyhow!(
-        "authentication_required: rerun the referral command without --format=json to sign in"
-    )
-}
-
 #[cfg(test)]
 fn run_with_service(
     args: ReferralArgs,
-    service: &mut dyn ReferralService,
+    service: &mut dyn UiReferralService,
     output: &mut impl io::Write,
     ui: &mut Ui,
     opener: &impl Fn(&str) -> Result<()>,
@@ -781,7 +732,7 @@ fn run_with_service(
 
 fn run_with_service_with_input(
     args: ReferralArgs,
-    service: &mut dyn ReferralService,
+    service: &mut dyn UiReferralService,
     output: &mut impl io::Write,
     input: &mut impl io::BufRead,
     interactive: bool,
@@ -794,14 +745,23 @@ fn run_with_service_with_input(
         args.validate_invocation()?;
         match args.command {
             ReferralCommand::Create(args) => {
-                let auth_mode = if json_output {
-                    ReferralAuthMode::CachedOnly
-                } else {
-                    ReferralAuthMode::Interactive {
-                        browser_enabled: true,
-                    }
+                let outcome = {
+                    let mut service = ApplicationServiceAdapter { service, ui };
+                    execute_referral(
+                        &mut service,
+                        &CliReferralClock,
+                        ApplicationReferralRequest {
+                            command: ApplicationReferralCommand::Create {
+                                codename: args.codename.as_str(),
+                            },
+                            machine_output: json_output,
+                            interactive,
+                        },
+                    )?
                 };
-                let result = service.create(args.codename.as_str(), auth_mode, ui)?;
+                let ReferralOutcome::Created(result) = outcome else {
+                    unreachable!("create request returned a different referral outcome")
+                };
                 if args.format.is_json() {
                     write_json(output, &create_output(&result))
                 } else {
@@ -811,14 +771,21 @@ fn run_with_service_with_input(
                 }
             }
             ReferralCommand::Status(args) => {
-                let auth_mode = if json_output {
-                    ReferralAuthMode::CachedOnly
-                } else {
-                    ReferralAuthMode::Interactive {
-                        browser_enabled: true,
-                    }
+                let outcome = {
+                    let mut service = ApplicationServiceAdapter { service, ui };
+                    execute_referral(
+                        &mut service,
+                        &CliReferralClock,
+                        ApplicationReferralRequest {
+                            command: ApplicationReferralCommand::Status,
+                            machine_output: json_output,
+                            interactive,
+                        },
+                    )?
                 };
-                let result = service.status(auth_mode, ui)?;
+                let ReferralOutcome::Status(result) = outcome else {
+                    unreachable!("status request returned a different referral outcome")
+                };
                 if args.format.is_json() {
                     write_json(output, &status_output(&result))
                 } else {
@@ -828,26 +795,37 @@ fn run_with_service_with_input(
                 }
             }
             ReferralCommand::Payout(args) => {
-                let auth_mode = if json_output || !interactive {
-                    ReferralAuthMode::CachedOnly
-                } else {
-                    ReferralAuthMode::Interactive {
-                        browser_enabled: !args.no_open,
-                    }
-                };
                 let requested_country = args.country.as_ref().map(CountryCode::as_str);
-                let result = match service.payout(requested_country, auth_mode, ui) {
-                    Ok(result) => result,
-                    Err(error)
-                        if requested_country.is_none() && is_country_required_error(&error) =>
-                    {
-                        if json_output || !interactive {
-                            return Err(payout_country_required_error());
-                        }
+                let outcome = {
+                    let mut service = ApplicationServiceAdapter { service, ui };
+                    execute_referral(
+                        &mut service,
+                        &CliReferralClock,
+                        ApplicationReferralRequest {
+                            command: ApplicationReferralCommand::Payout {
+                                country: requested_country,
+                                no_open: args.no_open,
+                            },
+                            machine_output: json_output,
+                            interactive,
+                        },
+                    )?
+                };
+                let result = match outcome {
+                    ReferralOutcome::Payout(result) => result,
+                    ReferralOutcome::CountryRequired(retry) => {
                         let country = prompt_payout_country(input, ui)?;
-                        service.payout(Some(country.as_str()), auth_mode, ui)?
+                        let mut service = ApplicationServiceAdapter { service, ui };
+                        retry_referral_payout(
+                            &mut service,
+                            &CliReferralClock,
+                            retry,
+                            country.as_str(),
+                        )?
                     }
-                    Err(error) => return Err(error),
+                    ReferralOutcome::Created(_) | ReferralOutcome::Status(_) => {
+                        unreachable!("payout request returned a different referral outcome")
+                    }
                 };
                 if args.format.is_json() {
                     return write_json(output, &payout_output(&result, false));
@@ -870,16 +848,6 @@ fn run_with_service_with_input(
 }
 
 const REFERRAL_PAYOUT_COUNTRY_REQUIRED: &str = "referral_payout_country_required";
-
-fn is_country_required_error(error: &anyhow::Error) -> bool {
-    crate::pro::stable_error_code(error) == Some(REFERRAL_PAYOUT_COUNTRY_REQUIRED)
-}
-
-fn payout_country_required_error() -> anyhow::Error {
-    anyhow::anyhow!(
-        "{REFERRAL_PAYOUT_COUNTRY_REQUIRED}: a payout country is required; supply --country <CC>"
-    )
-}
 
 fn prompt_payout_country(input: &mut impl io::BufRead, ui: &mut Ui) -> Result<CountryCode> {
     ui.write_stderr(&render_payout_country_prompt(ui.stderr_context()))?;
@@ -1062,22 +1030,6 @@ mod tests {
     }
 
     #[test]
-    fn payout_country_collection_requires_the_stable_worker_error_code() {
-        assert!(is_country_required_error(&anyhow::anyhow!(
-            "referral_payout_country_required: country is required"
-        )));
-        for error in [
-            "invalid_request: country is required",
-            "invalid_request: commercial service rejected the request",
-        ] {
-            assert!(
-                !is_country_required_error(&anyhow::anyhow!("{error}")),
-                "{error} must not trigger country collection"
-            );
-        }
-    }
-
-    #[test]
     fn payout_help_is_individual_only_and_has_no_entity_type_option() {
         let mut command = Cli::command();
         let payout = command
@@ -1251,11 +1203,7 @@ mod tests {
     #[test]
     fn interactive_referral_prepares_the_private_pro_lifecycle_root() {
         let root = tempfile::tempdir().unwrap();
-        prepare_referral_identity(root.path(), false).unwrap();
-
-        let _lock = super::super::lifecycle::acquire_commercial_lifecycle_lock(root.path(), true)
-            .unwrap()
-            .expect("interactive referrals create the Pro lifecycle root");
+        let _admission = super::super::client::admit_referral(root.path(), false, true).unwrap();
 
         ctx_history_core::platform_security::verify_private_directory(
             &ctx_pro_host_protocol::ProFilesystemLayout::new(root.path()).pro_root(),

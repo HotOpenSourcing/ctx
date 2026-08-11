@@ -8,7 +8,6 @@ use ctx_pro_lifecycle::{
     release_manifest::ReleaseTrust,
 };
 
-pub(super) use ctx_pro_lifecycle::installation::acquire_commercial_lifecycle_lock;
 pub(super) use ctx_pro_lifecycle::release_manifest as lifecycle_manifest;
 
 #[path = "lifecycle_commands.rs"]
