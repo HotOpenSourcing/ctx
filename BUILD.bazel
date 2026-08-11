@@ -315,7 +315,15 @@ py_test(
         "scripts/tests/check_rust_crate_size_test.py",
     ],
     data = ["scripts/check-rust-crate-size-policy-v1.json"],
+    deps = ["@ctx_tomli//:lib"],
     main = "scripts/tests/check_rust_crate_size_test.py",
+)
+
+py_binary(
+    name = "rust_crate_size_preflight",
+    srcs = ["scripts/check-rust-crate-size.py"],
+    deps = ["@ctx_tomli//:lib"],
+    main = "scripts/check-rust-crate-size.py",
 )
 
 py_test(
