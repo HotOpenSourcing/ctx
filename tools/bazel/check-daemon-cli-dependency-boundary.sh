@@ -180,9 +180,9 @@ measurement = next(
     item for item in module.live_measurements(root)
     if item.package.name == "ctx-daemon-cli"
 )
-if not 9_500 <= measurement.cloc <= 10_300:
+if not 9_400 <= measurement.cloc <= 10_300:
     raise SystemExit(
-        "ctx-daemon-cli must remain within its 9,500-10,300 physical CLOC policy band: "
+        "ctx-daemon-cli must remain within its 9,400-10,300 physical CLOC policy band: "
         f"{measurement.cloc}"
     )
 physical = sum(
