@@ -1084,6 +1084,7 @@ dependencies = [
  "chrono",
  "ctx-history-capture-model",
  "ctx-history-core",
+ "ctx-history-jsonl",
  "libc",
  "serde",
  "serde_json",
