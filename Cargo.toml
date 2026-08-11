@@ -8,6 +8,7 @@ members = [
     "crates/ctx-daemon-service",
     "crates/ctx-daemon-runtime",
     "crates/ctx-pro-access",
+    "crates/ctx-pro-application",
     "crates/ctx-upgrade-engine",
     "crates/ctx-history-capture",
     "crates/ctx-history-capture-model",

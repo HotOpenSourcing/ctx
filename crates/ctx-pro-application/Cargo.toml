@@ -1,0 +1,25 @@
+[package]
+name = "ctx-pro-application"
+version = "1.0.0"
+description = "Headless public Pro application workflows for ctx"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+ctx-history-index = { path = "../ctx-history-index" }
+ctx-pro-host = { path = "../ctx-pro-host" }
+ctx-pro-host-protocol = { path = "../ctx-pro-host-protocol" }
+ctx-pro-lifecycle = { path = "../ctx-pro-lifecycle" }
+
+[dev-dependencies]
+ctx-history-core = { path = "../ctx-history-core" }
+sha2.workspace = true
+tempfile.workspace = true

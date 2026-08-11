@@ -17,8 +17,6 @@ use crate::{
     pro::{print_blame_result, print_blame_result_with_evidence_preview, DEFAULT_BLAME_LIMIT},
 };
 
-mod evidence_hydration;
-
 #[derive(Debug, Args)]
 #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
 pub(crate) struct BlameArgs {
@@ -310,7 +308,7 @@ pub(crate) fn hydrate_evidence_context(
     data_root: &std::path::Path,
     result: &ctx_pro_host_protocol::BlameResult,
 ) -> crate::pro::evidence_preview::EvidencePreviewModel {
-    evidence_hydration::hydrate_evidence_previews(data_root, result)
+    ctx_pro_application::hydrate_evidence_previews(data_root, result)
 }
 
 fn run_with(

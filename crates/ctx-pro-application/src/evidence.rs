@@ -5,7 +5,7 @@ use ctx_history_index::{CoreEventPageBudget, CoreEventRecord, VerifiedIndex};
 use ctx_pro_host_protocol::{BlameResult, NumberedEvidence, ResolvedBlameTarget};
 use uuid::Uuid;
 
-use crate::pro::evidence_preview::{
+use ctx_pro_host::evidence_preview::{
     project_evidence_previews, EvidencePreviewModel, VerifiedEvidenceRecord,
     MAX_EVIDENCE_PREVIEW_CITATIONS,
 };
@@ -23,7 +23,7 @@ struct HydratedEvidenceBatch {
     records: Vec<CoreEventRecord>,
 }
 
-pub(super) fn hydrate_evidence_previews(
+pub fn hydrate_evidence_previews(
     data_root: &Path,
     result: &BlameResult,
 ) -> EvidencePreviewModel {

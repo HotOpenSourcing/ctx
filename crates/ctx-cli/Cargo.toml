@@ -61,6 +61,7 @@ ctx-history-index = { path = "../ctx-history-index" }
 ctx-history-read-application = { path = "../ctx-history-read-application" }
 ctx-history-refresh = { path = "../ctx-history-refresh" }
 ctx-pro-access = { path = "../ctx-pro-access" }
+ctx-pro-application = { path = "../ctx-pro-application" }
 ctx-pro-host = { path = "../ctx-pro-host" }
 ctx-pro-host-protocol = { path = "../ctx-pro-host-protocol" }
 ctx-pro-lifecycle = { path = "../ctx-pro-lifecycle" }

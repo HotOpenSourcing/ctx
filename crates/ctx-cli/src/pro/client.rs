@@ -6,6 +6,7 @@ use ctx_pro_host::{
     AuthorizationMode, AuthorizationReceipt, CoreGenerationHost, CoreGenerationPin,
     InstalledProHost,
 };
+use ctx_pro_application::{CoreOrchestration, MaterializationMode, ProApplication};
 use ctx_pro_host_protocol::{AuthorizationRequest, BlameTarget, AUTHORIZATION_CHALLENGE_BYTES};
 use ctx_pro_lifecycle::installed_artifact::ValidatedArtifactIdentity;
 
@@ -132,6 +133,42 @@ impl CoreGenerationHost for CtxInstalledProHost {
     }
 }
 
+impl CoreOrchestration for CtxInstalledProHost {
+    fn prepare_materialization_generation(&self, data_root: &Path) -> Result<String> {
+        let config = crate::config::AppConfig::load(data_root)
+            .context("source_unavailable: load daemon configuration for Pro materialization")?;
+        if config.daemon.mode.runs_only_source_refresh() {
+            bail!("not_materialized: source-refresh-only daemon mode excludes Pro materialization");
+        }
+        crate::semantic::autostart_daemon_and_wait(
+            data_root,
+            &config,
+            crate::DaemonTriggerCommandArg::Setup,
+        )
+        .context("source_unavailable: start daemon-owned source materialization")?;
+        let refresh = crate::semantic::coordinate_source_backed_refresh(
+            data_root,
+            crate::semantic::SourceBackedRefreshMode::Wait,
+        )
+        .context("source_unavailable: publish provider sources before Pro materialization")?;
+        let generation_id = refresh.pin.generation_id().to_owned();
+        self.wait_for_pro_generation(data_root, &generation_id)?;
+        Ok(generation_id)
+    }
+
+    fn wait_for_pro_generation(&self, data_root: &Path, generation_id: &str) -> Result<()> {
+        crate::semantic::wait_for_source_backed_pro_generation(data_root, generation_id)
+    }
+
+    fn wake_blame_refresh(&self, data_root: &Path) -> Result<()> {
+        crate::semantic::coordinate_source_backed_refresh(
+            data_root,
+            crate::semantic::SourceBackedRefreshMode::Background,
+        )
+        .map(|_| ())
+    }
+}
+
 pub(crate) fn preflight_core_materialization(data_root: &Path) -> Result<()> {
     ctx_pro_host::preflight_core_materialization(&HOST, data_root)
 }
@@ -160,14 +197,14 @@ pub(crate) fn smoke_validated_helper(
 }
 
 pub(crate) fn status(data_root: &Path) -> ProStatus {
-    ctx_pro_host::status(&HOST, data_root)
+    ProApplication::new(&HOST).status(data_root)
 }
 
 pub(crate) fn status_for_core(
     data_root: &Path,
     active_core: Option<&ctx_history_index::VerifiedIndex>,
 ) -> ProStatus {
-    ctx_pro_host::status_for_core(&HOST, data_root, active_core)
+    ProApplication::new(&HOST).status_for_core(data_root, active_core)
 }
 
 #[cfg(test)]
@@ -198,113 +235,28 @@ fn materialize_with_operation(
     operation: Option<&ctx_pro_lifecycle::operation::LifecycleOperation>,
     telemetry: &mut ProMaterializationTelemetryV1,
 ) -> Result<MaterializeReport> {
-    let result = materialize_once(data_root, operation, telemetry).and_then(|report| {
-        super::pending_materialization::clear_after(data_root, operation, report)
-    });
+    let result = ProApplication::new(&HOST)
+        .materialize_in(data_root, operation)
+        .map(|outcome| {
+            telemetry.helper_connection = ProHelperConnectionOutcomeV1::Connected;
+            telemetry.mode = Some(match outcome.mode {
+                MaterializationMode::NoOp => ProMaterializationModeV1::NoOp,
+                MaterializationMode::Full => ProMaterializationModeV1::Full,
+                MaterializationMode::Incremental => ProMaterializationModeV1::Incremental,
+            });
+            telemetry.complete(
+                outcome.report.batches,
+                if outcome.mode == MaterializationMode::NoOp { 0 } else { outcome.report.source_count },
+                if outcome.mode == MaterializationMode::NoOp { 0 } else { outcome.report.source_count },
+                outcome.report.replayed_batches,
+                if outcome.mode == MaterializationMode::NoOp { 0 } else { outcome.report.source_count },
+            );
+            outcome.report
+        });
     if let Err(error) = &result {
         telemetry.fail(stable_error_code(error));
     }
     result
-}
-
-fn materialize_once(
-    data_root: &Path,
-    operation: Option<&ctx_pro_lifecycle::operation::LifecycleOperation>,
-    telemetry: &mut ProMaterializationTelemetryV1,
-) -> Result<MaterializeReport> {
-    let start_result = match operation {
-        Some(operation) => ctx_pro_host::start_materialization_in(&HOST, data_root, operation),
-        None => ctx_pro_host::start_materialization(&HOST, data_root),
-    };
-    let start = match start_result {
-        Ok(start) => {
-            telemetry.helper_connection = ProHelperConnectionOutcomeV1::Connected;
-            start
-        }
-        Err(error) => {
-            telemetry.helper_connection = pro_helper_connection_outcome(stable_error_code(&error));
-            return Err(error);
-        }
-    };
-
-    let config = crate::config::AppConfig::load(data_root)
-        .context("source_unavailable: load daemon configuration for Pro materialization")?;
-    if config.daemon.mode.runs_only_source_refresh() {
-        bail!("not_materialized: source-refresh-only daemon mode excludes Pro materialization");
-    }
-    crate::semantic::autostart_daemon_and_wait(
-        data_root,
-        &config,
-        crate::DaemonTriggerCommandArg::Setup,
-    )
-    .context("source_unavailable: start daemon-owned source materialization")?;
-    let refresh = crate::semantic::coordinate_source_backed_refresh(
-        data_root,
-        crate::semantic::SourceBackedRefreshMode::Wait,
-    )
-    .context("source_unavailable: publish provider sources before Pro materialization")?;
-    let core_generation_id = refresh.pin.generation_id().to_owned();
-
-    crate::semantic::wait_for_source_backed_pro_generation(data_root, &core_generation_id)?;
-
-    let was_unmaterialized = start.prior_core_generation_id.is_none();
-    let no_op = start.prior_core_generation_id.as_deref() == Some(core_generation_id.as_str());
-    let finish_result = match operation {
-        Some(operation) => ctx_pro_host::finish_materialization_in(
-            &HOST,
-            data_root,
-            operation,
-            start,
-            core_generation_id,
-        ),
-        None => ctx_pro_host::finish_materialization(&HOST, data_root, start, core_generation_id),
-    };
-    let report = match finish_result {
-        Ok(report) => {
-            telemetry.helper_connection = ProHelperConnectionOutcomeV1::Connected;
-            report
-        }
-        Err(error) => {
-            telemetry.helper_connection = pro_helper_connection_outcome(stable_error_code(&error));
-            return Err(error);
-        }
-    };
-
-    telemetry.mode = Some(if no_op {
-        ProMaterializationModeV1::NoOp
-    } else if was_unmaterialized {
-        ProMaterializationModeV1::Full
-    } else {
-        ProMaterializationModeV1::Incremental
-    });
-    telemetry.complete(
-        report.batches,
-        if no_op { 0 } else { report.source_count },
-        if no_op { 0 } else { report.source_count },
-        report.replayed_batches,
-        if no_op { 0 } else { report.source_count },
-    );
-    Ok(report)
-}
-
-fn wait_for_current_blame_generation(data_root: &Path) -> Result<String> {
-    let mut materialization = ProMaterializationTelemetryV1::started();
-    materialize(data_root, &mut materialization)?;
-
-    let mut expected = crate::semantic::pin_active_verified_generation(data_root)?
-        .generation_id()
-        .to_owned();
-    for _ in 0..3 {
-        crate::semantic::wait_for_source_backed_pro_generation(data_root, &expected)?;
-        let active = crate::semantic::pin_active_verified_generation(data_root)?
-            .generation_id()
-            .to_owned();
-        if active == expected {
-            return Ok(expected);
-        }
-        expected = active;
-    }
-    bail!("stale_source: active verified Core generation advanced repeatedly while preparing blame")
 }
 
 pub(crate) fn blame(
@@ -313,26 +265,7 @@ pub(crate) fn blame(
     limit: u32,
     cursor: Option<String>,
 ) -> Result<HostedBlameResult> {
-    let expected_active_generation = ctx_pro_host::prepare_blame_freshness_with(
-        ctx_pro_host::BlameFreshnessPolicy::LatestCommitted,
-        || {
-            crate::semantic::coordinate_source_backed_refresh(
-                data_root,
-                crate::semantic::SourceBackedRefreshMode::Background,
-            )
-            .map(|_| ())
-        },
-        || wait_for_current_blame_generation(data_root),
-    )
-    .map_err(|error| blame_boundary_error(error, target))?;
-    ctx_pro_host::blame(
-        &HOST,
-        data_root,
-        target,
-        limit,
-        cursor,
-        expected_active_generation,
-    )
+    ProApplication::new(&HOST).blame(data_root, target, limit, cursor)
 }
 
 #[cfg(test)]
