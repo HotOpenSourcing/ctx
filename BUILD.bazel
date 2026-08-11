@@ -219,10 +219,18 @@ sh_test(
     data = [
         "BUILD.bazel",
         "Cargo.toml",
+        "scripts/bazelw",
         ":history_cli_boundary_inputs",
         "//tools/bazel:check_history_cli_boundary.py",
     ],
-    tags = ["no-cache"],
+    # This gate queries the complete live Bazel graph so composed labels and
+    # loaded macros cannot evade its static inventory.
+    tags = [
+        "build-graph",
+        "exclusive",
+        "no-cache",
+        "no-sandbox",
+    ],
 )
 
 loc_check_manifest(

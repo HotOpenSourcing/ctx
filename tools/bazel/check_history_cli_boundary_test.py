@@ -11,10 +11,12 @@ import unittest
 from pathlib import Path
 
 from check_history_cli_boundary import (
+    EVALUATED_REVERSE_BAZEL_CONSUMERS,
     HISTORY_LABEL,
     HISTORY_TEST_SUPPORT_LABEL,
     BoundaryError,
     validate,
+    validate_evaluated_reverse_bazel_consumers,
 )
 
 
@@ -258,6 +260,54 @@ identity::home_dir(); CaptureProvider::Unknown; "quoted""####;
                 with self.assertRaisesRegex(BoundaryError, "unexpected reverse"):
                     self.validate()
                 self.reset()
+
+    def test_concatenated_reverse_bazel_label_fails_closed_after_evaluation(self) -> None:
+        terminal_build = self.root / "crates/ctx-terminal/BUILD.bazel"
+        self.replace(
+            terminal_build,
+            "deps = all_crate_deps(normal = True),",
+            'deps = all_crate_deps(normal = True) + ["//crates/ctx-history-" + "cli:lib"],',
+        )
+        # The static inventory cannot resolve Starlark expressions in an
+        # unreviewed consumer. The live Bazel query below must reject its edge.
+        self.validate()
+        actual = {
+            HISTORY_LABEL: (*EVALUATED_REVERSE_BAZEL_CONSUMERS[HISTORY_LABEL], "//crates/ctx-terminal:lib"),
+            HISTORY_TEST_SUPPORT_LABEL: EVALUATED_REVERSE_BAZEL_CONSUMERS[HISTORY_TEST_SUPPORT_LABEL],
+        }
+        with self.assertRaisesRegex(BoundaryError, "evaluated reverse Bazel consumers"):
+            validate_evaluated_reverse_bazel_consumers(
+                lambda expression: actual[HISTORY_LABEL if HISTORY_LABEL in expression else HISTORY_TEST_SUPPORT_LABEL]
+            )
+
+    def test_loaded_macro_reverse_bazel_dependency_fails_closed_after_evaluation(self) -> None:
+        terminal_build = self.root / "crates/ctx-terminal/BUILD.bazel"
+        terminal_macro = self.root / "crates/ctx-terminal/history_cli_consumer.bzl"
+        terminal_macro.write_text(
+            """def add_history_cli_consumer():
+    native.filegroup(
+        name = "unexpected_history_consumer",
+        srcs = ["//crates/ctx-history-cli:lib"],
+    )
+""",
+            encoding="utf-8",
+        )
+        terminal_build.write_text(
+            'load(":history_cli_consumer.bzl", "add_history_cli_consumer")\n'
+            + terminal_build.read_text(encoding="utf-8")
+            + "\nadd_history_cli_consumer()\n",
+            encoding="utf-8",
+        )
+        # The dependency is in a loaded file, outside the raw BUILD inventory.
+        self.validate()
+        actual = {
+            HISTORY_LABEL: (*EVALUATED_REVERSE_BAZEL_CONSUMERS[HISTORY_LABEL], "//crates/ctx-terminal:unexpected_history_consumer"),
+            HISTORY_TEST_SUPPORT_LABEL: EVALUATED_REVERSE_BAZEL_CONSUMERS[HISTORY_TEST_SUPPORT_LABEL],
+        }
+        with self.assertRaisesRegex(BoundaryError, "evaluated reverse Bazel consumers"):
+            validate_evaluated_reverse_bazel_consumers(
+                lambda expression: actual[HISTORY_LABEL if HISTORY_LABEL in expression else HISTORY_TEST_SUPPORT_LABEL]
+            )
 
     def test_workspace_build_input_inventory_fails_closed(self) -> None:
         with self.assertRaisesRegex(BoundaryError, "BUILD input inventory"):
