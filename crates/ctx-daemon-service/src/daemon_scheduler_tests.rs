@@ -461,7 +461,7 @@ fn healthy_idle_scheduler_performs_zero_source_refresh_scans() {
 }
 
 #[test]
-fn startup_seeded_manual_all_continuation_scans_each_route_once() {
+fn startup_seeded_manual_all_successor_rescans_startup_routes() {
     let temp = tempfile::tempdir().unwrap();
     let data_root = temp.path().join("data");
     ctx_history_core::platform_security::establish_private_data_root(&data_root).unwrap();
@@ -620,11 +620,7 @@ fn startup_seeded_manual_all_continuation_scans_each_route_once() {
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(
         *scans.lock().unwrap(),
-        routes
-            .iter()
-            .cloned()
-            .map(|route| (route, 1))
-            .collect::<BTreeMap<_, _>>()
+        BTreeMap::from([(route(0x81), 2), (route(0x82), 2), (route(0x83), 1)])
     );
     let terminal = read_daemon_job_status(&daemon_core_refresh_job_path(&data_root)).unwrap();
     assert_eq!(terminal["request_id"], manual_request_id);
