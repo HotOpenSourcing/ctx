@@ -54,9 +54,7 @@ struct RenderedJsonError;
 #[error("CLI parser output was already rendered")]
 struct RenderedClapError(u8);
 
-#[derive(Debug, thiserror::Error)]
-#[error("CLI error was already rendered")]
-pub(crate) struct RenderedCliError;
+pub(crate) use ctx_history_cli::RenderedCliError;
 
 pub(crate) fn rendered_cli_error() -> anyhow::Error {
     RenderedCliError.into()

@@ -54,6 +54,7 @@ ctx-daemon-cli = { path = "../ctx-daemon-cli" }
 ctx-history-capture = { path = "../ctx-history-capture" }
 ctx-client-observability = { path = "../ctx-client-observability" }
 ctx-history-core = { path = "../ctx-history-core" }
+ctx-history-cli = { path = "../ctx-history-cli" }
 ctx-history-ingest-application = { path = "../ctx-history-ingest-application" }
 ctx-history-index = { path = "../ctx-history-index" }
 ctx-history-read-application = { path = "../ctx-history-read-application" }

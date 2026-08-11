@@ -15,6 +15,7 @@ members = [
     "crates/ctx-history-capture-model",
     "crates/ctx-history-ingest-application",
     "crates/ctx-history-core",
+    "crates/ctx-history-cli",
     "crates/ctx-history-index",
     "crates/ctx-history-index-format",
     "crates/ctx-history-index-generation",
