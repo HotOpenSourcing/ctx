@@ -10,8 +10,9 @@ use sha2::{Digest, Sha256};
 use super::events::{codex_tool_name, CodexToolCallContext};
 use crate::{
     repository_attribution::{
-        UnscopedFileObservation, UnscopedRepositoryFileInvocationEvidence, MAX_COMMAND_BYTES,
-        MAX_REPOSITORY_CANDIDATES,
+        bounded_outcome_evidence_can_be_positive, bounded_pull_request_association_query,
+        lexical_absolute, UnscopedFileObservation, UnscopedRepositoryFileInvocationEvidence,
+        MAX_COMMAND_BYTES, MAX_REPOSITORY_CANDIDATES,
     },
     OutputOutcomeMetadata,
 };
@@ -50,6 +51,53 @@ pub(crate) fn repository_result_evidence(
         return Some(evidence);
     }
     exact_linked_result_context(payload, context, result_call_id, result_record_sha256)
+}
+
+pub(crate) fn repository_result_candidate(context: &CodexToolCallContext) -> bool {
+    if context.command_too_large {
+        return false;
+    }
+    let Some(command) = context.exact_command.as_deref() else {
+        return false;
+    };
+    if bounded_outcome_evidence_can_be_positive(command) {
+        return true;
+    }
+    context
+        .declared_workdir
+        .as_deref()
+        .or(context.session_cwd.as_deref())
+        .and_then(|base| lexical_absolute(base, None))
+        .and_then(|base| bounded_pull_request_association_query(command, &base))
+        .is_some()
+}
+
+pub(crate) fn repository_invocation_context(
+    payload: &Value,
+    session_cwd: Option<&str>,
+) -> Option<(String, CodexToolCallContext)> {
+    let call_id = bounded_literal(
+        payload.get("call_id")?.as_str()?,
+        MAX_CALL_ID_BYTES,
+        control_identifier,
+    )?;
+    let evidence = repository_tool_evidence_for_core(payload, None);
+    let [evidence] = evidence.as_slice() else {
+        return None;
+    };
+    let mut context = CodexToolCallContext {
+        tool_name: evidence.tool_name.clone(),
+        exact_command: evidence.command.clone(),
+        command_too_large: evidence.command_too_large,
+        session_cwd: session_cwd.map(str::to_owned),
+        declared_workdir: evidence.declared_workdir.clone(),
+        continuation_cell_id: evidence.continuation_cell_id.clone(),
+        ..CodexToolCallContext::default()
+    };
+    if context.exact_command.is_some() || context.command_too_large {
+        context.origin_call_id = Some(call_id.clone());
+    }
+    Some((call_id, context))
 }
 
 fn exact_linked_result_context(

@@ -28,9 +28,10 @@ pub(crate) use outcome::{
     linked_outcome_evidence, LinkedOutcomeEvidence, LinkedOutcomeInput, UnscopedOutcomeObservation,
 };
 pub(crate) use shell::{
-    bounded_outcome_evidence_relevant, bounded_outcome_plan,
-    bounded_pull_request_association_query, lexical_absolute, BoundedCommitProducer,
-    BoundedOutcomeOperation, BoundedOutcomePlan, BoundedOutcomePlanDisposition, MAX_COMMAND_BYTES,
+    bounded_outcome_evidence_can_be_positive, bounded_outcome_evidence_relevant,
+    bounded_outcome_plan, bounded_pull_request_association_query, lexical_absolute,
+    BoundedCommitProducer, BoundedOutcomeOperation, BoundedOutcomePlan,
+    BoundedOutcomePlanDisposition, MAX_COMMAND_BYTES,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

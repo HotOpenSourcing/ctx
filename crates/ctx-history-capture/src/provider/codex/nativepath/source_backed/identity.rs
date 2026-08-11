@@ -204,7 +204,8 @@ pub(super) fn codex_core_record(
     let CodexSourceBackedRowV0 {
         raw_ordinal,
         provider_event_identity,
-        copied_from_native_session_id,
+        copied_from_native_session_id: _,
+        repository_result_origin,
         occurred_at,
         event_type,
         role,
@@ -247,13 +248,7 @@ pub(super) fn codex_core_record(
             evidence.result_call_id.as_deref()?,
         ))
     }) {
-        Some((_origin_call_id, _result_call_id)) => copied_from_native_session_id
-            .map(
-                |ancestor_native_session_id| CodexOutcomeOriginV0::CopiedFromAncestor {
-                    ancestor_native_session_id,
-                },
-            )
-            .or(Some(CodexOutcomeOriginV0::Unproven)),
+        Some((_origin_call_id, _result_call_id)) => Some(repository_result_origin),
         None => None,
     };
     let event_origin = match (
@@ -261,8 +256,11 @@ pub(super) fn codex_core_record(
         repository_result.as_ref(),
         provider_event_identity.as_ref(),
     ) {
+        (Some(CodexInvocationOriginV0::UniqueToSession), Some(_), _) => {
+            Some(ctx_history_core::EventOrigin::UniqueToSession)
+        }
         (
-            Some(CodexOutcomeOriginV0::CopiedFromAncestor {
+            Some(CodexInvocationOriginV0::CopiedFromAncestor {
                 ancestor_native_session_id,
             }),
             Some(evidence),
@@ -298,12 +296,13 @@ pub(super) fn codex_core_record(
     let copied_origin = has_repository_outcomes
         && matches!(
             result_origin.as_ref(),
-            Some(CodexOutcomeOriginV0::CopiedFromAncestor { .. })
+            Some(CodexInvocationOriginV0::CopiedFromAncestor { .. })
         );
     let unproven_origin = has_repository_outcomes
         && !matches!(
             result_origin.as_ref(),
-            Some(CodexOutcomeOriginV0::CopiedFromAncestor { .. })
+            Some(CodexInvocationOriginV0::UniqueToSession)
+                | Some(CodexInvocationOriginV0::CopiedFromAncestor { .. })
         );
     if copied_origin || unproven_origin {
         outcome_observations.clear();

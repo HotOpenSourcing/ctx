@@ -3,10 +3,14 @@ use ctx_history_core::SessionRelationshipKind;
 
 mod mcp;
 mod mcp_exchange;
+mod repository_candidate;
 
 use mcp::project_mcp_tool_call_attribution;
 pub(super) use mcp::{mcp_terminal_candidate_evidence, CodexMcpTerminalAuthority};
 use mcp_exchange::{project_mcp_exchange, selected_content_fits};
+pub(super) use repository_candidate::{
+    CodexRepositoryCandidateAuthority, CodexRepositoryOccurrenceCache,
+};
 
 impl CodexNativeScanner {
     pub(super) fn process_record(
@@ -68,10 +72,12 @@ impl CodexNativeScanner {
             }
             CodexRecordClass::TurnContext => {
                 self.counters.typed_json_parses = self.counters.typed_json_parses.saturating_add(1);
-                match (self.owner.as_mut(), parse_turn_context_cwd(record)) {
-                    (Some(owner), Some(cwd)) => {
+                match (self.owner.as_mut(), parse_turn_context(record)) {
+                    (Some(owner), Some((cwd, turn_id))) => {
                         owner.cwd = Some(cwd);
-                        self.local_turn_started = true;
+                        self.local_turn_started |= turn_id.as_deref().is_some_and(|turn_id| {
+                            valid_local_turn_boundary(&owner.native_session_id, turn_id)
+                        });
                     }
                     (None, _) | (_, None) => self.reject(false),
                 }
@@ -146,8 +152,15 @@ impl CodexNativeScanner {
                     .saturating_add(u64::try_from(lexical_bytes).unwrap_or(u64::MAX));
                 let insert_context = built.tool_context.map(|(call_id, mut context)| {
                     context.session_cwd = owner.cwd.clone();
-                    let authority =
-                        CodexPendingToolAuthority::new(&call_id, start_byte, end_byte, raw_ordinal);
+                    context.invocation_origin =
+                        codex_invocation_origin(owner, self.local_turn_started);
+                    let authority = CodexPendingToolAuthority::new(
+                        &call_id,
+                        start_byte,
+                        end_byte,
+                        raw_ordinal,
+                        context.invocation_origin.clone(),
+                    );
                     (call_id, context, authority)
                 });
                 Ok(CodexRecordProjection {
@@ -304,10 +317,22 @@ impl CodexNativeScanner {
             }
         }
 
+        // Repository-capable invocations use a separate bounded authority so
+        // unrelated display terminals cannot erase exact source-local proof.
+        // Every admitted result requires exactly one qualifying call and one
+        // result for the origin, current result, and each continuation.
         let repository_result = call_id
-            .filter(|call_id| self.mcp_terminal_authority.is_unique_result(call_id))
             .zip(context.as_ref())
+            .filter(|(_, context)| {
+                crate::provider::codex::repository::repository_result_candidate(context)
+            })
             .and_then(|(call_id, context)| {
+                if !self
+                    .repository_candidate_authority
+                    .proves_exact_outcome(context, call_id)
+                {
+                    return None;
+                }
                 crate::provider::codex::repository::repository_result_evidence(
                     &decoded.payload,
                     context,
@@ -490,7 +515,7 @@ impl CodexNativeScanner {
                 for call_id in remove_contexts {
                     self.remove_tool_context(&call_id);
                 }
-                if let Some((call_id, mut context, authority)) = insert_context {
+                if let Some((call_id, mut context, mut authority)) = insert_context {
                     if call_id.len() <= MAX_CODEX_TOOL_CALL_ID_BYTES {
                         if self.tool_contexts.contains_key(&call_id)
                             || self.tool_authorities.contains_key(&call_id)
@@ -503,6 +528,7 @@ impl CodexNativeScanner {
                             }
                         } else {
                             self.link_continuation_context(&call_id, &mut context);
+                            authority.set_invocation_origin(context.invocation_origin.clone());
                             context = bound_tool_context(context);
                             self.tool_authorities.insert(call_id.clone(), authority);
                             self.tool_contexts.insert(call_id, context);
@@ -592,6 +618,9 @@ impl CodexNativeScanner {
             .clone_from(&origin.continuation_call_id_sha256);
         context.continuation_capacity_exceeded = origin.continuation_capacity_exceeded;
         context.correlation_ambiguous = origin.correlation_ambiguous;
+        context
+            .invocation_origin
+            .clone_from(&origin.invocation_origin);
     }
 
     fn remove_tool_context(&mut self, call_id: &str) {
@@ -618,6 +647,48 @@ impl CodexNativeScanner {
         self.counters.rejected_complete_records =
             self.counters.rejected_complete_records.saturating_add(1);
     }
+}
+
+fn codex_invocation_origin(
+    owner: &CodexSessionRow,
+    local_turn_started: bool,
+) -> CodexInvocationOriginV0 {
+    match owner.session_relationship {
+        SessionRelationshipKind::Root
+        | SessionRelationshipKind::Delegated
+        | SessionRelationshipKind::WorkflowChild => CodexInvocationOriginV0::UniqueToSession,
+        SessionRelationshipKind::Forked | SessionRelationshipKind::ResumedFrom
+            if local_turn_started =>
+        {
+            CodexInvocationOriginV0::UniqueToSession
+        }
+        SessionRelationshipKind::Forked | SessionRelationshipKind::ResumedFrom => owner
+            .parent_native_session_id
+            .clone()
+            .map(
+                |ancestor_native_session_id| CodexInvocationOriginV0::CopiedFromAncestor {
+                    ancestor_native_session_id,
+                },
+            )
+            .unwrap_or(CodexInvocationOriginV0::Unproven),
+        SessionRelationshipKind::RelatedUnknown => CodexInvocationOriginV0::Unproven,
+    }
+}
+
+fn valid_local_turn_boundary(native_session_id: &str, turn_id: &str) -> bool {
+    let (Ok(native_session_id), Ok(turn_id)) = (
+        uuid::Uuid::parse_str(native_session_id),
+        uuid::Uuid::parse_str(turn_id),
+    ) else {
+        return false;
+    };
+    uuid_v7_unix_timestamp_ms(&native_session_id)
+        .zip(uuid_v7_unix_timestamp_ms(&turn_id))
+        .is_some_and(|(session_ms, turn_ms)| turn_ms > session_ms)
+}
+
+fn uuid_v7_unix_timestamp_ms(value: &uuid::Uuid) -> Option<u64> {
+    (value.get_version_num() == 7).then_some((value.as_u128() >> 80) as u64)
 }
 
 fn codex_linked_result_discovery_exclusion(
@@ -904,5 +975,31 @@ fn attach_projected_invocation_if_fits(
             return;
         };
         result.insert("invocation".to_owned(), invocation.clone());
+    }
+}
+
+#[cfg(test)]
+mod local_turn_boundary_tests {
+    use super::valid_local_turn_boundary;
+
+    #[test]
+    fn uuid_v7_boundary_uses_only_strictly_later_embedded_timestamps() {
+        let session = "019fb000-0000-7000-8000-0000000000ff";
+        let later = "019fb000-0001-7000-8000-000000000000";
+        let same_time_higher_randomness = "019fb000-0000-7fff-bfff-ffffffffffff";
+
+        assert!(valid_local_turn_boundary(session, later));
+        assert!(!valid_local_turn_boundary(
+            session,
+            same_time_higher_randomness
+        ));
+        assert!(!valid_local_turn_boundary(
+            session,
+            "550e8400-e29b-41d4-a716-446655440000"
+        ));
+        assert!(!valid_local_turn_boundary(
+            "550e8400-e29b-41d4-a716-446655440000",
+            later
+        ));
     }
 }
