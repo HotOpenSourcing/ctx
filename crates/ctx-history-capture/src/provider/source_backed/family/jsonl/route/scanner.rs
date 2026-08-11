@@ -1,6 +1,8 @@
-use ctx_history_core::{CertifiedSource, CertifiedSourceAppend};
+use ctx_history_core::{CertifiedSource, CertifiedSourceAppend, CoreRecord, TypedKey};
 
+use super::super::{JsonlPhysicalRecord, JsonlPhysicalStreamPosition, JsonlReader};
 use super::JsonlFamilyTerminalProof;
+use crate::Result;
 
 use crate::repository_attribution::RepositoryAttributor;
 
@@ -17,11 +19,14 @@ pub(crate) enum JsonlFamilyProjectionMode {
     Replacement,
 }
 
-/// Publication mode selected by an optimized JSONL leaf executor.
-///
-/// The family keeps this seam provider-neutral: adapters may retain a native
-/// parser or staged full-file projection, while the shared driver still owns
-/// inventory, scheduling, writer staging, certification, and revalidation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JsonlFamilySemanticPreflight {
+    Ready,
+    RetryReplacement,
+}
+
+/// Legacy optimized publication mode retained for non-Codex adapters while
+/// they migrate independently to the shared executor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum JsonlFamilyPublication {
     Append,
@@ -46,6 +51,8 @@ impl JsonlFamilyWorkerContext {
     }
 }
 
+/// Legacy optimized outcome retained for non-Codex adapters. Codex uses the
+/// semantic executor, which cannot construct lifecycle evidence.
 #[derive(Debug, Clone)]
 pub(crate) struct JsonlFamilyOptimizedLeafOutcome {
     pub(super) certificate: CertifiedSource,
@@ -74,6 +81,173 @@ impl JsonlFamilyOptimizedLeafOutcome {
             append: Some(append),
             terminal_proof,
         }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct JsonlFamilySemanticPage {
+    records: Vec<CoreRecord>,
+}
+
+impl JsonlFamilySemanticPage {
+    pub(crate) fn new(records: Vec<CoreRecord>) -> Self {
+        Self { records }
+    }
+
+    pub(super) fn into_records(self) -> Vec<CoreRecord> {
+        self.records
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct JsonlFamilySemanticSummary {
+    represented_physical_records: u64,
+    rejected_records: u64,
+    provider_checkpoint: Option<TypedKey>,
+}
+
+impl JsonlFamilySemanticSummary {
+    pub(crate) fn new(
+        represented_physical_records: u64,
+        rejected_records: u64,
+        provider_checkpoint: Option<TypedKey>,
+    ) -> Self {
+        Self {
+            represented_physical_records,
+            rejected_records,
+            provider_checkpoint,
+        }
+    }
+
+    pub(super) fn represented_physical_records(&self) -> u64 {
+        self.represented_physical_records
+    }
+
+    pub(super) fn rejected_records(&self) -> u64 {
+        self.rejected_records
+    }
+
+    pub(super) fn into_provider_checkpoint(self) -> Option<TypedKey> {
+        self.provider_checkpoint
+    }
+}
+
+/// Shared-owned physical input for an adapter's bounded semantic executor.
+///
+/// The executor may consume and roll back records for provider-native paging,
+/// but it cannot construct or return physical checkpoints, certificates,
+/// append evidence, terminal proof, or publication mode. Those remain sealed
+/// in the family driver.
+pub(crate) struct JsonlFamilyExecutionIo {
+    reader: JsonlReader,
+}
+
+impl JsonlFamilyExecutionIo {
+    pub(crate) fn new(reader: JsonlReader) -> Self {
+        Self { reader }
+    }
+
+    pub(crate) fn next_record(&mut self) -> Result<Option<JsonlFamilyExecutionRecord>> {
+        self.reader
+            .next_execution_record()
+            .map(|record| record.map(JsonlFamilyExecutionRecord::new))
+    }
+
+    pub(crate) fn record_bytes(&self, record: JsonlFamilyExecutionRecord) -> Result<&[u8]> {
+        self.reader.execution_record_bytes(record.physical)
+    }
+
+    pub(crate) fn position(&self) -> Result<JsonlFamilyExecutionPosition> {
+        self.reader
+            .execution_position()
+            .map(|physical| JsonlFamilyExecutionPosition { physical })
+    }
+
+    pub(crate) fn settle_preflight(
+        &mut self,
+        initial: JsonlFamilyExecutionPosition,
+    ) -> Result<bool> {
+        self.reader.settle_semantic_preflight(initial.physical)
+    }
+
+    pub(crate) fn restore(&mut self, position: JsonlFamilyExecutionPosition) -> Result<()> {
+        self.reader.restore_execution_position(position.physical)
+    }
+
+    pub(crate) fn offset(&self) -> Result<u64> {
+        self.reader.execution_offset()
+    }
+
+    pub(crate) fn complete_prefix_end(&self) -> Result<u64> {
+        self.reader.execution_complete_prefix_end()
+    }
+
+    pub(crate) fn release_record_buffer(&mut self) -> Result<()> {
+        self.reader.release_execution_record_buffer()
+    }
+
+    pub(super) fn admitted_eof_sha256(&self) -> Result<Option<[u8; 32]>> {
+        self.reader.admitted_eof_sha256()
+    }
+
+    pub(super) fn complete_prefix_ends_with_terminal_nul_padding(&self) -> bool {
+        self.reader.complete_prefix_ends_with_terminal_nul_padding()
+    }
+
+    pub(super) fn into_reader(self) -> JsonlReader {
+        self.reader
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct JsonlFamilyExecutionPosition {
+    physical: JsonlPhysicalStreamPosition,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct JsonlFamilyExecutionRecord {
+    physical: JsonlPhysicalRecord,
+}
+
+impl JsonlFamilyExecutionRecord {
+    fn new(physical: JsonlPhysicalRecord) -> Self {
+        Self { physical }
+    }
+
+    pub(crate) fn physical_ordinal(self) -> u64 {
+        self.physical.physical_ordinal
+    }
+
+    pub(crate) fn byte_start(self) -> u64 {
+        self.physical.byte_start
+    }
+
+    pub(crate) fn byte_end_exclusive(self) -> u64 {
+        self.physical.byte_end_exclusive
+    }
+
+    pub(crate) fn byte_len(self) -> u64 {
+        self.physical.byte_len()
+    }
+
+    pub(crate) fn complete(self) -> bool {
+        self.physical.complete
+    }
+
+    pub(crate) fn terminal_nul_padding(self) -> bool {
+        self.physical.terminal_nul_padding
+    }
+
+    pub(crate) fn oversized(self) -> bool {
+        self.physical.oversized
+    }
+
+    pub(crate) fn stored_len(self) -> usize {
+        self.physical.stored_len
+    }
+
+    pub(crate) fn sha256(self) -> [u8; 32] {
+        self.physical.sha256
     }
 }
 

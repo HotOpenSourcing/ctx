@@ -87,10 +87,6 @@ pub(crate) struct CodexSessionGitMetadata {
     pub(crate) repository_url: Option<String>,
 }
 
-/// Uninhabited compatibility marker for the retired legacy-page guard in
-/// `CodexNativePage`. No scanner path can construct a legacy event row.
-pub(crate) type CodexEventRow = std::convert::Infallible;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CodexSourceBackedRowV0 {
     pub(crate) raw_ordinal: u64,
