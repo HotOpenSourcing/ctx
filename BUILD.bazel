@@ -1179,6 +1179,14 @@ sh_test(
 )
 
 sh_test(
+    name = "pro_application_dependency_boundary_check",
+    srcs = ["//tools/bazel:check-pro-application-dependency-boundary.sh"],
+    args = ["$(rootpath BUILD.bazel)"],
+    data = ["BUILD.bazel", "scripts/bazelw"] + CARGO_WORKSPACE_PACKAGE_DATA + LOC_CHECK_SOURCE_DATA,
+    tags = ["build-graph", "exclusive", "no-cache", "no-sandbox", "security"],
+)
+
+sh_test(
     name = "pro_host_dependency_boundary_check",
     srcs = ["//tools/bazel:check-pro-host-dependency-boundary.sh"],
     args = ["$(rootpath BUILD.bazel)"],

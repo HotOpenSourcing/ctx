@@ -230,6 +230,7 @@ CI_TESTS = [
     ":public_control_surface_check",
     ":pro_access_build_cfg_parity_check",
     ":pro_access_dependency_boundary_check",
+    ":pro_application_dependency_boundary_check",
     ":pro_host_dependency_boundary_check",
     ":pro_lifecycle_dependency_boundary_check",
     ":release_binary_compat_tests",
