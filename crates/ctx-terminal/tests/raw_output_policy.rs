@@ -926,8 +926,8 @@ fn primitive_at(
     document_catalog: &DocumentCatalog,
 ) -> Option<Primitive> {
     let text = tokens[index].text.as_str();
-    if matches!(text, "print" | "println" | "eprint" | "eprintln" | "dbg")
-        && tokens.get(index + 1).map(|token| token.text.as_str()) == Some("!")
+    if origins.aliases.is_standard_print_macro_import(index)
+        || origins.aliases.is_standard_print_macro_call(tokens, index)
     {
         return Some(Primitive::PrintMacro);
     }
