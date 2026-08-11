@@ -186,9 +186,9 @@ if [[ -e "${cli_pro}/commercial_production_record.rs" ]] || \
   exit 1
 fi
 if grep -REn --include='*.rs' \
-  'struct StoredAuthorizationProvider|struct CommercialChannelRecord|store_anonymous_trial_state|VaultAuthorizationProvider|fetch_latest\(' \
+  'struct StoredAuthorizationProvider|struct CommercialChannelRecord|store_anonymous_trial_state|VaultAuthorizationProvider|fetch_latest\(|fn (setup_with_access_policy|anonymous_trial_requires_conversion|anonymous_trial_precedes_paid_conversion|resolve_active_state|poll_checkout_account|poll_checkout_access|checkout_poll_ended|entitlement_still_usable|refresh_entitlement_noninteractive|clear_refresh_backoff|defer_entitlement_refresh|checkout_anonymous_trial|local_entitlement_deadlines)\b' \
   "${cli_pro}"; then
-  echo 'superseded authorization, commercial registry, trial storage, or artifact acquisition authority remains in ctx-cli' >&2
+  echo 'superseded authorization, commercial lifecycle, trial storage, or artifact acquisition authority remains in ctx-cli' >&2
   exit 1
 fi
 

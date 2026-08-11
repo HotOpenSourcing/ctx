@@ -10,6 +10,7 @@ mod application;
 mod artifact_delivery;
 mod authorization;
 mod commercial_config;
+mod commercial_lifecycle;
 mod commercial_production_record;
 mod evidence;
 mod setup_validation;
@@ -30,6 +31,12 @@ pub use artifact_delivery::{
 };
 pub use authorization::{Identity, StoredAuthorizationProvider};
 pub use commercial_config::{selected_channel, CommercialConfig};
+pub use commercial_lifecycle::{
+    setup_with_access_policy, AnonymousTrialRefresh, CommercialArtifactDelivery, CommercialClock,
+    CommercialEvent, CommercialHost, CommercialInteraction, CommercialLifecycle,
+    CommercialManageOutcome, CommercialService, CommercialSetupOutcome, CommercialVault,
+    SetupAccessPolicy,
+};
 pub use ctx_pro_access::authorization::{
     AuthorizationProvider, EntitlementSchedule, InstallationChallengeSigner,
 };
