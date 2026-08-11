@@ -9,9 +9,9 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use ctx_history_core::{
-    derive_event_id, derive_session_id, CaptureProvider, CertifiedSource, CoreRecord,
-    EventIdentityInput, NativeItemKey, NativeSessionKey, RepositoryAbstentionReason,
-    SessionIdentityInput, SourceAnchor, SourceKey, StableEntityId, TypedKey,
+    derive_event_id, derive_native_session_id, CaptureProvider, CertifiedSource, CoreRecord,
+    EventIdentityInput, NativeItemKey, RepositoryAbstentionReason, SourceKey, StableEntityId,
+    TypedKey,
 };
 use ctx_history_index::BaseEventIdentityLookup;
 use serde::{Deserialize, Serialize};
@@ -860,7 +860,7 @@ fn claude_output_outcome(outcome: ClaudeOutputOutcome) -> OutputOutcome {
 fn identities(binding: &Binding) -> Result<Identities> {
     let native_session_key = session_typed_key(&binding.key)?;
     let source = source_key(&binding.key)?;
-    let session_id = session_identity(&source, &native_session_key)?;
+    let session_id = session_identity(&source, native_session_key)?;
     let root_key = ClaudeSessionKey {
         root_session_id: binding.key.root_session_id.clone(),
         workflow_run_id: None,
@@ -870,7 +870,7 @@ fn identities(binding: &Binding) -> Result<Identities> {
     let root_session_id = if binding.layout == SessionLayout::Primary {
         session_id
     } else {
-        session_identity(&root_source, &session_typed_key(&root_key)?)?
+        session_identity(&root_source, session_typed_key(&root_key)?)?
     };
     let parent_session_id = binding.key.agent_id.as_ref().map(|_| root_session_id);
     let (agent_type, is_primary) = match binding.layout {
@@ -907,26 +907,24 @@ fn session_typed_key(key: &ClaudeSessionKey) -> Result<TypedKey> {
 }
 
 fn source_key(key: &ClaudeSessionKey) -> Result<SourceKey> {
-    let anchor = SourceAnchor::provider_native(SOURCE_ANCHOR_NAMESPACE, session_typed_key(key)?)
-        .map_err(contract)?;
-    SourceKey::derive(
+    SourceKey::derive_provider_native(
         CaptureProvider::Claude.as_str(),
         CLAUDE_PROJECTS_SOURCE_FORMAT,
         SOURCE_SCHEMA_VARIANT,
         1,
-        anchor,
+        SOURCE_ANCHOR_NAMESPACE,
+        session_typed_key(key)?,
     )
     .map_err(contract)
 }
 
-fn session_identity(source: &SourceKey, native_key: &TypedKey) -> Result<StableEntityId> {
-    let key =
-        NativeSessionKey::native_id(SESSION_KEY_NAMESPACE, native_key.clone()).map_err(contract)?;
-    derive_session_id(SessionIdentityInput {
+fn session_identity(source: &SourceKey, native_key: TypedKey) -> Result<StableEntityId> {
+    derive_native_session_id(
         source,
-        logical_session_kind: LOGICAL_SESSION_KIND,
-        native_session_key: &key,
-    })
+        LOGICAL_SESSION_KIND,
+        SESSION_KEY_NAMESPACE,
+        native_key,
+    )
     .map_err(contract)
 }
 

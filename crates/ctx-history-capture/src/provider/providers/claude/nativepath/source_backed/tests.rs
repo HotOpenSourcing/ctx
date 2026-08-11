@@ -545,7 +545,7 @@ fn idless_tool_call_fallback_identity_excludes_additive_invocation_cache() {
         agent_id: None,
     };
     let source = source_key(&key).unwrap();
-    let session_id = session_identity(&source, &session_typed_key(&key).unwrap()).unwrap();
+    let session_id = session_identity(&source, session_typed_key(&key).unwrap()).unwrap();
     let (event_id, _) = fallback_event_id(
         &row,
         &source,
@@ -568,7 +568,7 @@ fn fallback_event_ids(bodies: &[&str]) -> Vec<StableEntityId> {
         agent_id: None,
     };
     let source = source_key(&key).unwrap();
-    let session_id = session_identity(&source, &session_typed_key(&key).unwrap()).unwrap();
+    let session_id = session_identity(&source, session_typed_key(&key).unwrap()).unwrap();
     let mut state = FallbackEventIdentityState::default();
     bodies
         .iter()

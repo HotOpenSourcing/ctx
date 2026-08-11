@@ -1,11 +1,10 @@
 //! Thin OpenClaw legacy-session adapter for the shared borrowed JSONL family.
 use chrono::{DateTime, Utc};
 use ctx_history_core::{
-    derive_event_id, derive_session_id, AgentType, CaptureProvider, CoreRecord, EventIdentityInput,
-    EventType, NativeItemKey, NativeSessionKey, RepositoryAbstention, RepositoryAbstentionReason,
-    RepositoryEvidenceKind, RepositoryFileObservationKind, SessionIdentityInput,
-    SessionRelationshipKind, SourceAnchor, SourceKey, StableEntityId, TypedKey,
-    CORE_REPOSITORY_ASSOCIATION_POLICY_REVISION,
+    derive_event_id, derive_native_session_id, AgentType, CaptureProvider, CoreRecord,
+    EventIdentityInput, EventType, NativeItemKey, RepositoryAbstention, RepositoryAbstentionReason,
+    RepositoryEvidenceKind, RepositoryFileObservationKind, SessionRelationshipKind, SourceKey,
+    StableEntityId, TypedKey, CORE_REPOSITORY_ASSOCIATION_POLICY_REVISION,
 };
 use ctx_history_index::BaseEventIdentityLookup;
 use serde::{Deserialize, Serialize};
@@ -354,32 +353,24 @@ struct FallbackEventIdentity {
 type FallbackEventIdentityState = JsonlAppendOccurrenceState<[u8; 32]>;
 
 fn source_key(native_session_id: &str) -> Result<SourceKey> {
-    let anchor = SourceAnchor::provider_native(
-        SOURCE_ANCHOR_NAMESPACE,
-        TypedKey::utf8(native_session_id).map_err(contract)?,
-    )
-    .map_err(contract)?;
-    SourceKey::derive(
+    SourceKey::derive_provider_native(
         CaptureProvider::OpenClaw.as_str(),
         OPENCLAW_SOURCE_FORMAT,
         SOURCE_SCHEMA_VARIANT,
         1,
-        anchor,
+        SOURCE_ANCHOR_NAMESPACE,
+        TypedKey::utf8(native_session_id).map_err(contract)?,
     )
     .map_err(contract)
 }
 
 fn session_identity(source: &SourceKey, native_session_id: &str) -> Result<StableEntityId> {
-    let key = NativeSessionKey::native_id(
+    derive_native_session_id(
+        source,
+        LOGICAL_SESSION_KIND,
         NATIVE_SESSION_NAMESPACE,
         TypedKey::utf8(native_session_id).map_err(contract)?,
     )
-    .map_err(contract)?;
-    derive_session_id(SessionIdentityInput {
-        source,
-        logical_session_kind: LOGICAL_SESSION_KIND,
-        native_session_key: &key,
-    })
     .map_err(contract)
 }
 

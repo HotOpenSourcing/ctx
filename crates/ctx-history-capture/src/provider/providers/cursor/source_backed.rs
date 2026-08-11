@@ -10,11 +10,10 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use ctx_history_core::{
-    derive_event_id, derive_session_id, AgentType, CaptureProvider, CertifiedSource,
+    derive_event_id, derive_native_session_id, AgentType, CaptureProvider, CertifiedSource,
     CoreDiscoveryExclusion, CoreRecord, EventIdentityInput, EventType, NativeItemKey,
-    NativeSessionKey, RepositoryAbstention, RepositoryAbstentionReason, RepositoryEvidenceKind,
-    RepositoryFileObservationKind, SessionIdentityInput, SourceAnchor, SourceKey, StableEntityId,
-    TypedKey,
+    RepositoryAbstention, RepositoryAbstentionReason, RepositoryEvidenceKind,
+    RepositoryFileObservationKind, SourceKey, StableEntityId, TypedKey,
 };
 use ctx_history_index::BaseEventIdentityLookup;
 use serde::{Deserialize, Serialize};
@@ -1059,32 +1058,24 @@ fn cursor_normalized_body(event: &CursorNativeEvent) -> Result<Option<String>> {
 }
 
 fn source_key(native_session_id: &str) -> Result<SourceKey> {
-    let anchor = SourceAnchor::provider_native(
-        SOURCE_ANCHOR_NAMESPACE,
-        TypedKey::utf8(native_session_id).map_err(contract)?,
-    )
-    .map_err(contract)?;
-    SourceKey::derive(
+    SourceKey::derive_provider_native(
         CaptureProvider::Cursor.as_str(),
         CURSOR_AGENT_TRANSCRIPT_SOURCE_FORMAT,
         SOURCE_SCHEMA_VARIANT,
         1,
-        anchor,
+        SOURCE_ANCHOR_NAMESPACE,
+        TypedKey::utf8(native_session_id).map_err(contract)?,
     )
     .map_err(contract)
 }
 
 fn session_id(source: &SourceKey, native_session_id: &str) -> Result<StableEntityId> {
-    let native_session_key = NativeSessionKey::native_id(
+    derive_native_session_id(
+        source,
+        LOGICAL_SESSION_KIND,
         NATIVE_SESSION_NAMESPACE,
         TypedKey::utf8(native_session_id).map_err(contract)?,
     )
-    .map_err(contract)?;
-    derive_session_id(SessionIdentityInput {
-        source,
-        logical_session_kind: LOGICAL_SESSION_KIND,
-        native_session_key: &native_session_key,
-    })
     .map_err(contract)
 }
 
