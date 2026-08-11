@@ -1062,6 +1062,7 @@ dependencies = [
  "anyhow",
  "ctx-history-capture-model",
  "ctx-history-core",
+ "ctx-history-refresh",
  "ctx-history-source-discovery",
  "ctx-history-source-io",
  "serde",
