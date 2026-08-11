@@ -747,7 +747,9 @@ dependencies = [
  "ctx-history-query",
  "ctx-history-refresh",
  "ctx-pro-access",
+ "ctx-pro-host",
  "ctx-pro-host-protocol",
+ "ctx-pro-lifecycle",
  "ctx-semantic-index",
  "ctx-semantic-model",
  "ctx-upgrade-engine",
@@ -1088,6 +1090,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctx-pro-host"
+version = "0.26.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "ctx-history-core",
+ "ctx-history-index",
+ "ctx-history-index-format",
+ "ctx-history-index-generation",
+ "ctx-history-index-query",
+ "ctx-history-refresh",
+ "ctx-pro-access",
+ "ctx-pro-host-protocol",
+ "ctx-pro-lifecycle",
+ "libc",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "uuid",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "ctx-pro-host-protocol"
 version = "0.1.0"
 dependencies = [
@@ -1100,6 +1128,33 @@ dependencies = [
  "sha2",
  "thiserror 1.0.69",
  "uuid",
+]
+
+[[package]]
+name = "ctx-pro-lifecycle"
+version = "0.26.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "ctx-history-core",
+ "ctx-pro-access",
+ "ctx-pro-host-protocol",
+ "ed25519-dalek",
+ "fs2",
+ "libc",
+ "ring",
+ "secret-service",
+ "security-framework",
+ "security-framework-sys",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "ureq 2.12.1",
+ "url",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

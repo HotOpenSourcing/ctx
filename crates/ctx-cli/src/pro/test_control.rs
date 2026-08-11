@@ -577,6 +577,7 @@ impl ProLifecycleService for TestControlService {
 
     fn setup(
         &mut self,
+        _operation: &ctx_pro_lifecycle::operation::LifecycleOperation,
         _data_root: &Path,
         _installed_version: Option<&str>,
         _trial_only: bool,

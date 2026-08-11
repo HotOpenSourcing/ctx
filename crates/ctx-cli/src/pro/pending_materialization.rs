@@ -1,18 +1,9 @@
-use std::{
-    fs::{self, OpenOptions},
-    io::{Read, Write},
-    path::{Path, PathBuf},
-};
+use std::path::Path;
 
-use anyhow::{bail, Context, Result};
-use ctx_history_core::platform_security::{
-    restrict_private_file, verify_private_directory, verify_private_file,
-};
-use ctx_pro_host_protocol::ProFilesystemLayout;
+use anyhow::Result;
 use serde_json::json;
-use uuid::Uuid;
 
-use super::lifecycle::{lifecycle_status_json, sync_parent_directory};
+use super::lifecycle::lifecycle_status_json;
 use crate::{
     pro::PRO_MONTHLY_PRICE_DISPLAY,
     ui::{
@@ -21,48 +12,16 @@ use crate::{
     },
 };
 
-const MARKER_FILE_NAME: &str = ".ctx-pro.materialization-pending";
-const MARKER_CONTENT: &[u8] = b"ctx-pro-materialization-pending-v1\n";
-const MAX_MARKER_BYTES: u64 = 128;
-
-pub(super) fn request(data_root: &Path) -> Result<()> {
-    let marker = marker_path(data_root);
-    let parent = marker
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("invalid_request: Pro marker has no parent"))?;
-    verify_private_directory(parent)
-        .context("invalid_request: verify private Pro lifecycle directory")?;
-    if pending(data_root)? {
-        return Ok(());
-    }
-    let staged = parent.join(format!(".materialization-pending-{}.next", Uuid::new_v4()));
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&staged)
-            .context("write Pro materialization marker")?;
-        restrict_private_file(&staged).context("protect Pro materialization marker")?;
-        file.write_all(MARKER_CONTENT)
-            .context("write Pro materialization marker")?;
-        file.sync_all().context("sync Pro materialization marker")?;
-        fs::rename(&staged, &marker).context("publish Pro materialization marker")?;
-        sync_parent_directory(&marker)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&staged);
-    }
-    result
-}
-
 pub(super) fn defer_setup(
+    operation: &ctx_pro_lifecycle::operation::LifecycleOperation,
     data_root: &Path,
     account_state: &str,
     helper_updated: bool,
     json_output: bool,
     ui: &mut Ui,
 ) -> Result<()> {
-    request(data_root)?;
+    operation.require_data_root(data_root)?;
+    ctx_pro_lifecycle::state_markers::request_materialization(operation)?;
     if json_output {
         println!(
             "{}",
@@ -139,71 +98,34 @@ fn render_deferred_setup_human(context: &RenderContext, account_state: &str) -> 
 }
 
 pub(super) fn pending(data_root: &Path) -> Result<bool> {
-    let marker = marker_path(data_root);
-    match marker.symlink_metadata() {
-        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
-        Ok(_) => bail!("invalid_request: Pro materialization marker is not a regular file"),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error).context("inspect Pro materialization marker"),
-    }
-    verify_private_file(&marker).context("verify Pro materialization marker")?;
-    let mut bytes = Vec::new();
-    fs::File::open(&marker)
-        .context("open Pro materialization marker")?
-        .take(MAX_MARKER_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .context("read Pro materialization marker")?;
-    if bytes != MARKER_CONTENT {
-        bail!("invalid_request: Pro materialization marker is invalid");
-    }
-    Ok(true)
+    ctx_pro_lifecycle::state_markers::materialization_pending(data_root)
 }
 
-pub(super) fn clear(data_root: &Path) -> Result<()> {
-    if !pending(data_root)? {
-        return Ok(());
-    }
-    let marker = marker_path(data_root);
-    fs::remove_file(&marker).context("remove Pro materialization marker")?;
-    sync_parent_directory(&marker)
+pub(super) fn clear(operation: &ctx_pro_lifecycle::operation::LifecycleOperation) -> Result<()> {
+    ctx_pro_lifecycle::state_markers::clear_materialization(operation)
 }
 
-pub(super) fn clear_after<T>(data_root: &Path, value: T) -> Result<T> {
-    clear(data_root)?;
+pub(super) fn clear_after<T>(
+    data_root: &Path,
+    operation: Option<&ctx_pro_lifecycle::operation::LifecycleOperation>,
+    value: T,
+) -> Result<T> {
+    match operation {
+        Some(operation) => {
+            operation.require_data_root(data_root)?;
+            clear(operation)?;
+        }
+        None => ctx_pro_lifecycle::state_markers::clear_materialization_at(data_root)?,
+    }
     Ok(value)
-}
-
-pub(super) fn marker_path(data_root: &Path) -> PathBuf {
-    ProFilesystemLayout::new(data_root)
-        .pro_root()
-        .join(MARKER_FILE_NAME)
 }
 
 #[cfg(test)]
 mod tests {
-    use ctx_history_core::platform_security::restrict_private_directory;
     use unicode_width::UnicodeWidthStr as _;
 
     use super::*;
     use crate::ui::{ColorMode, StreamKind, TestContext};
-
-    #[test]
-    fn marker_is_private_idempotent_and_strict() {
-        let root = tempfile::tempdir().unwrap();
-        let pro = ProFilesystemLayout::new(root.path()).pro_root();
-        fs::create_dir_all(&pro).unwrap();
-        restrict_private_directory(root.path()).unwrap();
-        restrict_private_directory(&pro).unwrap();
-        assert!(!pending(root.path()).unwrap());
-        request(root.path()).unwrap();
-        request(root.path()).unwrap();
-        assert!(pending(root.path()).unwrap());
-        fs::write(marker_path(root.path()), b"wrong").unwrap();
-        assert!(pending(root.path()).is_err());
-        fs::write(marker_path(root.path()), MARKER_CONTENT).unwrap();
-        clear(root.path()).unwrap();
-        assert!(!pending(root.path()).unwrap());
-    }
 
     #[test]
     fn deferred_setup_is_truthful_about_the_pending_graph() {

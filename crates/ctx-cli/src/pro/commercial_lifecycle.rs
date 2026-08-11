@@ -460,6 +460,7 @@ impl ProLifecycleService for CommercialLifecycleService {
 
     fn setup(
         &mut self,
+        operation: &ctx_pro_lifecycle::operation::LifecycleOperation,
         data_root: &Path,
         installed_version: Option<&str>,
         trial_only: bool,
@@ -481,7 +482,15 @@ impl ProLifecycleService for CommercialLifecycleService {
             trial_only,
             referral_codename.is_some(),
             stored_access_kind,
-            || anonymous_trial::setup(self, data_root, installed_version, referral_codename),
+            || {
+                anonymous_trial::setup(
+                    self,
+                    operation,
+                    data_root,
+                    installed_version,
+                    referral_codename,
+                )
+            },
         )? {
             SetupAccessPolicy::Complete(plan) => Ok(plan),
             SetupAccessPolicy::PaidRequired { trial_unavailable } => {
@@ -489,6 +498,7 @@ impl ProLifecycleService for CommercialLifecycleService {
                     ui.write_stderr(&render_trial_conversion(ui.stderr_context()))?;
                 }
                 self.setup_with_paid_access(
+                    operation,
                     data_root,
                     installed_version,
                     ui,
@@ -569,6 +579,7 @@ fn setup_with_access_policy<T>(
 impl CommercialLifecycleService {
     fn setup_with_paid_access(
         &self,
+        operation: &ctx_pro_lifecycle::operation::LifecycleOperation,
         data_root: &Path,
         installed_version: Option<&str>,
         ui: &mut Ui,
@@ -594,6 +605,7 @@ impl CommercialLifecycleService {
             }
             self.store_entitlement(entitlement, &public_key)?;
             let artifact = acquire_latest(
+                operation,
                 data_root,
                 installed_version,
                 ArtifactDeliveryConfig::new(self.api.config(), self.config.release_trust),

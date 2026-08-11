@@ -44,6 +44,8 @@ WORKSPACE_RELEASE_PACKAGES = {
     "ctx-client-observability",
     "ctx-daemon-runtime",
     "ctx-daemon-service",
+    "ctx-pro-host",
+    "ctx-pro-lifecycle",
     "ctx-history-core",
     "ctx-history-index-format",
     "ctx-history-index",

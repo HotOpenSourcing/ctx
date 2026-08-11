@@ -28,28 +28,30 @@ mod uninstall;
 #[path = "lifecycle_commands/validation.rs"]
 mod validation;
 
-use super::{
-    default_helper_path, install_verified_bundle, reconcile_setup_installation_locked, Persistence,
-    SetupInstallation,
-};
+use super::{install_verified_bundle, SetupInstallation};
 use crate::pro::artifact_delivery::SetupArtifactBundle;
+#[cfg(ctx_pro_test_helper)]
+use crate::pro::client::smoke_helper_at_path;
 #[cfg(test)]
 use crate::pro::client::HelperSmoke;
 use crate::pro::client::{
-    materialize, smoke_helper_at_path, status, status_for_core, ProSetupRepairability, ProStatus,
+    materialize, materialize_in, smoke_validated_helper, status, status_for_core,
+    ProSetupRepairability, ProStatus,
 };
 use crate::pro::commercial_lifecycle::CommercialLifecycleService;
 use crate::pro::lifecycle::lifecycle_manifest::ReleaseTrust;
-#[cfg(test)]
-use crate::pro::local_deletion::local_pro_initialization_indicator_exists;
-use crate::pro::local_deletion::{
-    local_pro_graph_key_cleanup_phase_exists, write_local_pro_initialization_indicator,
-    LocalDeletionService,
-};
+use crate::pro::local_deletion::{local_pro_graph_key_cleanup_phase_exists, LocalDeletionService};
 use crate::pro::pending_materialization;
 use crate::pro::referral::{parse_referral_codename_unchecked, ReferralCodename};
 use crate::pro::setup_validation::{
     setup_artifact, validate_account_state, validate_staged_helper,
+};
+#[cfg(test)]
+use crate::pro::{
+    client::default_helper_path,
+    local_deletion::{
+        local_pro_initialization_indicator_exists, write_local_pro_initialization_indicator,
+    },
 };
 use crate::{
     analytics::{
@@ -61,6 +63,7 @@ use crate::{
     pro::stable_error_code,
     ui::Ui,
 };
+use ctx_pro_lifecycle::operation::LifecycleOperation;
 use render::{
     browser_notice as render_browser_notice, manage as render_manage_human,
     setup as render_setup_human,
@@ -70,9 +73,9 @@ use setup_replay::reusable_setup_access_state;
 use setup_replay::{record_helper_smoke, replay_completed_setup, write_setup_result};
 #[cfg(test)]
 use std::fs;
-use uninstall::{preserved_data_marker_is_set, run_uninstall};
 #[cfg(test)]
-use uninstall::{uninstall_payload, PRESERVED_DATA_MARKER_CONTENT};
+use uninstall::uninstall_payload;
+use uninstall::{preserved_data_marker_is_set, run_uninstall};
 use validation::{validate_access_status, validate_portal_url};
 
 #[derive(Debug, Args)]
@@ -236,6 +239,7 @@ pub(crate) trait ProLifecycleService {
     #[allow(clippy::too_many_arguments)]
     fn setup(
         &mut self,
+        operation: &LifecycleOperation,
         data_root: &Path,
         installed_version: Option<&str>,
         trial_only: bool,
@@ -590,25 +594,20 @@ fn run_setup(
     ui: &mut Ui,
 ) -> Result<()> {
     let trust = service.release_trust()?;
-    let target = default_helper_path(data_root);
     telemetry.reconcile = ProReconcileOutcomeV1::Failed;
-    let (installation, plan) = with_pro_initialization(data_root, || {
-        let installation = reconcile_setup_installation_locked(
-            &target,
-            trust.public_key_pem,
-            &mut Persistence::default(),
-        )?;
-        let plan = service.setup(
-            data_root,
-            installation.installed_version(),
-            trial_only,
-            referral_codename,
-            ui,
-            !json_output,
-            !json_output,
-        )?;
-        Ok((installation, plan))
-    })?;
+    let operation = begin_pro_operation(data_root)?;
+    let installation =
+        ctx_pro_lifecycle::installation::reconcile_setup_installation(&operation, trust)?;
+    let plan = service.setup(
+        &operation,
+        data_root,
+        installation.installed_version(),
+        trial_only,
+        referral_codename,
+        ui,
+        !json_output,
+        !json_output,
+    )?;
     let replacing_existing = matches!(
         &installation,
         SetupInstallation::Current(_) | SetupInstallation::RepairRequired
@@ -625,11 +624,11 @@ fn run_setup(
         match bundle {
             SetupArtifactBundle::Release(bundle) => {
                 let smoke = record_helper_smoke(
-                    smoke_helper_at_path(data_root, &bundle.artifact),
+                    smoke_validated_helper(data_root, bundle.identity().clone()),
                     telemetry,
                 )?;
                 validate_staged_helper(&smoke)?;
-                install_verified_bundle(&bundle, data_root, trust)?;
+                install_verified_bundle(&bundle, &operation, trust)?;
                 telemetry.reconcile = if replacing_existing {
                     ProReconcileOutcomeV1::Updated
                 } else {
@@ -651,6 +650,7 @@ fn run_setup(
     };
     if defer_materialization {
         return pending_materialization::defer_setup(
+            &operation,
             data_root,
             &plan.account_state,
             helper_updated,
@@ -660,7 +660,7 @@ fn run_setup(
     }
     // An empty repository-root set still materializes canonical transcript evidence.
     let mut materialization = ProMaterializationTelemetryV1::started();
-    let report = materialize(data_root, &mut materialization);
+    let report = materialize_in(data_root, &operation, &mut materialization);
     if materialization.helper_connection != ProHelperConnectionOutcomeV1::NotAttempted {
         telemetry.helper_connection = materialization.helper_connection;
     }
@@ -700,14 +700,13 @@ fn run_manage_with_opener(
     ui: &mut Ui,
     opener: &dyn Fn(&str) -> Result<()>,
 ) -> Result<()> {
-    let plan = with_pro_initialization(context.data_root, || {
-        service.manage(
-            context.data_root,
-            ui,
-            !context.json_output,
-            !context.json_output && !context.no_open,
-        )
-    })?;
+    let _operation = begin_pro_operation(context.data_root)?;
+    let plan = service.manage(
+        context.data_root,
+        ui,
+        !context.json_output,
+        !context.json_output && !context.no_open,
+    )?;
     validate_portal_url(&plan.portal_url)?;
     validate_access_status(
         &plan.access_state,
@@ -759,20 +758,22 @@ fn run_manage_with_opener(
     Ok(())
 }
 
-fn with_pro_initialization<T>(
-    data_root: &Path,
-    operation: impl FnOnce() -> Result<T>,
-) -> Result<T> {
-    let target = default_helper_path(data_root);
-    let _lifecycle_lock = super::lifecycle_lock::LifecycleLock::acquire(&target, true)?
+fn begin_pro_operation(data_root: &Path) -> Result<LifecycleOperation> {
+    let lifecycle_operation = LifecycleOperation::begin(data_root, true)?
         .ok_or_else(|| anyhow::anyhow!("invalid_request: failed to create Pro lifecycle lock"))?;
     if local_pro_graph_key_cleanup_phase_exists(data_root)? {
         bail!(
             "key_store_unavailable: interrupted Pro deletion must be completed with `ctx pro uninstall --delete-data`"
         );
     }
-    write_local_pro_initialization_indicator(data_root)?;
-    operation()
+    ctx_pro_lifecycle::state_markers::mark_initialized(&lifecycle_operation)?;
+    Ok(lifecycle_operation)
+}
+
+#[cfg(test)]
+fn with_pro_initialization<T>(data_root: &Path, body: impl FnOnce() -> Result<T>) -> Result<T> {
+    let _operation = begin_pro_operation(data_root)?;
+    body()
 }
 
 fn manage_payload(plan: &ProManagePlan, browser_opened: bool) -> serde_json::Value {

@@ -862,6 +862,51 @@ fn old_helper_cannot_clear_pending_target_identity() {
 }
 
 #[test]
+fn current_host_after_old_helper_repair_completes_the_deferred_recheck() {
+    let temp = tempfile::tempdir().unwrap();
+    let index = empty_index(temp.path());
+    let generation = index.generation_id().to_owned();
+    let repaired_helper = "b".repeat(64);
+    publish_helper_recheck_intent(temp.path(), &repaired_helper).unwrap();
+
+    run_with(
+        temp.path(),
+        &generation,
+        ProCatchUpAuthority {
+            generation_id: Some(&generation),
+            verified_index: Some(&index),
+        },
+        |_| Ok(()),
+        |_, supplied| Ok(sync_outcome(supplied, "old-helper", true)),
+    )
+    .unwrap();
+    assert_eq!(
+        helper_recheck_target(temp.path()).unwrap().as_deref(),
+        Some(repaired_helper.as_str())
+    );
+
+    run_with(
+        temp.path(),
+        &generation,
+        ProCatchUpAuthority {
+            generation_id: Some(&generation),
+            verified_index: Some(&index),
+        },
+        |_| Ok(()),
+        |_, supplied| {
+            let receipt = receipt_with_revision(supplied, "current-host");
+            Ok(ProCatchUpSyncOutcome::Finished {
+                receipt,
+                did_work: true,
+                helper_artifact_sha256: repaired_helper.clone(),
+            })
+        },
+    )
+    .unwrap();
+    assert!(helper_recheck_target(temp.path()).unwrap().is_none());
+}
+
+#[test]
 fn pinned_generation_mismatch_fails_before_sync() {
     let temp = tempfile::tempdir().unwrap();
     let index = empty_index(temp.path());
