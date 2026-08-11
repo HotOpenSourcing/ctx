@@ -25,8 +25,6 @@ mod render;
 mod setup_replay;
 #[path = "lifecycle_commands/uninstall.rs"]
 mod uninstall;
-#[path = "lifecycle_commands/validation.rs"]
-mod validation;
 
 use super::{install_verified_bundle, SetupInstallation};
 use crate::pro::artifact_delivery::SetupArtifactBundle;
@@ -62,6 +60,9 @@ use crate::{
     pro::stable_error_code,
     ui::Ui,
 };
+#[cfg(test)]
+use ctx_pro_application::ProSetupRepairability;
+use ctx_pro_application::{validate_access_status, validate_portal_url};
 use ctx_pro_lifecycle::operation::LifecycleOperation;
 use render::{
     browser_notice as render_browser_notice, manage as render_manage_human,
@@ -75,7 +76,6 @@ use std::fs;
 #[cfg(test)]
 use uninstall::uninstall_payload;
 use uninstall::{preserved_data_marker_is_set, run_uninstall};
-use validation::{validate_access_status, validate_portal_url};
 
 #[derive(Debug, Args)]
 pub(crate) struct ProArgs {

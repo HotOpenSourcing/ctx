@@ -1,8 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use ctx_pro_access::authorization::AuthorizationProvider as _;
-use ctx_pro_application::{CoreOrchestration, MaterializationMode, ProApplication};
+use ctx_pro_application::AuthorizationProvider as _;
+use ctx_pro_application::{
+    CoreOrchestration, Identity, MaterializationMode, ProApplication, StoredAuthorizationProvider,
+};
 use ctx_pro_host::{
     AuthorizationMode, AuthorizationReceipt, CoreGenerationHost, CoreGenerationPin,
     InstalledProHost,
@@ -14,16 +16,11 @@ use crate::analytics::{
     ProHelperConnectionOutcomeV1, ProMaterializationModeV1, ProMaterializationTelemetryV1,
 };
 
-use super::{
-    authorization::StoredAuthorizationProvider, commercial_config::CommercialConfig,
-    commercial_lifecycle,
-};
+use super::{commercial_config::CommercialConfig, commercial_lifecycle};
 
 #[cfg(test)]
 pub(crate) use ctx_pro_host::default_helper_path;
 pub(super) use ctx_pro_host::typed_blame_diagnostic;
-#[cfg(test)]
-pub(crate) use ctx_pro_host::ProSetupRepairability;
 pub(crate) use ctx_pro_host::{
     blame_boundary_error, blame_diagnostic, core_finalization_generation_lease,
     invalid_blame_request, reconstruct_core_finalization_generation_lease,
@@ -39,18 +36,26 @@ struct CtxInstalledProHost;
 
 const HOST: CtxInstalledProHost = CtxInstalledProHost;
 
-pub(crate) fn activation_material(
+impl Identity for CtxInstalledProHost {
+    fn existing_installation_id(&self, data_root: &Path) -> Result<Option<String>> {
+        <Self as InstalledProHost>::existing_installation_id(self, data_root)
+    }
+}
+
+pub(crate) fn setup_anonymous_trial(
+    context: ctx_pro_application::AnonymousTrialContext<'_>,
+    operation: &ctx_pro_lifecycle::operation::LifecycleOperation,
     data_root: &Path,
-    identity: ValidatedArtifactIdentity,
-    challenge_base64url: &str,
-    installation_public_key_base64url: &str,
-) -> Result<serde_json::Value> {
-    ctx_pro_host::activation_material(
-        &HOST,
+    installed_version: Option<&str>,
+    referral_codename: Option<&str>,
+) -> Result<ctx_pro_application::AnonymousTrialSetup> {
+    ctx_pro_application::setup_anonymous_trial(
+        &ProApplication::new(&HOST),
+        context,
+        operation,
         data_root,
-        identity,
-        challenge_base64url,
-        installation_public_key_base64url,
+        installed_version,
+        referral_codename,
     )
 }
 
@@ -99,8 +104,16 @@ impl InstalledProHost for CtxInstalledProHost {
         mode: AuthorizationMode,
     ) -> Result<AuthorizationReceipt> {
         let provider = match mode {
-            AuthorizationMode::Normal => StoredAuthorizationProvider::load(data_root)?,
-            AuthorizationMode::Status => StoredAuthorizationProvider::load_for_status(data_root)?,
+            AuthorizationMode::Normal => {
+                StoredAuthorizationProvider::load(data_root, self, || {
+                    commercial_lifecycle::CommercialLifecycleService::refresh_entitlement_if_due(
+                        data_root,
+                    )
+                })?
+            }
+            AuthorizationMode::Status => {
+                StoredAuthorizationProvider::load_for_status(data_root, self)?
+            }
         };
         let entitlement_schedule = Some(provider.entitlement_schedule());
         let request: AuthorizationRequest = provider.authorization_for_challenge(challenge)?;

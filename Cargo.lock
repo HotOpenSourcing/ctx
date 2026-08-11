@@ -1226,6 +1226,7 @@ dependencies = [
  "anyhow",
  "ctx-history-core",
  "ctx-history-index",
+ "ctx-pro-access",
  "ctx-pro-host",
  "ctx-pro-host-protocol",
  "ctx-pro-lifecycle",
@@ -1233,6 +1234,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "url",
  "uuid",
 ]
 

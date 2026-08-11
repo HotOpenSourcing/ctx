@@ -20,6 +20,7 @@ PROD_SRCS = glob(["src/**/*.rs"], exclude = RUST_PROD_SRC_EXCLUDES)
 
 CTX_PRO_APPLICATION_DEPS = [
     "//crates/ctx-history-index:lib",
+    "//crates/ctx-pro-access:lib",
     "//crates/ctx-pro-host:lib",
     "//crates/ctx-pro-host-protocol:lib",
     "//crates/ctx-pro-lifecycle:lib",
@@ -27,6 +28,7 @@ CTX_PRO_APPLICATION_DEPS = [
 
 CTX_PRO_APPLICATION_TEST_DEPS = [
     "//crates/ctx-history-index:lib",
+    "//crates/ctx-pro-access:test_support_lib",
     "//crates/ctx-pro-host:test_support_lib",
     "//crates/ctx-pro-host-protocol:lib",
     "//crates/ctx-pro-lifecycle:test_support_lib",
@@ -34,6 +36,7 @@ CTX_PRO_APPLICATION_TEST_DEPS = [
 
 CTX_PRO_APPLICATION_QUALIFICATION_DEPS = [
     "//crates/ctx-history-index:lib",
+    "//crates/ctx-pro-access:qualification_lib",
     "//crates/ctx-pro-host:qualification_lib",
     "//crates/ctx-pro-host-protocol:lib",
     "//crates/ctx-pro-lifecycle:qualification_lib",
@@ -41,6 +44,7 @@ CTX_PRO_APPLICATION_QUALIFICATION_DEPS = [
 
 CTX_PRO_APPLICATION_QUALIFICATION_TEST_DEPS = [
     "//crates/ctx-history-index:lib",
+    "//crates/ctx-pro-access:qualification_lib",
     "//crates/ctx-pro-host:qualification_test_support_lib",
     "//crates/ctx-pro-host-protocol:lib",
     "//crates/ctx-pro-lifecycle:qualification_test_support_lib",

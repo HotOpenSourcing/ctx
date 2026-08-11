@@ -5,20 +5,41 @@
 //! CLI parsing, terminal rendering, daemon lifecycle, provider reads, or
 //! release/test-host authority.
 
+mod anonymous_trial;
 mod application;
+mod artifact_delivery;
+mod authorization;
+mod commercial_config;
+mod commercial_production_record;
 mod evidence;
+mod setup_validation;
 mod status;
 mod uninstall;
+mod validation;
 
+pub use anonymous_trial::{
+    defer_anonymous_trial_refresh, refresh_anonymous_trial_entitlement, setup_anonymous_trial,
+    AnonymousTrialContext, AnonymousTrialSetup,
+};
 pub use application::{
     CoreOrchestration, MaterializationMode, MaterializationOutcome, ProApplication,
     ProApplicationHost,
 };
+pub use artifact_delivery::{
+    acquire_latest_artifact, ArtifactDeliveryConfig, VerifiedArtifactBundle,
+};
+pub use authorization::{Identity, StoredAuthorizationProvider};
+pub use commercial_config::{selected_channel, CommercialConfig};
+pub use ctx_pro_access::authorization::{
+    AuthorizationProvider, EntitlementSchedule, InstallationChallengeSigner,
+};
 pub use evidence::hydrate_evidence_previews;
+pub use setup_validation::{setup_artifact, validate_account_state, validate_staged_helper};
 pub use status::{lifecycle_status_value, LifecycleStatus};
 pub use uninstall::{
     LocalProDataOutcome, ProDeletionService, UninstallDataDisposition, UninstallOutcome,
 };
+pub use validation::{validate_access_status, validate_portal_url};
 
 pub use ctx_pro_host::{
     blame_boundary_error, blame_diagnostic, invalid_blame_request, stable_error_code,

@@ -6,6 +6,7 @@ use ctx_pro_host::{
     HostedBlameResult, ProStatus,
 };
 use ctx_pro_host_protocol::BlameTarget;
+use ctx_pro_lifecycle::installed_artifact::ValidatedArtifactIdentity;
 use ctx_pro_lifecycle::operation::LifecycleOperation;
 
 /// Coarse Core policy boundary. The CLI owns daemon admission and Core refresh
@@ -71,6 +72,22 @@ impl<'a, H: ProApplicationHost + ?Sized> ProApplication<'a, H> {
 
     pub fn preflight_core_materialization(&self, data_root: &Path) -> Result<()> {
         ctx_pro_host::preflight_core_materialization(self.host, data_root)
+    }
+
+    pub fn activation_material(
+        &self,
+        data_root: &Path,
+        identity: ValidatedArtifactIdentity,
+        challenge_base64url: &str,
+        installation_public_key_base64url: &str,
+    ) -> Result<serde_json::Value> {
+        ctx_pro_host::activation_material(
+            self.host,
+            data_root,
+            identity,
+            challenge_base64url,
+            installation_public_key_base64url,
+        )
     }
 
     pub fn selected_helper_artifact_sha256(&self, data_root: &Path) -> Result<Option<String>> {

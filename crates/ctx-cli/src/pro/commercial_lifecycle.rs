@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
+use ctx_pro_application::InstallationChallengeSigner;
 use ctx_pro_host_protocol::{base64url, EntitlementAccessKind, INSTALLATION_PUBLIC_KEY_BYTES};
 
 mod render;
@@ -14,7 +15,6 @@ mod render;
 use super::{
     anonymous_trial,
     artifact_delivery::{acquire_latest, ArtifactDeliveryConfig},
-    authorization::InstallationChallengeSigner,
     commercial_api::{
         checkout_retry_after, is_retryable_checkout_failure, validate_https_url, CheckoutResult,
         CommercialApiClient, CommercialClock, CommercialState, IssuedEntitlement,
@@ -380,21 +380,6 @@ impl CommercialLifecycleService {
         self.vault
             .store(&CredentialRecord::SignedEntitlement(entitlement))
             .map_err(vault_error)
-    }
-
-    pub(super) fn store_anonymous_state(
-        &self,
-        entitlement: BoundedSignedEntitlement,
-        trial: AnonymousTrialMaterial,
-    ) -> Result<()> {
-        self.vault
-            .store_anonymous_trial_state(entitlement, trial)
-            .map_err(|error| match error {
-                CredentialVaultError::SecretTooLarge { .. } => {
-                    anyhow!("invalid_response: anonymous trial state exceeds portable vault bounds")
-                }
-                error => vault_error(error),
-            })
     }
 
     fn refresh_entitlement_noninteractive(&self) -> Result<()> {
