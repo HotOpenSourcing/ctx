@@ -1098,7 +1098,7 @@ mod fidelity_identity_tests {
     fn indexed_records(index: &Path, native_session_id: &str) -> Vec<CoreRecord> {
         let source = source_key(native_session_id).unwrap();
         let verified = VerifiedIndex::open(index).unwrap();
-        verified
+        let mut records = verified
             .core_source_event_page(&source, None, 64)
             .unwrap()
             .items
@@ -1109,7 +1109,9 @@ mod fidelity_identity_tests {
                     .unwrap()
                     .unwrap()
             })
-            .collect()
+            .collect::<Vec<_>>();
+        records.sort_by_key(|record| record.event_sequence);
+        records
     }
 
     fn assert_ids_preserved(previous: &[StableEntityId], current: &[StableEntityId]) {
