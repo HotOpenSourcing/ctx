@@ -76,10 +76,7 @@ if set(manifest.get("dev-dependencies", {})) != {"tempfile"}:
 if set(manifest.get("features", {})) != {"test-support"}:
     raise SystemExit("ctx-client-observability features must be exactly test-support")
 
-try:
-    import tomli
-except ModuleNotFoundError:
-    sys.modules["tomli"] = tomllib
+sys.modules["tomli"] = tomllib
 spec = importlib.util.spec_from_file_location(
     "check_rust_crate_size", root / "scripts/check-rust-crate-size.py"
 )
