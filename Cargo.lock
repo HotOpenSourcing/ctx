@@ -859,6 +859,7 @@ name = "ctx-daemon-application"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "ctx-client-observability",
  "ctx-daemon-runtime",
  "ctx-daemon-service",
  "ctx-history-core",
