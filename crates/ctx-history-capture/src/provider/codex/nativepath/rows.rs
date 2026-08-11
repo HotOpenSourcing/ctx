@@ -16,10 +16,9 @@ use super::record::{
     CodexStructuralOutput,
 };
 use crate::provider::codex::events::{
-    codex_command_preview, codex_command_text, codex_content_text, codex_local_preview,
-    codex_message_body, codex_provider_event, codex_result_content, codex_tool_arguments_preview,
-    codex_tool_arguments_text, codex_tool_arguments_value, codex_tool_name,
-    CodexInvocationOriginV0, CodexNativeEvent, CodexToolCallContext,
+    codex_command_preview, codex_command_text, codex_content_text, codex_result_content,
+    codex_tool_arguments_preview, codex_tool_arguments_text, codex_tool_arguments_value,
+    codex_tool_name, CodexInvocationOriginV0, CodexToolCallContext,
 };
 use crate::{
     provider::codex::repository::{
@@ -27,8 +26,7 @@ use crate::{
         CodexRepositoryToolEvidence,
     },
     repository_attribution::{UnscopedFileObservation, UnscopedRepositoryFileInvocationEvidence},
-    CaptureError, OutputOutcomeMetadata, Result as CaptureResult, CODEX_SESSION_SOURCE_FORMAT,
-    PROVIDER_MAX_PREVIEW_CHARS,
+    OutputOutcomeMetadata, Result as CaptureResult,
 };
 
 const OWNED_ALLOCATION_OVERHEAD_BYTES: usize = 16;
@@ -89,10 +87,9 @@ pub(crate) struct CodexSessionGitMetadata {
     pub(crate) repository_url: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct CodexEventRow {
-    pub(crate) provider_event: CodexNativeEvent,
-}
+/// Uninhabited compatibility marker for the retired legacy-page guard in
+/// `CodexNativePage`. No scanner path can construct a legacy event row.
+pub(crate) type CodexEventRow = std::convert::Infallible;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CodexSourceBackedRowV0 {
@@ -284,52 +281,20 @@ pub(super) enum CodexRetainedNonMaterialized {
     Malformed,
 }
 
-pub(super) type CodexRetainedProjection =
-    std::result::Result<CodexEventRow, CodexRetainedNonMaterialized>;
-
-pub(super) fn build_event_row(
-    raw_ordinal: u64,
+pub(super) fn source_backed_tool_context(
     kind: CodexRetainedKind,
     retained: &CodexDecodedRecord,
-) -> CaptureResult<CodexRetainedProjection> {
-    let built = match kind {
-        CodexRetainedKind::Message => build_message(&retained.payload),
-        CodexRetainedKind::Reasoning => build_reasoning(&retained.payload),
-        CodexRetainedKind::Compacted => build_compacted(&retained.payload),
-        CodexRetainedKind::ToolCall => build_tool_call(&retained.payload),
-    };
-    let built = match built {
-        BuiltBodyProjection::Materialized(built) => built,
-        BuiltBodyProjection::ValidUnmaterializable => {
-            return Ok(Err(CodexRetainedNonMaterialized::ValidUnmaterializable));
+) -> std::result::Result<Option<(String, CodexToolCallContext)>, CodexRetainedNonMaterialized> {
+    let semantic = match source_backed_semantic_projection(kind, &retained.payload) {
+        SourceBackedSemanticProjection::Materialized(semantic) => *semantic,
+        SourceBackedSemanticProjection::ValidUnmaterializable => {
+            return Err(CodexRetainedNonMaterialized::ValidUnmaterializable);
         }
-        BuiltBodyProjection::Malformed => {
-            return Ok(Err(CodexRetainedNonMaterialized::Malformed));
+        SourceBackedSemanticProjection::Malformed => {
+            return Err(CodexRetainedNonMaterialized::Malformed);
         }
     };
-    let line_number = raw_ordinal
-        .checked_add(1)
-        .and_then(|line| usize::try_from(line).ok())
-        .ok_or(CaptureError::SystemInvariant(
-            "Codex NativePath raw ordinal exceeds platform limits",
-        ))?;
-    let provider_event = codex_provider_event(
-        line_number,
-        retained.occurred_at,
-        built.event_type,
-        built.role,
-        built.body.clone(),
-        json!({
-            "source": "codex_session",
-            "source_format": CODEX_SESSION_SOURCE_FORMAT,
-            "line": line_number,
-            "item_type": built.item_type,
-            "tool": built.body.get("tool").and_then(Value::as_str),
-            "source_record_ordinal": raw_ordinal,
-            "source_record_subrecord_index": 0,
-        }),
-    );
-    Ok(Ok(CodexEventRow { provider_event }))
+    Ok(semantic.tool_context)
 }
 
 pub(super) fn build_source_backed_event_row(
@@ -773,100 +738,6 @@ pub(super) fn source_backed_lexical_body(
     )
 }
 
-pub(super) fn tool_context_from_row(row: &CodexEventRow) -> Option<(String, CodexToolCallContext)> {
-    (row.provider_event.event_type == EventType::ToolCall).then_some(())?;
-    let call_id = row
-        .provider_event
-        .payload
-        .get("call_id")
-        .and_then(Value::as_str)?
-        .to_owned();
-    let tool_name = row
-        .provider_event
-        .payload
-        .get("tool")
-        .and_then(Value::as_str)
-        .unwrap_or("tool")
-        .to_owned();
-    let command_preview = row
-        .provider_event
-        .payload
-        .get("command")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let arguments_preview = row
-        .provider_event
-        .payload
-        .get("arguments_preview")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    Some((
-        call_id,
-        CodexToolCallContext {
-            tool_name,
-            command_preview,
-            arguments_preview,
-            ..CodexToolCallContext::default()
-        },
-    ))
-}
-
-struct BuiltBody {
-    event_type: EventType,
-    role: Option<EventRole>,
-    body: Value,
-    item_type: String,
-}
-
-enum BuiltBodyProjection {
-    Materialized(BuiltBody),
-    ValidUnmaterializable,
-    Malformed,
-}
-
-fn build_message(payload: &Value) -> BuiltBodyProjection {
-    let Some((role, body)) = codex_message_body(payload) else {
-        return BuiltBodyProjection::Malformed;
-    };
-    BuiltBodyProjection::Materialized(BuiltBody {
-        event_type: EventType::Message,
-        role: Some(role),
-        body,
-        item_type: "message".to_owned(),
-    })
-}
-
-fn build_reasoning(payload: &Value) -> BuiltBodyProjection {
-    let summary = payload
-        .get("summary")
-        .and_then(codex_content_text)
-        .or_else(|| {
-            payload
-                .get("summary_text")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        });
-    let Some(summary) = summary else {
-        return if is_encrypted_reasoning_without_plaintext(payload) {
-            BuiltBodyProjection::ValidUnmaterializable
-        } else {
-            BuiltBodyProjection::Malformed
-        };
-    };
-    BuiltBodyProjection::Materialized(BuiltBody {
-        event_type: EventType::Summary,
-        role: Some(EventRole::Assistant),
-        body: json!({
-            "item_type": "reasoning",
-            "summary": summary,
-            "text": summary,
-            "truncated": false,
-            "encrypted_content_present": payload.get("encrypted_content").is_some(),
-        }),
-        item_type: "reasoning".to_owned(),
-    })
-}
-
 fn is_encrypted_reasoning_without_plaintext(payload: &Value) -> bool {
     let Some(object) = payload.as_object() else {
         return false;
@@ -888,26 +759,6 @@ fn is_encrypted_reasoning_without_plaintext(payload: &Value) -> bool {
     empty_summary && empty_summary_text
 }
 
-fn build_compacted(payload: &Value) -> BuiltBodyProjection {
-    let Some(text) = codex_content_text(payload) else {
-        return if is_source_only_compacted(payload) {
-            BuiltBodyProjection::ValidUnmaterializable
-        } else {
-            BuiltBodyProjection::Malformed
-        };
-    };
-    BuiltBodyProjection::Materialized(BuiltBody {
-        event_type: EventType::Summary,
-        role: Some(EventRole::System),
-        body: json!({
-            "entry_type": "compacted",
-            "text": text,
-            "truncated": false,
-        }),
-        item_type: "compacted".to_owned(),
-    })
-}
-
 fn is_source_only_compacted(payload: &Value) -> bool {
     let Some(object) = payload.as_object() else {
         return false;
@@ -916,49 +767,4 @@ fn is_source_only_compacted(payload: &Value) -> bool {
         && object
             .get("replacement_history")
             .is_some_and(Value::is_array)
-}
-
-fn build_tool_call(payload: &Value) -> BuiltBodyProjection {
-    let Some(item_type) = payload.get("type").and_then(Value::as_str) else {
-        return BuiltBodyProjection::Malformed;
-    };
-    let tool_name = codex_tool_name(payload, item_type);
-    let call_id = payload.get("call_id").and_then(Value::as_str);
-    let arguments = payload
-        .get("arguments")
-        .or_else(|| payload.get("input"))
-        .or_else(|| payload.get("action"))
-        .or_else(|| payload.get("execution"));
-    let command_preview = codex_command_preview(&tool_name, arguments);
-    let (arguments_preview, arguments_truncated, raw_arguments_retained) = arguments
-        .map(codex_tool_arguments_preview)
-        .unwrap_or_else(|| (String::new(), false, false));
-    let text = command_preview
-        .as_deref()
-        .map(|command| format!("{tool_name}: {command}"))
-        .unwrap_or_else(|| {
-            if arguments_preview.is_empty() {
-                format!("{tool_name} tool call")
-            } else {
-                format!("{tool_name}: {arguments_preview}")
-            }
-        });
-    let (text, text_truncated) = codex_local_preview(&text, PROVIDER_MAX_PREVIEW_CHARS);
-    BuiltBodyProjection::Materialized(BuiltBody {
-        event_type: EventType::ToolCall,
-        role: Some(EventRole::Assistant),
-        body: json!({
-            "item_type": item_type,
-            "tool": tool_name,
-            "name": tool_name,
-            "call_id": call_id,
-            "command": command_preview,
-            "arguments_preview": arguments_preview,
-            "arguments_truncated": arguments_truncated,
-            "raw_arguments_retained": raw_arguments_retained,
-            "text": text,
-            "truncated": text_truncated || arguments_truncated,
-        }),
-        item_type: item_type.to_owned(),
-    })
 }
