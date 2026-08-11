@@ -76,6 +76,7 @@ if set(manifest.get("dev-dependencies", {})) != {"tempfile"}:
 if set(manifest.get("features", {})) != {"test-support"}:
     raise SystemExit("ctx-client-observability features must be exactly test-support")
 
+sys.modules["tomli"] = tomllib
 spec = importlib.util.spec_from_file_location(
     "check_rust_crate_size", root / "scripts/check-rust-crate-size.py"
 )
@@ -110,6 +111,6 @@ fi
 grep -Fq 'crate::identity::device_id' "${repo_root}/crates/ctx-cli/src/observability_composition.rs"
 grep -Fq 'crate::net::post_telemetry_json' "${repo_root}/crates/ctx-cli/src/observability_composition.rs"
 grep -Fq 'ctx_pro_host_protocol' "${repo_root}/crates/ctx-cli/src/observability_product.rs"
-grep -Fq 'RequestDescriptor' "${repo_root}/crates/ctx-cli/src/mcp/telemetry.rs"
+grep -Fq 'RequestDescriptor' "${repo_root}/crates/ctx-cli/src/mcp.rs"
 
 printf 'ctx-client-observability dependency and composition boundary ok\n'
