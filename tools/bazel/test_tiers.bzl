@@ -54,7 +54,6 @@ RUST_FORMAT_TARGETS = [
     "//crates/ctx-history-capture:self_contained_core_final_locator_removal_tests",
     "//crates/ctx-history-capture:unit_tests",
     "//crates/ctx-history-capture-model:unit_tests",
-    "//:history_source_discovery_dependency_boundary_check",
     "//crates/ctx-history-source-discovery:unit_tests",
     "//crates/ctx-history-source-io:unit_tests",
     "//crates/ctx-history-core:unit_tests",
