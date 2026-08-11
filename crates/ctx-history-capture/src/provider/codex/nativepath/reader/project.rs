@@ -154,9 +154,6 @@ impl CodexNativeScanner {
                     context.invocation_origin =
                         codex_invocation_origin(owner, self.local_turn_started);
                     let authority = CodexPendingToolAuthority::new(
-                        &call_id,
-                        start_byte,
-                        end_byte,
                         raw_ordinal,
                         context.invocation_origin.clone(),
                     );
@@ -448,6 +445,14 @@ impl CodexNativeScanner {
     }
 
     pub(super) fn apply_context_mutation(&mut self, mutation: CodexContextMutation) {
+        self.apply_context_mutation_inner(mutation, true);
+    }
+
+    pub(super) fn apply_replayed_context_mutation(&mut self, mutation: CodexContextMutation) {
+        self.apply_context_mutation_inner(mutation, false);
+    }
+
+    fn apply_context_mutation_inner(&mut self, mutation: CodexContextMutation, retain_row: bool) {
         match mutation {
             CodexContextMutation::Remove(call_ids) => {
                 for call_id in call_ids {
@@ -545,9 +550,11 @@ impl CodexNativeScanner {
                         }
                     }
                 }
-                debug_assert!(self.active_core_page.is_some());
-                if let Some(page) = self.active_core_page.as_mut() {
-                    page.source_backed_rows.push(row);
+                if retain_row {
+                    debug_assert!(self.active_core_page.is_some());
+                    if let Some(page) = self.active_core_page.as_mut() {
+                        page.source_backed_rows.push(row);
+                    }
                 }
             }
         }

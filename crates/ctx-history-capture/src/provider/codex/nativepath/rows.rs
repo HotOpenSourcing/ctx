@@ -277,22 +277,6 @@ pub(super) enum CodexRetainedNonMaterialized {
     Malformed,
 }
 
-pub(super) fn source_backed_tool_context(
-    kind: CodexRetainedKind,
-    retained: &CodexDecodedRecord,
-) -> std::result::Result<Option<(String, CodexToolCallContext)>, CodexRetainedNonMaterialized> {
-    let semantic = match source_backed_semantic_projection(kind, &retained.payload) {
-        SourceBackedSemanticProjection::Materialized(semantic) => *semantic,
-        SourceBackedSemanticProjection::ValidUnmaterializable => {
-            return Err(CodexRetainedNonMaterialized::ValidUnmaterializable);
-        }
-        SourceBackedSemanticProjection::Malformed => {
-            return Err(CodexRetainedNonMaterialized::Malformed);
-        }
-    };
-    Ok(semantic.tool_context)
-}
-
 pub(super) fn build_source_backed_event_row(
     raw_ordinal: u64,
     kind: CodexRetainedKind,
