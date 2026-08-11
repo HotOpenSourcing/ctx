@@ -155,6 +155,7 @@ _CI_RUST_TESTS = [
     "//crates/ctx-history-ingest-application:unit_tests",
     "//crates/ctx-history-core:unit_tests",
     "//:history_source_discovery_dependency_boundary_check",
+    "//:history_ingest_application_dependency_boundary_check",
     "//crates/ctx-history-source-discovery:unit_tests",
     "//crates/ctx-history-source-io:unit_tests",
     "//crates/ctx-history-index-format:unit_tests",
