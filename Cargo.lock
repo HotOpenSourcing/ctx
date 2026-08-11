@@ -1100,6 +1100,7 @@ name = "ctx-history-source-io"
 version = "0.26.0"
 dependencies = [
  "ctx-history-core",
+ "fs2",
  "libc",
  "rusqlite",
  "serde_json",
