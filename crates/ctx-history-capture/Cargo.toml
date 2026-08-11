@@ -32,6 +32,7 @@ uuid.workspace = true
 zstd.workspace = true
 ctx-history-core = { path = "../ctx-history-core" }
 ctx-history-index = { path = "../ctx-history-index" }
+ctx-history-jsonl = { path = "../ctx-history-jsonl" }
 ctx-pro-host-protocol = { path = "../ctx-pro-host-protocol" }
 
 [target.'cfg(windows)'.dependencies]
