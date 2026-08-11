@@ -744,6 +744,7 @@ dependencies = [
  "ctx-history-capture",
  "ctx-history-core",
  "ctx-history-index",
+ "ctx-history-query",
  "ctx-history-refresh",
  "ctx-pro-access",
  "ctx-pro-host-protocol",
@@ -1007,6 +1008,24 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "ctx-history-query"
+version = "0.26.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "ctx-history-core",
+ "ctx-history-index",
+ "ctx-history-index-format",
+ "ctx-history-index-query",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "unicode-segmentation",
+ "uuid",
 ]
 
 [[package]]

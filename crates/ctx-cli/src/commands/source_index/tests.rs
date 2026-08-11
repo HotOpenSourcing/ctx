@@ -57,17 +57,15 @@ mod tests {
         },
         search::{
             presentations_for_search_hits_with_budget, resolve_source_search_backend,
-            NormalizedSearchQuery, SearchCollection, SearchEventMetadata, SearchHit,
-            SearchPresentation, SearchPresentationHydrationBudget,
+            semantic_reason_code, source_search_request, NormalizedSearchQuery, SearchCollection,
+            SearchEventMetadata, SearchHit, SearchPresentation, SearchPresentationHydrationBudget,
             SearchPresentationRetentionBudgetExceeded, SearchResultWindow,
             SEARCH_PRESENTATION_HYDRATION_BUDGET, SEARCH_PRESENTATION_MAX_RETAINED_SNIPPET_BYTES,
         },
         show::{
-            canonical_show_output_bytes, core_events_by_ids_with_presentation_limits, event_window,
-            event_window_value, mcp_show_event, mcp_show_session, render_event_value,
-            render_event_values, render_show_error, session_transcript_value, stream_cli_session,
-            take_core_presentation_fetch_ids, validate_show_target,
-            EncodedCorePresentationLimitError,
+            canonical_show_output_bytes, event_window_value, mcp_show_event, mcp_show_session,
+            render_event_value, render_event_values, render_show_error, session_transcript_value,
+            stream_cli_session, validate_show_target,
         },
     };
 
@@ -83,6 +81,25 @@ mod tests {
             .downcast_ref::<ctx_history_refresh::GenerationQueryAuthorityError>()
             .expect("query gateway must preserve the typed publication-authority error");
         assert_eq!(authority.error_code(), expected_code);
+    }
+
+    #[test]
+    fn source_identity_error_restores_exact_cli_flag_spelling() {
+        let error =
+            anyhow::Error::new(ctx_history_query::SourceIdentityFilterError::InvalidHistorySource);
+
+        assert_eq!(
+            externalize_query_error(error).to_string(),
+            "--history-source expects plugin/source or provider_key/source_id"
+        );
+
+        let error = anyhow::Error::new(
+            ctx_history_query::SourceIdentityFilterError::CustomProviderRequired,
+        );
+        assert_eq!(
+            externalize_query_error(error).to_string(),
+            "custom history source filters can only be combined with --provider custom"
+        );
     }
 
     #[test]
@@ -290,20 +307,19 @@ mod tests {
             normalized.display(),
             "build failure OR release's checksum OR BUILD FAILURE"
         );
-        assert_eq!(
-            normalized.shell_arguments(),
-            "'build failure' --term='release'\\''s checksum' --term='BUILD FAILURE'"
-        );
+        assert_eq!(normalized.positional(), Some("build failure"));
+        assert_eq!(normalized.terms(), &["release's checksum", "BUILD FAILURE"]);
 
         source_request.query.clear();
         source_request.terms = vec!["  term-only  ".to_owned()];
         let term_only = NormalizedSearchQuery::from_request(&source_request);
         assert_eq!(term_only.display(), "term-only");
-        assert_eq!(term_only.shell_arguments(), "--term=term-only");
+        assert_eq!(term_only.positional(), None);
+        assert_eq!(term_only.terms(), &["term-only"]);
         source_request.terms = vec!["--option-like".to_owned()];
         assert_eq!(
-            NormalizedSearchQuery::from_request(&source_request).shell_arguments(),
-            "--term=--option-like"
+            NormalizedSearchQuery::from_request(&source_request).terms(),
+            &["--option-like"]
         );
     }
 
@@ -318,8 +334,8 @@ mod tests {
         let CommandRoot::Search(explicit) = explicit.command else {
             panic!("expected search command");
         };
-        let mut omitted = SourceSearchRequest::from(&omitted);
-        let mut explicit = SourceSearchRequest::from(&explicit);
+        let mut omitted = source_search_request(&omitted);
+        let mut explicit = source_search_request(&explicit);
         assert_eq!(omitted.content_scope, SearchContentScope::All);
         assert_eq!(explicit.content_scope, SearchContentScope::All);
 
@@ -328,9 +344,6 @@ mod tests {
         let index = open_index(temp.path()).unwrap();
         for request in [&mut omitted, &mut explicit] {
             request.backend = Some(SearchBackendArg::Hybrid);
-            request.semantic_enabled = true;
-            request.semantic_daemon_enabled = true;
-            request.refresh = RefreshArg::Off;
             request.include_current_session = true;
         }
         let omitted_filters = index_search_filters(&omitted, &index).unwrap();
@@ -411,7 +424,7 @@ mod tests {
         let CommandRoot::Search(args) = cli.command else {
             panic!("expected search command");
         };
-        let request = SourceSearchRequest::from(&args);
+        let request = source_search_request(&args);
         let temp = tempdir().unwrap();
         write_test_generation(temp.path());
         let filters = index_search_filters(&request, &open_index(temp.path()).unwrap()).unwrap();
@@ -435,6 +448,7 @@ mod tests {
 
         let error = refresh_for_search_with(
             &source_request,
+            RefreshArg::Off,
             Path::new("/query-limit-test-does-not-open"),
             |_, _| {
                 coordinated.set(true);
@@ -464,6 +478,7 @@ mod tests {
 
         let error = refresh_for_search_with(
             &source_request,
+            RefreshArg::Off,
             Path::new("/query-limit-test-does-not-open"),
             |_, _| {
                 coordinated.set(true);
@@ -978,13 +993,18 @@ mod tests {
     #[test]
     fn missing_root_does_not_reclassify_an_unrelated_refresh_io_error() {
         let temp = tempdir().unwrap();
-        let error = match refresh_for_search_with(&request(RefreshArg::Off), temp.path(), |_, _| {
-            Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "injected refresh authority read failure",
-            )
-            .into())
-        }) {
+        let error = match refresh_for_search_with(
+            &request(RefreshArg::Off),
+            RefreshArg::Off,
+            temp.path(),
+            |_, _| {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "injected refresh authority read failure",
+                )
+                .into())
+            },
+        ) {
             Ok(_) => panic!("an unrelated refresh I/O failure must remain an application failure"),
             Err(error) => error.into_anyhow(),
         };
@@ -1003,7 +1023,8 @@ mod tests {
         let temp = tempdir().unwrap();
         write_test_generation(temp.path());
 
-        let outcome = refresh_for_search(&request(RefreshArg::Off), temp.path()).unwrap();
+        let outcome =
+            refresh_for_search(&request(RefreshArg::Off), RefreshArg::Off, temp.path()).unwrap();
 
         assert_eq!(outcome.status, "existing_generation");
         assert_eq!(
@@ -1017,8 +1038,11 @@ mod tests {
         let temp = tempdir().unwrap();
         write_test_generation(temp.path());
         let requested_mode = Cell::new(None);
-        let outcome =
-            refresh_for_search_with(&request(RefreshArg::Off), temp.path(), |data_root, mode| {
+        let outcome = refresh_for_search_with(
+            &request(RefreshArg::Off),
+            RefreshArg::Off,
+            temp.path(),
+            |data_root, mode| {
                 requested_mode.set(Some(mode));
                 Ok(SourceBackedRefreshObservation {
                     mode,
@@ -1032,8 +1056,9 @@ mod tests {
                     receipt: None,
                     pin: PinnedSourceBackedGeneration::from_index(open_index(data_root)?),
                 })
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         assert_eq!(requested_mode.get(), Some(SourceBackedRefreshMode::Off));
         let generation = outcome.pin.generation_id().to_owned();
 
@@ -1302,7 +1327,10 @@ mod tests {
         assert_eq!(fallback.semantic_weight, 0.35);
         assert_eq!(fallback.semantic_status, "unavailable");
         assert_eq!(
-            fallback.semantic_fallback.as_ref().map(|value| value.code),
+            fallback
+                .semantic_fallback
+                .as_ref()
+                .and_then(|value| value.reason.map(semantic_reason_code)),
             Some("semantic_store_missing")
         );
         assert_eq!(fallback.result_window.hits.len(), 1);
@@ -1467,7 +1495,7 @@ mod tests {
                 collection
                     .semantic_fallback
                     .as_ref()
-                    .map(|fallback| fallback.code),
+                    .and_then(|fallback| fallback.reason.map(semantic_reason_code)),
                 Some("semantic_content_scope_unsupported")
             );
             assert!(collection.result_window.hits.is_empty());
@@ -1547,7 +1575,7 @@ mod tests {
             collection
                 .semantic_fallback
                 .as_ref()
-                .map(|fallback| fallback.code),
+                .and_then(|fallback| fallback.reason.map(semantic_reason_code)),
             Some("semantic_event_type_unsupported")
         );
 
@@ -1608,16 +1636,15 @@ mod tests {
                 super::search::resolve_source_search_backend(&source_request, &config).unwrap();
             assert_eq!(resolved, SearchBackendArg::Hybrid);
             source_request.backend = Some(resolved);
-            source_request.semantic_enabled = config.semantic_search_enabled();
-            source_request.semantic_daemon_enabled = config.daemon.enabled;
             let filters = index_search_filters(&source_request, &index).unwrap();
-            let collection = collect_search_hits_with_backend_using(
+            let collection = ctx_history_query::collect_search_hits_using(
                 &source_request,
                 &index,
-                temp.path(),
-                source_request.semantic_weight,
                 &filters,
-                |_index, _data_root, _query, _filters, _candidate_limit| {
+                ctx_history_query::SemanticAvailability::Unavailable(
+                    ctx_history_query::SemanticReason::ExecutionUnavailable,
+                ),
+                |_query, _filters, _candidate_limit| {
                     panic!("daemon-disabled hybrid must fall back before semantic work")
                 },
             )
@@ -1629,7 +1656,7 @@ mod tests {
                 collection
                     .semantic_fallback
                     .as_ref()
-                    .map(|fallback| fallback.code),
+                    .and_then(|fallback| fallback.reason.map(semantic_reason_code)),
                 Some("semantic_daemon_disabled")
             );
             assert_eq!(collection.result_window.hits.len(), 1);
@@ -1749,15 +1776,21 @@ mod tests {
         );
         assert_eq!(session_value["pagination"]["has_more"], true);
 
-        take_core_presentation_fetch_ids();
-        let window = event_window(&index, &first, 0, 0, None, 2 * 1024).unwrap();
-        assert_eq!(window.len(), 1);
-        assert_eq!(window[0].event_id, first.event_id);
-        assert_eq!(
-            take_core_presentation_fetch_ids(),
-            vec![first.event_id.as_uuid()],
-            "the nonselected large window body must never be requested for Core decode"
-        );
+        let shown = ctx_history_query::PinnedHistoryQuery::new(&index, None)
+            .show_event(&ctx_history_query::ShowEventRequest {
+                selector: first.event_id.to_string(),
+                before: 0,
+                after: 0,
+                window: None,
+                budget: ctx_history_query::EventWindowBudget {
+                    maximum_events: crate::MAX_EVENT_WINDOW,
+                    maximum_encoded_core_bytes: ctx_history_core::MAX_ENCODED_CORE_RECORD_BYTES,
+                    maximum_content_bytes: 2 * 1024,
+                },
+            })
+            .unwrap();
+        assert_eq!(shown.events.len(), 1);
+        assert_eq!(shown.events[0].event_id, first.event_id);
     }
 
     #[test]
@@ -1839,16 +1872,21 @@ mod tests {
         let cumulative_encoded_bytes = encoded_bytes.iter().sum::<usize>();
         let encoded_limit = cumulative_encoded_bytes - 1;
 
-        let error = core_events_by_ids_with_presentation_limits(
-            &index,
-            &[first.event_id.as_uuid(), second.event_id.as_uuid()],
-            2,
-            64 * 1024,
-            encoded_limit,
-        )
-        .unwrap_err();
+        let error = ctx_history_query::PinnedHistoryQuery::new(&index, None)
+            .show_event(&ctx_history_query::ShowEventRequest {
+                selector: first.event_id.to_string(),
+                before: 0,
+                after: 1,
+                window: None,
+                budget: ctx_history_query::EventWindowBudget {
+                    maximum_events: 2,
+                    maximum_encoded_core_bytes: encoded_limit,
+                    maximum_content_bytes: 64 * 1024,
+                },
+            })
+            .unwrap_err();
         let typed = error
-            .downcast_ref::<EncodedCorePresentationLimitError>()
+            .downcast_ref::<ctx_history_query::EncodedCoreQueryLimitError>()
             .expect("cumulative encoded Core overflow should preserve its typed bound");
         assert_eq!(typed.event_id, second.event_id.as_uuid());
         assert_eq!(typed.actual_bytes, cumulative_encoded_bytes);
