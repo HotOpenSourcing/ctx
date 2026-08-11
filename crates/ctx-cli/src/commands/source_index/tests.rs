@@ -99,8 +99,9 @@ mod tests {
 
     #[test]
     fn source_identity_error_restores_exact_cli_flag_spelling() {
-        let error =
-            anyhow::Error::new(ctx_history_read_application::SourceIdentityFilterError::InvalidHistorySource);
+        let error = anyhow::Error::new(
+            ctx_history_read_application::SourceIdentityFilterError::InvalidHistorySource,
+        );
 
         assert_eq!(
             externalize_query_error(error).to_string(),
@@ -238,8 +239,8 @@ mod tests {
             write_test_generation(temp.path());
             let current = open_index(temp.path()).unwrap();
             let error = generation_with_retained_peer(temp.path(), current)
-            .err()
-            .expect("invalid retained peer must fail before compact resolution");
+                .err()
+                .expect("invalid retained peer must fail before compact resolution");
             assert_query_authority_error(&error, error_code);
         }
     }
@@ -1153,8 +1154,8 @@ mod tests {
         assert!(super::shared::is_active_generation_race(&compact_error));
 
         let human_error = generation_with_retained_peer(temp.path(), human_pin)
-        .err()
-        .expect("expired human presentation must request a concurrent-generation retry");
+            .err()
+            .expect("expired human presentation must request a concurrent-generation retry");
         assert!(super::shared::is_active_generation_race(&human_error));
     }
 

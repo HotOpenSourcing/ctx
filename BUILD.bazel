@@ -1134,6 +1134,7 @@ sh_test(
         "//crates/ctx-cli:BUILD.bazel",
         "//crates/ctx-cli:build.rs",
         "//crates/ctx-cli:test_targets.bzl",
+        "//tools/bazel:binary_contracts.bzl",
     ],
 )
 
