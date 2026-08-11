@@ -35,6 +35,7 @@ use crate::{
             JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyTerminalProof,
             JsonlFamilyWorkerContext, JsonlPendingExchangeLookup, JsonlPendingExchangeRemember,
             JsonlPendingExchangeState, JsonlReader, JsonlRecordRef, JsonlSourceIdentity,
+            JsonlTerminalAuthority, JsonlTerminalObservationRegion,
         },
     },
     provider_sources::{provider_source_for_path, ProviderSourceStatus},
@@ -186,7 +187,9 @@ impl JsonlFamilyAdapter for OpenClawJsonlAdapter {
                 native_session_id,
                 index: compound.index,
                 native_session_family: compound.native_session_family,
-                terminal_ambiguity_fingerprint: compound.terminal_authority.ambiguity_fingerprint(),
+                terminal_ambiguity_fingerprint: compound
+                    .terminal_authority
+                    .ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
             };
             leaves.push(JsonlFamilyLeaf::observe(
                 source,
@@ -237,7 +240,9 @@ impl JsonlFamilyAdapter for OpenClawJsonlAdapter {
         )?;
         if compound.index != binding.index
             || compound.native_session_family != binding.native_session_family
-            || compound.terminal_authority.ambiguity_fingerprint()
+            || compound
+                .terminal_authority
+                .ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
                 != binding.terminal_ambiguity_fingerprint
         {
             return Err(CaptureError::SourceChangedDuringCapture);

@@ -349,7 +349,11 @@ impl OpenClawProjector {
     ) {
         let (context, _linkage_abstained) =
             match result.call_id.filter(|call_id| !call_id.is_empty()) {
-                Some(call_id) if !self.terminal_authority.is_unique(call_id) => {
+                Some(call_id)
+                    if !self
+                        .terminal_authority
+                        .is_unique(TERMINAL_CALL_ID_DOMAIN, call_id) =>
+                {
                     self.pending_calls.remove(call_id);
                     input.outcome_abstentions.push((
                         RepositoryAbstentionReason::ProviderOutputUnjoined,
