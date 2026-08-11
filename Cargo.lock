@@ -882,6 +882,7 @@ dependencies = [
  "chrono",
  "ctx-history-core",
  "ctx-history-index",
+ "ctx-history-jsonl",
  "ctx-pro-host-protocol",
  "directories",
  "json5",
@@ -995,6 +996,17 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "uuid",
+]
+
+[[package]]
+name = "ctx-history-jsonl"
+version = "0.26.0"
+dependencies = [
+ "ctx-history-core",
+ "ctx-history-index",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

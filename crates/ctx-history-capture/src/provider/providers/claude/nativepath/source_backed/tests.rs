@@ -746,10 +746,7 @@ fn test_projector() -> ClaudeProjector {
 }
 
 fn project_claude_records(projector: &mut ClaudeProjector, records: &[Vec<u8>]) -> Vec<CoreRecord> {
-    let mut authority = ClaudeResultTerminalAuthority {
-        available: true,
-        ..ClaudeResultTerminalAuthority::default()
-    };
+    let mut authority = ClaudeResultTerminalAuthority::available();
     for (ordinal, record) in records.iter().enumerate() {
         let locator = ClaudePhysicalLocator {
             path: PathBuf::from("test-session.jsonl"),
@@ -764,7 +761,12 @@ fn project_claude_records(projector: &mut ClaudeProjector, records: &[Vec<u8>]) 
                     .as_ref()
                     .and_then(|result| result.call_id.as_deref())
             }) {
-                authority.observe(call_id, false);
+                authority.observe(
+                    RESULT_TERMINAL_CALL_ID_DOMAIN,
+                    call_id,
+                    JsonlTerminalObservationRegion::AppendedSuffix,
+                    MAX_PENDING_CALLS,
+                );
             }
         }
     }
@@ -2125,14 +2127,18 @@ fn append_after_prior_duplicate_probes_base_and_restores_call_ambiguity() {
         digest[..8].copy_from_slice(&occurrence.to_be_bytes());
         projector
             .fallback_identities
-            .next_occurrences
-            .insert(digest, occurrence + 1);
+            .next(
+                digest,
+                || CaptureError::SystemInvariant("test occurrence overflowed"),
+                |_, _| unreachable!("cold identity state has no Core base"),
+            )
+            .unwrap();
     }
     assert_eq!(encode_projector_checkpoint(&projector).unwrap(), checkpoint);
     let mut restored = decode_projector_checkpoint(&checkpoint, &binding).unwrap();
 
     let suffix_row = fallback_row("duplicate", 2);
-    let mut append_identity_state = FallbackEventIdentityState::new(Some(base_lookup));
+    let mut append_identity_state = FallbackEventIdentityState::for_append(base_lookup);
     let suffix_event = fallback_event_id(
         &suffix_row,
         &source,

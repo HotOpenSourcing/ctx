@@ -31,9 +31,11 @@ use crate::{
         ctx_retrieval,
         normalization::{provider_explicit_result_value_text, provider_timestamp_value},
         source_backed::family::jsonl::{
+            remember_pending_exchange, take_pending_exchange, JsonlAppendOccurrenceState,
             JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf,
             JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyTerminalProof,
-            JsonlFamilyWorkerContext, JsonlReader, JsonlRecordRef, JsonlSourceIdentity,
+            JsonlFamilyWorkerContext, JsonlPendingExchangeLookup, JsonlPendingExchangeRemember,
+            JsonlPendingExchangeState, JsonlReader, JsonlRecordRef, JsonlSourceIdentity,
         },
     },
     provider_sources::{provider_source_for_path, ProviderSourceStatus},
@@ -275,11 +277,12 @@ impl JsonlFamilyAdapter for OpenClawJsonlAdapter {
             running_processes,
             terminal_authority: compound.terminal_authority,
             linkage_capacity_exceeded,
-            fallback_identities: FallbackEventIdentityState::new(
-                (mode == JsonlFamilyProjectionMode::CertifiedAppend)
-                    .then_some(base_event_lookup)
-                    .flatten(),
-            ),
+            fallback_identities: match (mode, base_event_lookup) {
+                (JsonlFamilyProjectionMode::CertifiedAppend, Some(base_lookup)) => {
+                    FallbackEventIdentityState::for_append(base_lookup)
+                }
+                _ => FallbackEventIdentityState::default(),
+            },
         }))
     }
 }
@@ -339,19 +342,8 @@ impl From<StoredContributionClass> for ctx_retrieval::ContributionClass {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum PendingCallState {
-    Exact(PendingCall),
-    Ambiguous,
-}
-
-#[derive(Debug)]
-enum PendingCallLookup {
-    Exact(PendingCall),
-    Ambiguous,
-    Missing,
-}
+type PendingCallState = JsonlPendingExchangeState<PendingCall>;
+type PendingCallLookup = JsonlPendingExchangeLookup<PendingCall>;
 
 #[derive(Debug, Clone, Copy)]
 struct FallbackEventIdentity {
@@ -359,20 +351,7 @@ struct FallbackEventIdentity {
     duplicate_occurrence: u64,
 }
 
-#[derive(Default)]
-struct FallbackEventIdentityState {
-    base_lookup: Option<BaseEventIdentityLookup>,
-    next_occurrences: HashMap<[u8; 32], u64>,
-}
-
-impl FallbackEventIdentityState {
-    fn new(base_lookup: Option<BaseEventIdentityLookup>) -> Self {
-        Self {
-            base_lookup,
-            next_occurrences: HashMap::new(),
-        }
-    }
-}
+type FallbackEventIdentityState = JsonlAppendOccurrenceState<[u8; 32]>;
 
 fn source_key(native_session_id: &str) -> Result<SourceKey> {
     let anchor = SourceAnchor::provider_native(
@@ -452,11 +431,9 @@ fn remember_pending_call(
     call_id: &str,
     state: PendingCallState,
 ) {
-    if let Some(existing) = pending_calls.get_mut(call_id) {
-        *existing = PendingCallState::Ambiguous;
-    } else if pending_calls.len() < capacity {
-        pending_calls.insert(call_id.to_owned(), state);
-    } else {
+    if remember_pending_exchange(pending_calls, call_id, state, capacity)
+        == JsonlPendingExchangeRemember::CapacityExceeded
+    {
         *linkage_capacity_exceeded = true;
     }
 }
@@ -465,11 +442,7 @@ fn take_pending_call(
     pending_calls: &mut HashMap<String, PendingCallState>,
     call_id: Option<&str>,
 ) -> PendingCallLookup {
-    match call_id.and_then(|call_id| pending_calls.remove(call_id)) {
-        Some(PendingCallState::Exact(context)) => PendingCallLookup::Exact(context),
-        Some(PendingCallState::Ambiguous) => PendingCallLookup::Ambiguous,
-        None => PendingCallLookup::Missing,
-    }
+    take_pending_exchange(pending_calls, call_id)
 }
 
 fn resolve_pending_call(
@@ -513,63 +486,18 @@ fn next_fallback_event_identity(
     state: &mut FallbackEventIdentityState,
 ) -> Result<FallbackEventIdentity> {
     let digest = fallback_event_digest(value, event)?;
-    let occurrence = match state.next_occurrences.get(&digest).copied() {
-        Some(occurrence) => occurrence,
-        None => {
-            first_unused_base_occurrence(state.base_lookup.as_ref(), source, session_id, digest)?
-        }
-    };
+    let occurrence = state.next(
+        digest,
+        || CaptureError::SystemInvariant("OpenClaw fallback duplicate occurrence overflowed"),
+        |base_lookup, occurrence| {
+            base_occurrence_exists(base_lookup, source, session_id, digest, occurrence)
+        },
+    )?;
     let identity = FallbackEventIdentity {
         digest,
         duplicate_occurrence: occurrence,
     };
-    state.next_occurrences.insert(
-        digest,
-        occurrence
-            .checked_add(1)
-            .ok_or(CaptureError::SystemInvariant(
-                "OpenClaw fallback duplicate occurrence overflowed",
-            ))?,
-    );
     Ok(identity)
-}
-
-fn first_unused_base_occurrence(
-    base_lookup: Option<&BaseEventIdentityLookup>,
-    source: &SourceKey,
-    session_id: StableEntityId,
-    digest: [u8; 32],
-) -> Result<u64> {
-    let Some(base_lookup) = base_lookup else {
-        return Ok(0);
-    };
-    if !base_occurrence_exists(base_lookup, source, session_id, digest, 0)? {
-        return Ok(0);
-    }
-
-    let mut present = 0_u64;
-    let mut missing = 1_u64;
-    while base_occurrence_exists(base_lookup, source, session_id, digest, missing)? {
-        present = missing;
-        missing = match missing.checked_mul(2) {
-            Some(next) => next,
-            None if missing != u64::MAX => u64::MAX,
-            None => {
-                return Err(CaptureError::SystemInvariant(
-                    "OpenClaw fallback duplicate occurrence overflowed",
-                ));
-            }
-        };
-    }
-    while present.saturating_add(1) < missing {
-        let candidate = present + (missing - present) / 2;
-        if base_occurrence_exists(base_lookup, source, session_id, digest, candidate)? {
-            present = candidate;
-        } else {
-            missing = candidate;
-        }
-    }
-    Ok(missing)
 }
 
 fn base_occurrence_exists(

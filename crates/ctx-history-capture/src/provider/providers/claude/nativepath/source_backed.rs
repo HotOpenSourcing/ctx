@@ -41,10 +41,12 @@ use crate::{
         normalization::provider_explicit_result_value_text,
         providers::native_jsonl::visit_native_jsonl_files,
         source_backed::family::jsonl::{
-            observe_opened_file, JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory,
-            JsonlFamilyLeaf, JsonlFamilyProjectionMode, JsonlFamilyProjector,
-            JsonlFamilyWorkerContext, JsonlFileObservation, JsonlReader, JsonlRecordRef,
-            JsonlSourceIdentity,
+            observe_opened_file, remember_pending_exchange, take_pending_exchange,
+            JsonlAppendOccurrenceState, JsonlFamilyAdapter, JsonlFamilyAppendMode,
+            JsonlFamilyInventory, JsonlFamilyLeaf, JsonlFamilyProjectionMode, JsonlFamilyProjector,
+            JsonlFamilyWorkerContext, JsonlFileObservation, JsonlPendingExchangeLookup,
+            JsonlPendingExchangeRemember, JsonlPendingExchangeState, JsonlReader, JsonlRecordRef,
+            JsonlSourceIdentity, JsonlTerminalAuthority, JsonlTerminalObservationRegion,
         },
     },
     CaptureError, Result, CLAUDE_PROJECTS_SOURCE_FORMAT,
@@ -82,60 +84,7 @@ struct ClaudePreflightState {
     authorities: HashMap<[u8; 32], ClaudeResultTerminalAuthority>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-struct ClaudeResultTerminalState {
-    candidates: u8,
-    in_certified_prefix: bool,
-    after_certified_prefix: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-struct ClaudeResultTerminalAuthority {
-    call_ids: HashMap<[u8; 32], ClaudeResultTerminalState>,
-    exhausted: bool,
-    available: bool,
-}
-
-impl ClaudeResultTerminalAuthority {
-    fn observe(&mut self, call_id: &str, in_certified_prefix: bool) {
-        self.available = true;
-        if self.exhausted {
-            return;
-        }
-        let digest = claude_result_terminal_call_id_digest(call_id);
-        if !self.call_ids.contains_key(&digest) && self.call_ids.len() >= MAX_PENDING_CALLS {
-            self.call_ids.clear();
-            self.exhausted = true;
-            return;
-        }
-        let state = self.call_ids.entry(digest).or_default();
-        state.candidates = state.candidates.saturating_add(1).min(2);
-        state.in_certified_prefix |= in_certified_prefix;
-        state.after_certified_prefix |= !in_certified_prefix;
-    }
-
-    fn is_unique(&self, call_id: &str) -> bool {
-        !self.available
-            || (!self.exhausted
-                && self
-                    .call_ids
-                    .get(&claude_result_terminal_call_id_digest(call_id))
-                    .is_some_and(|state| state.candidates == 1))
-    }
-
-    fn append_requires_replacement(&self) -> bool {
-        self.exhausted
-            || self.call_ids.values().any(|state| {
-                state.in_certified_prefix && state.after_certified_prefix && state.candidates > 1
-            })
-    }
-
-    fn observe_ambiguous_terminal(&mut self) {
-        self.available = true;
-        self.call_ids.clear();
-        self.exhausted = true;
-    }
-}
+type ClaudeResultTerminalAuthority = JsonlTerminalAuthority;
 
 fn claude_source_backed_adapter() -> Arc<dyn JsonlFamilyAdapter> {
     Arc::new(ClaudeJsonlAdapter::default())
@@ -325,11 +274,12 @@ impl JsonlFamilyAdapter for ClaudeJsonlAdapter {
             linkage_capacity_exceeded,
             result_terminal_authority,
             rejected_records: 0,
-            fallback_identities: FallbackEventIdentityState::new(
-                (mode == JsonlFamilyProjectionMode::CertifiedAppend)
-                    .then_some(base_event_lookup)
-                    .flatten(),
-            ),
+            fallback_identities: match (mode, base_event_lookup) {
+                (JsonlFamilyProjectionMode::CertifiedAppend, Some(base_lookup)) => {
+                    FallbackEventIdentityState::for_append(base_lookup)
+                }
+                _ => FallbackEventIdentityState::default(),
+            },
         }))
     }
 }
@@ -355,10 +305,7 @@ fn preflight_claude_result_terminals(
         leaf.source_path(),
     );
     let mut reader = JsonlReader::open(identity, source_file, None, None)?;
-    let mut authority = ClaudeResultTerminalAuthority {
-        available: true,
-        ..ClaudeResultTerminalAuthority::default()
-    };
+    let mut authority = ClaudeResultTerminalAuthority::available();
     while reader
         .visit_page(&mut |record: JsonlRecordRef<'_>| -> Result<()> {
             let evidence = record.evidence();
@@ -386,20 +333,22 @@ fn preflight_claude_result_terminals(
                     .as_ref()
                     .and_then(|result| result.call_id.as_deref())
             }) {
-                authority.observe(call_id, in_certified_prefix);
+                authority.observe(
+                    RESULT_TERMINAL_CALL_ID_DOMAIN,
+                    call_id,
+                    if in_certified_prefix {
+                        JsonlTerminalObservationRegion::CertifiedPrefix
+                    } else {
+                        JsonlTerminalObservationRegion::AppendedSuffix
+                    },
+                    MAX_PENDING_CALLS,
+                );
             }
             Ok(())
         })?
         .is_some()
     {}
     Ok(authority)
-}
-
-fn claude_result_terminal_call_id_digest(call_id: &str) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(RESULT_TERMINAL_CALL_ID_DOMAIN);
-    hasher.update(call_id.as_bytes());
-    hasher.finalize().into()
 }
 
 struct Identities {
@@ -435,19 +384,8 @@ struct PendingCall {
     ctx_retrieval_derived: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum PendingCallState {
-    Exact(PendingCall),
-    Ambiguous,
-}
-
-#[derive(Debug)]
-enum PendingCallLookup {
-    Exact(PendingCall),
-    Ambiguous,
-    Missing,
-}
+type PendingCallState = JsonlPendingExchangeState<PendingCall>;
+type PendingCallLookup = JsonlPendingExchangeLookup<PendingCall>;
 
 #[derive(Debug, Clone, Copy)]
 struct FallbackEventIdentity {
@@ -455,20 +393,7 @@ struct FallbackEventIdentity {
     duplicate_occurrence: u64,
 }
 
-#[derive(Default)]
-struct FallbackEventIdentityState {
-    base_lookup: Option<BaseEventIdentityLookup>,
-    next_occurrences: HashMap<[u8; 32], u64>,
-}
-
-impl FallbackEventIdentityState {
-    fn new(base_lookup: Option<BaseEventIdentityLookup>) -> Self {
-        Self {
-            base_lookup,
-            next_occurrences: HashMap::new(),
-        }
-    }
-}
+type FallbackEventIdentityState = JsonlAppendOccurrenceState<[u8; 32]>;
 
 impl ClaudeProjector {
     fn reject_record(&mut self) -> Result<()> {
@@ -479,18 +404,17 @@ impl ClaudeProjector {
     }
 
     fn remember_pending_call(&mut self, call_id: &str, state: PendingCallState) {
-        if let Some(existing) = self.pending_calls.get_mut(call_id) {
-            *existing = PendingCallState::Ambiguous;
-            return;
-        }
-        if self.pending_calls.len() >= MAX_PENDING_CALLS {
-            self.linkage_capacity_exceeded = true;
-            return;
-        }
-        self.pending_calls.insert(call_id.to_owned(), state);
-        if !projector_checkpoint_fits(self) {
-            self.pending_calls.remove(call_id);
-            self.linkage_capacity_exceeded = true;
+        match remember_pending_exchange(&mut self.pending_calls, call_id, state, MAX_PENDING_CALLS)
+        {
+            JsonlPendingExchangeRemember::Inserted if !projector_checkpoint_fits(self) => {
+                self.pending_calls.remove(call_id);
+                self.linkage_capacity_exceeded = true;
+            }
+            JsonlPendingExchangeRemember::CapacityExceeded => {
+                self.linkage_capacity_exceeded = true;
+            }
+            JsonlPendingExchangeRemember::Inserted
+            | JsonlPendingExchangeRemember::BecameAmbiguous => {}
         }
     }
 }
@@ -619,10 +543,10 @@ impl JsonlFamilyProjector for ClaudeProjector {
                     self.linkage_capacity_exceeded,
                     &mut input,
                 );
-                let unique_terminal = result
-                    .call_id
-                    .as_deref()
-                    .is_some_and(|call_id| self.result_terminal_authority.is_unique(call_id));
+                let unique_terminal = result.call_id.as_deref().is_some_and(|call_id| {
+                    self.result_terminal_authority
+                        .is_unique(RESULT_TERMINAL_CALL_ID_DOMAIN, call_id)
+                });
                 discovery_contribution = claude_result_contribution(
                     result,
                     context.as_ref().filter(|_| unique_terminal),
@@ -664,15 +588,7 @@ impl JsonlFamilyProjector for ClaudeProjector {
                             structured_commit_oid: structured_oid,
                             output_repository_path: output_workdir,
                         }) {
-                            input.provider_native_repository_aliases =
-                                linked.provider_native_repository_aliases;
-                            input.outcome_operation_repository_path =
-                                linked.outcome_operation_repository_path;
-                            input.outcome_output_repository_path =
-                                linked.outcome_output_repository_path;
-                            input.outcome_observations = linked.outcomes;
-                            input.pull_request_associations = linked.pull_request_associations;
-                            input.outcome_abstentions = linked.abstentions;
+                            input.apply_linked_outcome(linked);
                         }
                     }
                 }
@@ -1062,11 +978,9 @@ fn remember_pending_call(
     call_id: &str,
     state: PendingCallState,
 ) {
-    if let Some(existing) = pending_calls.get_mut(call_id) {
-        *existing = PendingCallState::Ambiguous;
-    } else if pending_calls.len() < MAX_PENDING_CALLS {
-        pending_calls.insert(call_id.to_owned(), state);
-    } else {
+    if remember_pending_exchange(pending_calls, call_id, state, MAX_PENDING_CALLS)
+        == JsonlPendingExchangeRemember::CapacityExceeded
+    {
         *linkage_capacity_exceeded = true;
     }
 }
@@ -1075,11 +989,7 @@ fn take_pending_call(
     pending_calls: &mut HashMap<String, PendingCallState>,
     call_id: Option<&str>,
 ) -> PendingCallLookup {
-    match call_id.and_then(|call_id| pending_calls.remove(call_id)) {
-        Some(PendingCallState::Exact(context)) => PendingCallLookup::Exact(context),
-        Some(PendingCallState::Ambiguous) => PendingCallLookup::Ambiguous,
-        None => PendingCallLookup::Missing,
-    }
+    take_pending_exchange(pending_calls, call_id)
 }
 
 fn resolve_pending_call(
@@ -1126,63 +1036,18 @@ fn next_fallback_event_identity(
         return Ok(None);
     }
     let digest = fallback_event_digest(row)?;
-    let occurrence = match state.next_occurrences.get(&digest).copied() {
-        Some(occurrence) => occurrence,
-        None => {
-            first_unused_base_occurrence(state.base_lookup.as_ref(), source, session_id, digest)?
-        }
-    };
+    let occurrence = state.next(
+        digest,
+        || CaptureError::SystemInvariant("Claude fallback duplicate occurrence overflowed"),
+        |base_lookup, occurrence| {
+            base_occurrence_exists(base_lookup, source, session_id, digest, occurrence)
+        },
+    )?;
     let identity = FallbackEventIdentity {
         digest,
         duplicate_occurrence: occurrence,
     };
-    state.next_occurrences.insert(
-        digest,
-        occurrence
-            .checked_add(1)
-            .ok_or(CaptureError::SystemInvariant(
-                "Claude fallback duplicate occurrence overflowed",
-            ))?,
-    );
     Ok(Some(identity))
-}
-
-fn first_unused_base_occurrence(
-    base_lookup: Option<&BaseEventIdentityLookup>,
-    source: &SourceKey,
-    session_id: StableEntityId,
-    digest: [u8; 32],
-) -> Result<u64> {
-    let Some(base_lookup) = base_lookup else {
-        return Ok(0);
-    };
-    if !base_occurrence_exists(base_lookup, source, session_id, digest, 0)? {
-        return Ok(0);
-    }
-
-    let mut present = 0_u64;
-    let mut missing = 1_u64;
-    while base_occurrence_exists(base_lookup, source, session_id, digest, missing)? {
-        present = missing;
-        missing = match missing.checked_mul(2) {
-            Some(next) => next,
-            None if missing != u64::MAX => u64::MAX,
-            None => {
-                return Err(CaptureError::SystemInvariant(
-                    "Claude fallback duplicate occurrence overflowed",
-                ));
-            }
-        };
-    }
-    while present.saturating_add(1) < missing {
-        let candidate = present + (missing - present) / 2;
-        if base_occurrence_exists(base_lookup, source, session_id, digest, candidate)? {
-            present = candidate;
-        } else {
-            missing = candidate;
-        }
-    }
-    Ok(missing)
 }
 
 fn base_occurrence_exists(

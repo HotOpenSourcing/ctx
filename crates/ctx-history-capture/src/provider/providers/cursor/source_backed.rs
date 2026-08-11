@@ -40,10 +40,12 @@ use crate::{
         discovery_exclusion_for, ContributionClass, ResultAtom, ResultTerminalStatus,
     },
     provider::source_backed::family::jsonl::{
-        observe_opened_file, read_bounded_record_unhashed, JsonlFamilyAdapter,
-        JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf, JsonlFamilyProjectionMode,
-        JsonlFamilyProjector, JsonlFamilyTerminalProof, JsonlFamilyWorkerContext, JsonlReader,
-        JsonlRecordFraming, JsonlRecordRef, JsonlSourceIdentity,
+        observe_opened_file, read_bounded_record_unhashed, remember_pending_exchange,
+        JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf,
+        JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyTerminalProof,
+        JsonlFamilyWorkerContext, JsonlOrderedAppendOccurrenceState, JsonlPendingExchangeRemember,
+        JsonlPendingExchangeState, JsonlReader, JsonlRecordFraming, JsonlRecordRef,
+        JsonlSourceIdentity, JsonlTerminalAuthority, JsonlTerminalObservationRegion,
     },
     CaptureError, Result, CURSOR_AGENT_TRANSCRIPT_SOURCE_FORMAT, MAX_PROVIDER_JSONL_LINE_BYTES,
 };
@@ -137,54 +139,7 @@ struct CursorPreflightState {
     authorities: HashMap<[u8; 32], CursorResultTerminalAuthority>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-struct CursorResultTerminalState {
-    candidates: u8,
-    in_certified_prefix: bool,
-    after_certified_prefix: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-struct CursorResultTerminalAuthority {
-    call_ids: HashMap<[u8; 32], CursorResultTerminalState>,
-    exhausted: bool,
-    available: bool,
-}
-
-impl CursorResultTerminalAuthority {
-    fn observe(&mut self, call_id: &str, in_certified_prefix: bool) {
-        self.available = true;
-        if self.exhausted {
-            return;
-        }
-        let digest = cursor_result_terminal_call_id_digest(call_id);
-        if !self.call_ids.contains_key(&digest) && self.call_ids.len() >= MAX_CURSOR_TOOL_CONTEXTS {
-            self.call_ids.clear();
-            self.exhausted = true;
-            return;
-        }
-        let state = self.call_ids.entry(digest).or_default();
-        state.candidates = state.candidates.saturating_add(1).min(2);
-        state.in_certified_prefix |= in_certified_prefix;
-        state.after_certified_prefix |= !in_certified_prefix;
-    }
-
-    fn is_unique(&self, call_id: &str) -> bool {
-        !self.available
-            || (!self.exhausted
-                && self
-                    .call_ids
-                    .get(&cursor_result_terminal_call_id_digest(call_id))
-                    .is_some_and(|state| state.candidates == 1))
-    }
-
-    fn append_requires_replacement(&self) -> bool {
-        self.exhausted
-            || self.call_ids.values().any(|state| {
-                state.in_certified_prefix && state.after_certified_prefix && state.candidates > 1
-            })
-    }
-}
+type CursorResultTerminalAuthority = JsonlTerminalAuthority;
 
 pub(crate) fn cursor_jsonl_adapter() -> Arc<dyn JsonlFamilyAdapter> {
     Arc::new(CursorJsonlAdapter::default())
@@ -395,11 +350,12 @@ impl JsonlFamilyAdapter for CursorJsonlAdapter {
             tool_contexts,
             linkage_capacity_exceeded,
             result_terminal_authority,
-            event_identities: CursorEventIdentityState::new(
-                (mode == JsonlFamilyProjectionMode::CertifiedAppend)
-                    .then_some(base_event_lookup)
-                    .flatten(),
-            ),
+            event_identities: match (mode, base_event_lookup) {
+                (JsonlFamilyProjectionMode::CertifiedAppend, Some(base_lookup)) => {
+                    CursorEventIdentityState::for_append(base_lookup)
+                }
+                _ => CursorEventIdentityState::default(),
+            },
         }))
     }
 }
@@ -425,10 +381,7 @@ fn preflight_cursor_result_terminals(
         leaf.source_path(),
     );
     let mut reader = JsonlReader::open(identity, source_file, None, None)?;
-    let mut authority = CursorResultTerminalAuthority {
-        available: true,
-        ..CursorResultTerminalAuthority::default()
-    };
+    let mut authority = CursorResultTerminalAuthority::available();
     while reader
         .visit_page(&mut |record: JsonlRecordRef<'_>| -> Result<()> {
             let evidence = record.evidence();
@@ -450,7 +403,16 @@ fn preflight_cursor_result_terminals(
                     ..
                 } = event.body
                 {
-                    authority.observe(&call_id, in_certified_prefix);
+                    authority.observe(
+                        RESULT_TERMINAL_CALL_ID_DOMAIN,
+                        &call_id,
+                        if in_certified_prefix {
+                            JsonlTerminalObservationRegion::CertifiedPrefix
+                        } else {
+                            JsonlTerminalObservationRegion::AppendedSuffix
+                        },
+                        MAX_CURSOR_TOOL_CONTEXTS,
+                    );
                 }
             }
             Ok(())
@@ -458,13 +420,6 @@ fn preflight_cursor_result_terminals(
         .is_some()
     {}
     Ok(authority)
-}
-
-fn cursor_result_terminal_call_id_digest(call_id: &str) -> [u8; 32] {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(RESULT_TERMINAL_CALL_ID_DOMAIN);
-    hasher.update(call_id.as_bytes());
-    hasher.finalize().into()
 }
 
 struct CursorProjector {
@@ -477,20 +432,7 @@ struct CursorProjector {
     event_identities: CursorEventIdentityState,
 }
 
-#[derive(Default)]
-struct CursorEventIdentityState {
-    base_lookup: Option<BaseEventIdentityLookup>,
-    next_occurrences: BTreeMap<CursorLogicalEventIdentity, u64>,
-}
-
-impl CursorEventIdentityState {
-    fn new(base_lookup: Option<BaseEventIdentityLookup>) -> Self {
-        Self {
-            base_lookup,
-            next_occurrences: BTreeMap::new(),
-        }
-    }
-}
+type CursorEventIdentityState = JsonlOrderedAppendOccurrenceState<CursorLogicalEventIdentity>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct CursorLogicalEventIdentity {
@@ -523,12 +465,7 @@ struct CursorToolContext {
     ctx_retrieval_derived: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum CursorToolContextState {
-    Exact(CursorToolContext),
-    Ambiguous,
-}
+type CursorToolContextState = JsonlPendingExchangeState<CursorToolContext>;
 
 impl JsonlFamilyProjector for CursorProjector {
     fn project(
@@ -589,18 +526,21 @@ impl JsonlFamilyProjector for CursorProjector {
 
 impl CursorProjector {
     fn remember_tool_context(&mut self, call_id: &str, state: CursorToolContextState) {
-        if let Some(existing) = self.tool_contexts.get_mut(call_id) {
-            *existing = CursorToolContextState::Ambiguous;
-            return;
-        }
-        if self.tool_contexts.len() >= MAX_CURSOR_TOOL_CONTEXTS {
-            self.linkage_capacity_exceeded = true;
-            return;
-        }
-        self.tool_contexts.insert(call_id.to_owned(), state);
-        if !cursor_checkpoint_fits(self) {
-            self.tool_contexts.remove(call_id);
-            self.linkage_capacity_exceeded = true;
+        match remember_pending_exchange(
+            &mut self.tool_contexts,
+            call_id,
+            state,
+            MAX_CURSOR_TOOL_CONTEXTS,
+        ) {
+            JsonlPendingExchangeRemember::Inserted if !cursor_checkpoint_fits(self) => {
+                self.tool_contexts.remove(call_id);
+                self.linkage_capacity_exceeded = true;
+            }
+            JsonlPendingExchangeRemember::CapacityExceeded => {
+                self.linkage_capacity_exceeded = true;
+            }
+            JsonlPendingExchangeRemember::Inserted
+            | JsonlPendingExchangeRemember::BecameAmbiguous => {}
         }
     }
 
@@ -695,9 +635,10 @@ impl CursorProjector {
                 discovery_evidence,
                 ..
             } => {
-                let unique_terminal = call_id
-                    .as_deref()
-                    .is_some_and(|call_id| self.result_terminal_authority.is_unique(call_id));
+                let unique_terminal = call_id.as_deref().is_some_and(|call_id| {
+                    self.result_terminal_authority
+                        .is_unique(RESULT_TERMINAL_CALL_ID_DOMAIN, call_id)
+                });
                 let context = if *ambiguous_linkage {
                     None
                 } else {
@@ -1093,22 +1034,12 @@ fn core_record(
         .occurred_at
         .map(|occurred_at| occurred_at.timestamp_millis());
     record.role = Some(event.role.as_str().to_owned());
-    record.content.structured_content = content.annotation.structured_content;
     record.content.discovery_exclusion = content.discovery_exclusion;
+    crate::repository_attribution::apply_annotation(&mut record, content.annotation)
+        .map_err(contract)?;
     record
         .content
         .omit_structured_content_if_aggregate_exceeds_limit()
-        .map_err(contract)?;
-    record.metadata = content.annotation.metadata;
-    record.repository_candidate_evidence = content.annotation.repository_candidate_evidence;
-    record.repository_bindings = content.annotation.repository_bindings;
-    record.repository_abstentions = content.annotation.repository_abstentions;
-    record.repository_file_invocation_evidence =
-        content.annotation.repository_file_invocation_evidence;
-    record.repository_file_observations = content.annotation.repository_file_observations;
-    record.repository_vcs_observations = content.annotation.repository_vcs_observations;
-    record
-        .bind_repository_commit_operation_identities()
         .map_err(contract)?;
     record.validate_contract().map_err(contract)?;
     Ok(Some(record))
@@ -1184,57 +1115,13 @@ fn next_event_occurrence(
     state: &mut CursorEventIdentityState,
 ) -> Result<u64> {
     let logical_identity = CursorLogicalEventIdentity::from_event(event);
-    let occurrence = match state.next_occurrences.get(&logical_identity).copied() {
-        Some(occurrence) => occurrence,
-        None => {
-            first_unused_base_occurrence(state.base_lookup.as_ref(), source, session_id, event)?
-        }
-    };
-    let next = occurrence
-        .checked_add(1)
-        .ok_or(CaptureError::SystemInvariant(
-            "Cursor duplicate event occurrence overflowed",
-        ))?;
-    state.next_occurrences.insert(logical_identity, next);
-    Ok(occurrence)
-}
-
-fn first_unused_base_occurrence(
-    base_lookup: Option<&BaseEventIdentityLookup>,
-    source: &SourceKey,
-    session_id: StableEntityId,
-    event: &CursorNativeEvent,
-) -> Result<u64> {
-    let Some(base_lookup) = base_lookup else {
-        return Ok(0);
-    };
-    if !base_occurrence_exists(base_lookup, source, session_id, event, 0)? {
-        return Ok(0);
-    }
-
-    let mut present = 0_u64;
-    let mut missing = 1_u64;
-    while base_occurrence_exists(base_lookup, source, session_id, event, missing)? {
-        present = missing;
-        missing = match missing.checked_mul(2) {
-            Some(next) => next,
-            None if missing != u64::MAX => u64::MAX,
-            None => {
-                return Err(CaptureError::SystemInvariant(
-                    "Cursor duplicate event occurrence overflowed",
-                ));
-            }
-        };
-    }
-    while present.saturating_add(1) < missing {
-        let candidate = present + (missing - present) / 2;
-        if base_occurrence_exists(base_lookup, source, session_id, event, candidate)? {
-            present = candidate;
-        } else {
-            missing = candidate;
-        }
-    }
-    Ok(missing)
+    state.next(
+        logical_identity,
+        || CaptureError::SystemInvariant("Cursor duplicate event occurrence overflowed"),
+        |base_lookup, occurrence| {
+            base_occurrence_exists(base_lookup, source, session_id, event, occurrence)
+        },
+    )
 }
 
 fn base_occurrence_exists(

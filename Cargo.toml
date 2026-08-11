@@ -13,6 +13,7 @@ members = [
     "crates/ctx-history-index-format",
     "crates/ctx-history-index-generation",
     "crates/ctx-history-index-query",
+    "crates/ctx-history-jsonl",
     "crates/ctx-history-refresh",
     "crates/ctx-history-refresh-execution",
     "crates/ctx-semantic-index",

@@ -128,6 +128,11 @@
       "native_unit": "//crates/ctx-history-index:unit_tests",
       "feature_variants": ["//crates/ctx-history-index:test_support_lib"]
     },
+    "ctx-history-jsonl": {
+      "manifest": "crates/ctx-history-jsonl/Cargo.toml",
+      "targets": {"lib:ctx_history_jsonl": "//crates/ctx-history-jsonl:lib"},
+      "native_unit": "//crates/ctx-history-jsonl:unit_tests"
+    },
     "ctx-history-refresh": {
       "manifest": "crates/ctx-history-refresh/Cargo.toml",
       "targets": {"lib:ctx_history_refresh": "//crates/ctx-history-refresh:lib"},
