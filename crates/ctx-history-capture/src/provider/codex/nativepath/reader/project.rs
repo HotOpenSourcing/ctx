@@ -5,9 +5,8 @@ mod mcp;
 mod mcp_exchange;
 mod repository_candidate;
 
-use mcp::project_mcp_tool_call_attribution;
 pub(super) use mcp::{mcp_terminal_candidate_evidence, CodexMcpTerminalAuthority};
-use mcp_exchange::{project_mcp_exchange, selected_content_fits};
+use mcp_exchange::{project_mcp_terminal, selected_content_fits};
 pub(super) use repository_candidate::{
     CodexRepositoryCandidateAuthority, CodexRepositoryOccurrenceCache,
 };
@@ -279,15 +278,15 @@ impl CodexNativeScanner {
         // generation-1 Codex lane. A present producer version is a separate,
         // not-qualified lane and must not inherit attribution merely because
         // its terminal record has the same shape.
-        let mcp_tool_call = if owner.cli_version.is_none() {
-            project_mcp_tool_call_attribution(
-                record,
-                &decoded.payload,
-                &self.mcp_terminal_authority,
-            )
-        } else {
-            None
-        };
+        let projected_mcp_terminal = project_mcp_terminal(
+            record,
+            &decoded.payload,
+            owner.cli_version.is_none()
+                && call_id.is_some_and(|call_id| self.mcp_terminal_authority.is_unique(call_id)),
+        );
+        let (mcp_tool_call, projected_mcp_exchange) = projected_mcp_terminal
+            .map(|terminal| terminal.into_parts())
+            .unwrap_or_default();
 
         if let (Some(call_id), Some(context)) = (call_id, context.as_ref()) {
             if let Some(cell_id) =
@@ -349,7 +348,7 @@ impl CodexNativeScanner {
         .flatten();
         let mut structured_content =
             projected_tool_result_content(result_kind, call_id, &mut projected_output);
-        let projected_mcp_exchange = project_mcp_exchange(record, &decoded.payload)
+        let projected_mcp_exchange = projected_mcp_exchange
             .and_then(|exchange| exchange.fit_selected_body(&projected_output.normalized_body));
         let discovery_exclusion = projected_mcp_exchange
             .as_ref()
