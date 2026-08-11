@@ -63,10 +63,12 @@ pub use uninstall::{
 pub use validation::{validate_access_status, validate_portal_url};
 
 pub use ctx_pro_host::{
-    blame_boundary_error, blame_diagnostic, invalid_blame_request, stable_error_code,
-    BlameResultFreshness, CoreGenerationHost, CoreGenerationPin, CoreMaterializationSyncOutcome,
-    HelperSmoke, HostedBlameResult, InstalledProHost, ProSetupRepairability, ProStatus,
-    RESOURCE_NOT_FOUND_DIAGNOSTIC,
+    blame_boundary_error, blame_diagnostic, core_finalization_generation_lease,
+    invalid_blame_request, reconstruct_core_finalization_generation_lease,
+    release_core_finalization_generation_lease, stable_error_code,
+    validate_core_finalization_generation_lease, BlameResultFreshness, CoreGenerationHost,
+    CoreGenerationPin, CoreMaterializationSyncOutcome, HelperSmoke, HostedBlameResult,
+    InstalledProHost, ProSetupRepairability, ProStatus, RESOURCE_NOT_FOUND_DIAGNOSTIC,
 };
 pub use ctx_pro_host_protocol::{BlameTarget, LineRange};
 pub use ctx_pro_lifecycle::operation::LifecycleOperation;

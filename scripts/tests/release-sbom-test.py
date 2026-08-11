@@ -34,6 +34,7 @@ WORKSPACE_PACKAGES = (
     ("ctx-agent-integrations", "crates/ctx-agent-integrations"),
     ("ctx-client-observability", "crates/ctx-client-observability"),
     ("ctx-daemon-application", "crates/ctx-daemon-application"),
+    ("ctx-daemon-cli", "crates/ctx-daemon-cli"),
     ("ctx-daemon-runtime", "crates/ctx-daemon-runtime"),
     ("ctx-daemon-service", "crates/ctx-daemon-service"),
     ("ctx-pro-application", "crates/ctx-pro-application"),
@@ -158,6 +159,7 @@ members = [
   "crates/ctx-agent-integrations",
   "crates/ctx-client-observability",
   "crates/ctx-daemon-application",
+  "crates/ctx-daemon-cli",
   "crates/ctx-daemon-runtime",
   "crates/ctx-daemon-service",
   "crates/ctx-pro-application",
@@ -199,9 +201,7 @@ tantivy = { version = "0.26.1", default-features = false, features = ["mmap", "l
                     "ctx-agent-application = { path = \"../ctx-agent-application\" }\n"
                     "ctx-agent-integrations = { path = \"../ctx-agent-integrations\" }\n"
                     "ctx-client-observability = { path = \"../ctx-client-observability\" }\n"
-                    "ctx-daemon-application = { path = \"../ctx-daemon-application\" }\n"
-                    "ctx-daemon-runtime = { path = \"../ctx-daemon-runtime\" }\n"
-                    "ctx-daemon-service = { path = \"../ctx-daemon-service\" }\n"
+                    "ctx-daemon-cli = { path = \"../ctx-daemon-cli\" }\n"
                     "ctx-history-capture-model = { path = \"../ctx-history-capture-model\" }\n"
                     "ctx-history-jsonl = { path = \"../ctx-history-jsonl\" }\n"
                     "ctx-history-refresh-execution = { path = \"../ctx-history-refresh-execution\" }\n"
@@ -210,7 +210,6 @@ tantivy = { version = "0.26.1", default-features = false, features = ["mmap", "l
                     "ctx-pro-host = { path = \"../ctx-pro-host\" }\n"
                     "ctx-pro-lifecycle = { path = \"../ctx-pro-lifecycle\" }\n"
                     "ctx-history-repository-evidence = { path = \"../ctx-history-repository-evidence\" }\n"
-                    "ctx-semantic-model = { path = \"../ctx-semantic-model\" }\n"
                     "ctx-terminal = { path = \"../ctx-terminal\" }\n"
                     "ctx-upgrade-engine = { path = \"../ctx-upgrade-engine\" }"
                 ),
@@ -229,6 +228,20 @@ tantivy = { version = "0.26.1", default-features = false, features = ["mmap", "l
                     "ctx-daemon-runtime = { path = \"../ctx-daemon-runtime\" }\n"
                     "ctx-daemon-service = { path = \"../ctx-daemon-service\" }\n"
                     "ctx-history-core = { path = \"../ctx-history-core\" }"
+                ),
+                "ctx-daemon-cli": (
+                    "ctx-client-observability = { path = \"../ctx-client-observability\" }\n"
+                    "ctx-daemon-application = { path = \"../ctx-daemon-application\" }\n"
+                    "ctx-daemon-runtime = { path = \"../ctx-daemon-runtime\" }\n"
+                    "ctx-daemon-service = { path = \"../ctx-daemon-service\" }\n"
+                    "ctx-history-core = { path = \"../ctx-history-core\" }\n"
+                    "ctx-history-index = { path = \"../ctx-history-index\" }\n"
+                    "ctx-history-read-application = { path = \"../ctx-history-read-application\" }\n"
+                    "ctx-pro-application = { path = \"../ctx-pro-application\" }\n"
+                    "ctx-semantic-index = { path = \"../ctx-semantic-index\" }\n"
+                    "ctx-semantic-model = { path = \"../ctx-semantic-model\" }\n"
+                    "ctx-terminal = { path = \"../ctx-terminal\" }\n"
+                    "ctx-upgrade-engine = { path = \"../ctx-upgrade-engine\" }"
                 ),
                 "ctx-daemon-runtime": (
                     "ctx-history-core = { path = \"../ctx-history-core\" }"
@@ -298,6 +311,7 @@ tantivy = { version = "0.26.1", default-features = false, features = ["mmap", "l
                 'version = "1.0.0"'
                 if name in {
                     "ctx-daemon-application",
+                    "ctx-daemon-cli",
                     "ctx-daemon-runtime",
                     "ctx-daemon-service",
                     "ctx-pro-application",
@@ -349,6 +363,7 @@ repository = "https://example.invalid/{name}"
             "@@//crates/ctx-agent-integrations:ctx_agent_integrations",
             "@@//crates/ctx-client-observability:ctx_client_observability",
             "@@//crates/ctx-daemon-application:ctx_daemon_application",
+            "@@//crates/ctx-daemon-cli:ctx_daemon_cli",
             "@@//crates/ctx-daemon-runtime:ctx_daemon_runtime",
             "@@//crates/ctx-daemon-service:ctx_daemon_service",
             "@@//crates/ctx-pro-application:ctx_pro_application",
@@ -450,10 +465,8 @@ repository = "https://example.invalid/{name}"
                     "ctx-agent-application",
                     "ctx-agent-integrations",
                     "ctx-client-observability",
-                    "ctx-daemon-application 1.0.0",
+                    "ctx-daemon-cli 1.0.0",
                     "ctx-history-core",
-                    "ctx-daemon-runtime 1.0.0",
-                    "ctx-daemon-service 1.0.0",
                     "ctx-pro-application 1.0.0",
                     "ctx-pro-host",
                     "ctx-pro-lifecycle",
@@ -463,8 +476,6 @@ repository = "https://example.invalid/{name}"
                     "ctx-history-refresh-execution",
                     "ctx-history-read-application",
                     "ctx-history-repository-evidence",
-                    "ctx-semantic-index",
-                    "ctx-semantic-model",
                     "ctx-terminal 1.0.0",
                     "ctx-upgrade-engine",
                 ),
@@ -492,6 +503,24 @@ repository = "https://example.invalid/{name}"
                     "ctx-daemon-runtime 1.0.0",
                     "ctx-daemon-service 1.0.0",
                     "ctx-history-core",
+                ),
+            ),
+            self.package(
+                "ctx-daemon-cli",
+                "1.0.0",
+                (
+                    "ctx-client-observability",
+                    "ctx-daemon-application 1.0.0",
+                    "ctx-daemon-runtime 1.0.0",
+                    "ctx-daemon-service 1.0.0",
+                    "ctx-history-core",
+                    "ctx-history-index",
+                    "ctx-history-read-application",
+                    "ctx-pro-application 1.0.0",
+                    "ctx-semantic-index",
+                    "ctx-semantic-model",
+                    "ctx-terminal 1.0.0",
+                    "ctx-upgrade-engine",
                 ),
             ),
             self.package("ctx-history-core", "0.26.0"),

@@ -563,16 +563,6 @@ pub(crate) enum DaemonTriggerCommandArg {
     Search,
 }
 
-impl DaemonTriggerCommandArg {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Setup => "setup",
-            Self::Import => "import",
-            Self::Search => "search",
-        }
-    }
-}
-
 pub(crate) fn parse_search_limit(value: &str) -> Result<usize, String> {
     let limit = value
         .parse::<usize>()

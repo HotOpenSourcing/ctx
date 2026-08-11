@@ -22,12 +22,9 @@ use super::{
 pub(crate) use ctx_pro_host::default_helper_path;
 pub(super) use ctx_pro_host::typed_blame_diagnostic;
 pub(crate) use ctx_pro_host::{
-    blame_boundary_error, blame_diagnostic, core_finalization_generation_lease,
-    invalid_blame_request, reconstruct_core_finalization_generation_lease,
-    release_core_finalization_generation_lease, stable_error_code,
-    validate_core_finalization_generation_lease, BlameResultFreshness,
-    CoreMaterializationSyncOutcome, HelperSmoke, HostedBlameResult, ProStatus,
-    RESOURCE_NOT_FOUND_DIAGNOSTIC,
+    blame_boundary_error, blame_diagnostic, invalid_blame_request, stable_error_code,
+    BlameResultFreshness, CoreMaterializationSyncOutcome, HelperSmoke, HostedBlameResult,
+    ProStatus, RESOURCE_NOT_FOUND_DIAGNOSTIC,
 };
 
 pub(crate) type MaterializeReport = ctx_pro_host::MaterializationFinalizationReceipt;

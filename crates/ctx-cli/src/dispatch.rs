@@ -158,6 +158,7 @@ fn render_unhandled_command_error(error: &anyhow::Error) -> Result<()> {
 }
 
 pub(crate) fn run_cli() -> Result<()> {
+    semantic::initialize()?;
     if upgrade::ports::engine().run_legacy_automatic_bridge()? {
         return Ok(());
     }

@@ -7,6 +7,7 @@ LOC_CHECK_SOURCE_DATA = [
     "//crates/ctx-agent-integrations:loc_check_inputs",
     "//crates/ctx-cli:loc_check_inputs",
     "//crates/ctx-client-observability:loc_check_inputs",
+    "//crates/ctx-daemon-cli:loc_check_inputs",
     "//crates/ctx-daemon-application:loc_check_inputs",
     "//crates/ctx-daemon-runtime:loc_check_inputs",
     "//crates/ctx-daemon-service:loc_check_inputs",

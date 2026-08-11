@@ -12,8 +12,6 @@ pub(super) use ctx_pro_lifecycle::release_manifest as lifecycle_manifest;
 
 #[path = "lifecycle_commands.rs"]
 mod commands;
-#[cfg(test)]
-pub(crate) use commands::count_lifecycle_status_queries;
 pub(crate) use commands::{
     lifecycle_status_json, lifecycle_status_json_for_core, run_lifecycle, ProArgs,
 };

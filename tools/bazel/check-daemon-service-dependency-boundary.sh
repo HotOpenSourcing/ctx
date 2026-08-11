@@ -86,6 +86,8 @@ expected_reverse_test_support="${tmp}/expected-reverse-test-support.txt"
 printf '%s\n' \
   '//crates/ctx-cli:unit_tests' \
   '//crates/ctx-daemon-application:test_support_lib' \
+  '//crates/ctx-daemon-cli:test_support_lib' \
+  '//crates/ctx-daemon-cli:unit_tests' \
   '//crates/ctx-daemon-service:test_support_lib' >"${expected_reverse_test_support}"
 query 'kind("rust_library rule", rdeps(//crates/..., //crates/ctx-daemon-service:test_support_lib)) union kind("rust_test rule", rdeps(//crates/..., //crates/ctx-daemon-service:test_support_lib))' \
   | LC_ALL=C sort -u >"${tmp}/actual-reverse-test-support.txt"
@@ -101,6 +103,8 @@ printf '%s\n' \
   '//crates/ctx-cli:ctx' \
   '//crates/ctx-cli:ctx_pro_test_host' \
   '//crates/ctx-daemon-application:lib' \
+  '//crates/ctx-daemon-cli:lib' \
+  '//crates/ctx-daemon-cli:qualification_test_support_lib' \
   '//crates/ctx-daemon-service:lib' >"${expected_reverse}"
 query 'kind("rust_binary rule", rdeps(//crates/..., //crates/ctx-daemon-service:lib)) union kind("rust_library rule", rdeps(//crates/..., //crates/ctx-daemon-service:lib))' \
   | LC_ALL=C sort -u >"${tmp}/actual-reverse.txt"
@@ -115,6 +119,7 @@ printf '%s\n' \
   '//crates/ctx-cli:ctx_hosted_uninstall_test_host' \
   '//crates/ctx-cli:ctx_upgrade_test_harness' \
   '//crates/ctx-daemon-application:qualification_lib' \
+  '//crates/ctx-daemon-cli:qualification_lib' \
   '//crates/ctx-daemon-service:qualification_lib' >"${expected_reverse_qualification}"
 query 'kind("rust_binary rule", rdeps(//crates/..., //crates/ctx-daemon-service:qualification_lib)) union kind("rust_library rule", rdeps(//crates/..., //crates/ctx-daemon-service:qualification_lib))' \
   | LC_ALL=C sort -u >"${tmp}/actual-reverse-qualification.txt"
@@ -190,7 +195,11 @@ reverse = []
 for candidate in sorted((root / "crates").glob("*/Cargo.toml")):
     if candidate != manifest_path and "ctx-daemon-service" in candidate.read_text(encoding="utf-8"):
         reverse.append(candidate.relative_to(root).as_posix())
-if reverse != ["crates/ctx-cli/Cargo.toml", "crates/ctx-daemon-application/Cargo.toml"]:
+if reverse != [
+    "crates/ctx-cli/Cargo.toml",
+    "crates/ctx-daemon-application/Cargo.toml",
+    "crates/ctx-daemon-cli/Cargo.toml",
+]:
     raise SystemExit(f"unexpected reverse Cargo consumer of ctx-daemon-service: {reverse}")
 
 try:

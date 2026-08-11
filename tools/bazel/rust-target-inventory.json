@@ -24,6 +24,7 @@
         "test:cloud_removed": "//crates/ctx-cli:cloud_removed_tests",
         "test:custom_root_discovery": "//crates/ctx-cli:custom_root_discovery_tests",
         "test:daemon_config_reload": "//crates/ctx-cli:daemon_config_reload_tests",
+        "test:daemon_rendering": "//crates/ctx-cli:daemon_rendering_tests",
         "test:explicit_path_revision_upgrade": "//crates/ctx-cli:explicit_path_revision_upgrade_tests",
         "test:history_source_plugins": "//crates/ctx-cli:history_source_plugins_tests",
         "test:hosted_uninstall_fence": "//crates/ctx-cli:hosted_uninstall_fence_tests",
@@ -65,6 +66,16 @@
       "targets": {"lib:ctx_daemon_application": "//crates/ctx-daemon-application:lib"},
       "native_unit": "//crates/ctx-daemon-application:unit_tests",
       "feature_variants": ["//crates/ctx-daemon-application:qualification_lib", "//crates/ctx-daemon-application:test_support_lib"]
+    },
+    "ctx-daemon-cli": {
+      "manifest": "crates/ctx-daemon-cli/Cargo.toml",
+      "targets": {"lib:ctx_daemon_cli": "//crates/ctx-daemon-cli:lib"},
+      "native_unit": "//crates/ctx-daemon-cli:unit_tests",
+      "feature_variants": [
+        "//crates/ctx-daemon-cli:qualification_lib",
+        "//crates/ctx-daemon-cli:qualification_test_support_lib",
+        "//crates/ctx-daemon-cli:test_support_lib"
+      ]
     },
     "ctx-daemon-runtime": {
       "manifest": "crates/ctx-daemon-runtime/Cargo.toml",
