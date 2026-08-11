@@ -9,12 +9,14 @@ const CODEX_PROVIDER_EVENT_OCCURRENCE_DOMAIN: &[u8] =
 const CODEX_FALLBACK_EVENT_DIGEST_DOMAIN: &[u8] = b"ctx/codex-nativepath/fallback-event/v1\0";
 
 #[derive(Default)]
-pub(super) struct CodexEventIdentityStateV0 {
+pub(in crate::provider::codex::nativepath) struct CodexEventIdentityStateV0 {
     occurrences: JsonlAppendOccurrenceState<[u8; 32]>,
 }
 
 impl CodexEventIdentityStateV0 {
-    pub(super) fn for_append(base_lookup: BaseEventIdentityLookup) -> Self {
+    pub(in crate::provider::codex::nativepath) fn for_append(
+        base_lookup: BaseEventIdentityLookup,
+    ) -> Self {
         Self {
             occurrences: JsonlAppendOccurrenceState::for_append(base_lookup),
         }
@@ -24,7 +26,7 @@ impl CodexEventIdentityStateV0 {
         &mut self,
         source: &SourceKey,
         session_id: StableEntityId,
-        row: &CodexSourceBackedRowV0,
+        row: &CodexCoreRecordDraft,
     ) -> CodexSourceBackedResultV0<(StableEntityId, TypedKey, u64)> {
         let (occurrence_key, parts) = match row.provider_event_identity.as_ref() {
             Some(provider_identity) => provider_event_key(row, provider_identity)?,
@@ -69,7 +71,7 @@ fn event_identity_for_occurrence(
 }
 
 fn provider_event_key(
-    row: &CodexSourceBackedRowV0,
+    row: &CodexCoreRecordDraft,
     provider_identity: &CodexProviderEventIdentityV0,
 ) -> CodexSourceBackedResultV0<([u8; 32], Vec<TypedKey>)> {
     provider_event_key_parts(
@@ -104,7 +106,7 @@ fn provider_event_key_parts(
 }
 
 fn fallback_event_key(
-    row: &CodexSourceBackedRowV0,
+    row: &CodexCoreRecordDraft,
 ) -> CodexSourceBackedResultV0<([u8; 32], Vec<TypedKey>)> {
     let mut hasher = Sha256::new();
     hasher.update(CODEX_FALLBACK_EVENT_DIGEST_DOMAIN);
@@ -135,7 +137,9 @@ fn hash_identity_text(hasher: &mut Sha256, value: &str) {
     hasher.update(value.as_bytes());
 }
 
-pub(super) fn codex_source_key(native_session_id: &str) -> CodexSourceBackedResultV0<SourceKey> {
+pub(in crate::provider::codex::nativepath) fn codex_source_key(
+    native_session_id: &str,
+) -> CodexSourceBackedResultV0<SourceKey> {
     let anchor = SourceAnchor::provider_native(
         CODEX_SOURCE_ANCHOR_NAMESPACE,
         TypedKey::utf8(native_session_id)?,
@@ -149,7 +153,7 @@ pub(super) fn codex_source_key(native_session_id: &str) -> CodexSourceBackedResu
     )?)
 }
 
-pub(super) fn codex_session_identity(
+pub(in crate::provider::codex::nativepath) fn codex_session_identity(
     source: &SourceKey,
     native_session_id: &str,
 ) -> CodexSourceBackedResultV0<StableEntityId> {
@@ -178,11 +182,11 @@ pub(super) fn codex_event_identity(
     })?)
 }
 
-pub(super) fn codex_core_record(
+pub(in crate::provider::codex::nativepath) fn codex_core_record(
     source: &SourceKey,
     session_id: StableEntityId,
     owner: &CodexSessionRow,
-    row: CodexSourceBackedRowV0,
+    row: CodexCoreRecordDraft,
     event_identity_state: &mut CodexEventIdentityStateV0,
     attributor: &mut crate::repository_attribution::RepositoryAttributor,
 ) -> CodexSourceBackedResultV0<CoreRecord> {
@@ -201,10 +205,9 @@ pub(super) fn codex_core_record(
     let is_primary = owner.session_relationship.is_primary();
     let (event_id, native_event_id, provider_occurrence) =
         event_identity_state.next_identity(source, session_id, &row)?;
-    let CodexSourceBackedRowV0 {
+    let CodexCoreRecordDraft {
         raw_ordinal,
         provider_event_identity,
-        copied_from_native_session_id: _,
         repository_result_origin,
         occurred_at,
         event_type,
@@ -227,72 +230,53 @@ pub(super) fn codex_core_record(
         .iter()
         .map(|evidence| evidence.structured_content.clone())
         .collect::<Vec<_>>();
-    let mut provider_native_repository_aliases = Vec::new();
-    let mut outcome_observations = Vec::new();
-    let mut pull_request_associations = Vec::new();
-    let mut outcome_abstentions = Vec::new();
-    let mut outcome_operation_repository_path = None;
-    let mut outcome_output_repository_path = None;
-    let result_declared_workdir = repository_result
-        .as_ref()
-        .and_then(|evidence| evidence.declared_workdir.clone());
-    let result_command = repository_result
-        .as_ref()
-        .and_then(|evidence| evidence.command.clone());
-    let result_command_too_large = repository_result
-        .as_ref()
-        .is_some_and(|evidence| evidence.command_too_large);
-    let result_origin = match repository_result.as_ref().and_then(|evidence| {
-        Some((
-            evidence.origin_call_id.as_deref()?,
-            evidence.result_call_id.as_deref()?,
-        ))
-    }) {
-        Some((_origin_call_id, _result_call_id)) => Some(repository_result_origin),
-        None => None,
+    let mut result_input = crate::repository_attribution::AttributionInput {
+        activity_at_unix_ms: Some(occurred_at.timestamp_millis()),
+        session_cwd: session_cwd.clone(),
+        file_observations: repository_files,
+        ..crate::repository_attribution::AttributionInput::default()
     };
-    let event_origin = match (
-        result_origin.as_ref(),
-        repository_result.as_ref(),
-        provider_event_identity.as_ref(),
-    ) {
-        (Some(CodexInvocationOriginV0::UniqueToSession), Some(_), _) => {
-            Some(ctx_history_core::EventOrigin::UniqueToSession)
-        }
-        (
-            Some(CodexInvocationOriginV0::CopiedFromAncestor {
-                ancestor_native_session_id,
-            }),
-            Some(evidence),
-            Some(provider_identity),
-        ) => evidence
-            .result_call_id
-            .as_deref()
-            .map(|result_call_id| {
-                copied_result_event_origin(
-                    ancestor_native_session_id,
-                    result_call_id,
-                    provider_identity,
-                    event_type.as_str(),
-                    role.map(|role| role.as_str()),
-                    provider_occurrence,
-                )
-            })
-            .transpose()?
-            .flatten(),
-        _ => None,
-    };
+    let mut result_origin = None;
+    let mut event_origin = None;
     if let Some(evidence) = repository_result {
-        native_tool_activities.push(evidence.structured_content.clone());
-        provider_native_repository_aliases = evidence.provider_native_repository_aliases;
-        outcome_operation_repository_path = evidence.outcome_operation_repository_path;
-        outcome_output_repository_path = evidence.outcome_output_repository_path;
-        outcome_observations = evidence.outcomes;
-        pull_request_associations = evidence.pull_request_associations;
-        outcome_abstentions = evidence.abstentions;
+        result_origin = (evidence.origin_call_id.is_some() && evidence.result_call_id.is_some())
+            .then_some(repository_result_origin);
+        event_origin = match (&result_origin, provider_event_identity.as_ref()) {
+            (Some(CodexInvocationOriginV0::UniqueToSession), _) => {
+                Some(ctx_history_core::EventOrigin::UniqueToSession)
+            }
+            (
+                Some(CodexInvocationOriginV0::CopiedFromAncestor {
+                    ancestor_native_session_id,
+                }),
+                Some(provider_identity),
+            ) => copied_result_event_origin(
+                ancestor_native_session_id,
+                evidence.result_call_id.as_deref().unwrap_or_default(),
+                provider_identity,
+                event_type.as_str(),
+                role.map(|role| role.as_str()),
+                provider_occurrence,
+            )?,
+            _ => None,
+        };
+        native_tool_activities.push(evidence.structured_content);
+        result_input.provider_native_repository_aliases =
+            evidence.provider_native_repository_aliases;
+        result_input.declared_tool_workdir = evidence.declared_workdir;
+        result_input.command = evidence.command;
+        if evidence.command_too_large {
+            result_input.command_disposition =
+                crate::repository_attribution::CommandEvidenceDisposition::CommandTooLarge;
+        }
+        result_input.outcome_operation_repository_path = evidence.outcome_operation_repository_path;
+        result_input.outcome_output_repository_path = evidence.outcome_output_repository_path;
+        result_input.outcome_observations = evidence.outcomes;
+        result_input.pull_request_associations = evidence.pull_request_associations;
+        result_input.outcome_abstentions = evidence.abstentions;
     }
-    let has_repository_outcomes =
-        !outcome_observations.is_empty() || !pull_request_associations.is_empty();
+    let has_repository_outcomes = !result_input.outcome_observations.is_empty()
+        || !result_input.pull_request_associations.is_empty();
     let copied_origin = has_repository_outcomes
         && matches!(
             result_origin.as_ref(),
@@ -305,45 +289,22 @@ pub(super) fn codex_core_record(
                 | Some(CodexInvocationOriginV0::CopiedFromAncestor { .. })
         );
     if copied_origin || unproven_origin {
-        outcome_observations.clear();
-        pull_request_associations.clear();
+        result_input.outcome_observations.clear();
+        result_input.pull_request_associations.clear();
     }
     if copied_origin {
-        outcome_abstentions.push((
+        result_input.outcome_abstentions.push((
             ctx_history_core::RepositoryAbstentionReason::ProviderOutputUnjoined,
             "copied_provider_history_has_ancestor_execution",
         ));
     }
     if unproven_origin {
-        outcome_abstentions.push((
+        result_input.outcome_abstentions.push((
             ctx_history_core::RepositoryAbstentionReason::ProviderOutputUnjoined,
             "provider_execution_origin_lineage_unproven",
         ));
     }
-    let mut annotation = attributor.attribute(crate::repository_attribution::AttributionInput {
-        activity_at_unix_ms: Some(occurred_at.timestamp_millis()),
-        // Codex result records contribute a credential-free forge identity
-        // only when an exact structured PR result carries one.
-        provider_native_repository_aliases,
-        provider_native_context_ambiguous: false,
-        session_cwd: session_cwd.clone(),
-        declared_tool_workdir: result_declared_workdir,
-        command: result_command,
-        command_disposition: if result_command_too_large {
-            crate::repository_attribution::CommandEvidenceDisposition::CommandTooLarge
-        } else {
-            crate::repository_attribution::CommandEvidenceDisposition::Analyze
-        },
-        structured_content: None,
-        repository_file_invocation_evidence: Vec::new(),
-        file_observations: repository_files,
-        vcs_observations: Vec::new(),
-        outcome_operation_repository_path,
-        outcome_output_repository_path,
-        outcome_observations,
-        pull_request_associations,
-        outcome_abstentions,
-    });
+    let mut annotation = attributor.attribute(result_input);
     for evidence in repository_tools {
         let activity = attributor.attribute(crate::repository_attribution::AttributionInput {
             activity_at_unix_ms: Some(occurred_at.timestamp_millis()),
@@ -487,91 +448,5 @@ fn copied_result_event_origin(
     }))
 }
 
-pub(super) fn validate_owner(
-    owner: &CodexSessionRow,
-    native_session_id: &str,
-) -> CodexSourceBackedResultV0<()> {
-    if owner.native_session_id != native_session_id {
-        return Err(CodexSourceBackedErrorV0::OwnerMismatch {
-            expected: native_session_id.to_owned(),
-            actual: owner.native_session_id.clone(),
-        });
-    }
-    match (
-        owner.parent_native_session_id.as_ref(),
-        owner.root_native_session_id.as_ref(),
-        owner.session_relationship,
-    ) {
-        (None, Some(root), SessionRelationshipKind::Root) if root == native_session_id => {}
-        (Some(_), Some(_), relationship)
-            if relationship != SessionRelationshipKind::Root
-                && relationship != SessionRelationshipKind::RelatedUnknown => {}
-        _ => {
-            return Err(CodexSourceBackedErrorV0::Capture(
-                CaptureError::InvalidPayload(
-                    "Codex scanner owner is not a valid child-local session tuple".to_owned(),
-                ),
-            ))
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
-mod copied_occurrence_tests {
-    use super::*;
-
-    #[test]
-    fn copied_origin_targets_the_exact_duplicate_provider_occurrence() {
-        let ancestor = "019fb100-0000-7000-8000-000000000001";
-        let provider_identity = CodexProviderEventIdentityV0 {
-            kind: CodexProviderEventIdentityKindV0::CallId,
-            value: "duplicate-provider-call".to_owned(),
-        };
-        let first = copied_result_event_origin(
-            ancestor,
-            "duplicate-provider-call",
-            &provider_identity,
-            "tool_output",
-            Some("tool"),
-            0,
-        )
-        .unwrap()
-        .unwrap();
-        let second = copied_result_event_origin(
-            ancestor,
-            "duplicate-provider-call",
-            &provider_identity,
-            "tool_output",
-            Some("tool"),
-            1,
-        )
-        .unwrap()
-        .unwrap();
-        let event_id = |origin: ctx_history_core::EventOrigin| match origin {
-            ctx_history_core::EventOrigin::CopiedFromAncestor {
-                ancestor_event_id, ..
-            } => *ancestor_event_id,
-            origin => panic!("unexpected copied origin {origin:?}"),
-        };
-        assert_ne!(event_id(first), event_id(second));
-    }
-
-    #[test]
-    fn copied_origin_abstains_without_an_exact_call_identity() {
-        let provider_identity = CodexProviderEventIdentityV0 {
-            kind: CodexProviderEventIdentityKindV0::Id,
-            value: "duplicate-provider-call".to_owned(),
-        };
-        assert!(copied_result_event_origin(
-            "019fb100-0000-7000-8000-000000000002",
-            "duplicate-provider-call",
-            &provider_identity,
-            "tool_output",
-            Some("tool"),
-            0,
-        )
-        .unwrap()
-        .is_none());
-    }
-}
+mod tests;

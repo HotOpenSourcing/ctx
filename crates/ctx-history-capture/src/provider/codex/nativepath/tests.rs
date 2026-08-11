@@ -14,7 +14,6 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
-use super::rows::CodexSourceBackedRowV0;
 use super::*;
 use crate::{
     common::io::open_provider_source_file,
@@ -24,6 +23,78 @@ use crate::{
     },
     CODEX_SESSION_SOURCE_FORMAT,
 };
+
+trait TestCoreRecord {
+    fn raw_ordinal(&self) -> u64;
+    fn semantic_event_type(&self) -> EventType;
+    fn lexical_body(&self) -> &str;
+    fn structured_content(&self) -> &Option<Value>;
+    fn discovery_exclusion(&self) -> Option<CoreDiscoveryExclusion>;
+    fn session_cwd(&self) -> &Option<String>;
+    fn mcp_exchange(&self) -> &Option<ctx_history_core::McpExchangeContent>;
+    fn provider_event_identity(&self) -> Option<super::rows::CodexProviderEventIdentityV0>;
+    fn estimated_owned_bytes(&self) -> Option<usize>;
+}
+
+impl TestCoreRecord for ctx_history_core::CoreRecord {
+    fn raw_ordinal(&self) -> u64 {
+        self.event_sequence
+    }
+
+    fn semantic_event_type(&self) -> EventType {
+        match self.event_type.as_str() {
+            "message" => EventType::Message,
+            "summary" => EventType::Summary,
+            "tool_call" => EventType::ToolCall,
+            "tool_output" => EventType::ToolOutput,
+            "command_output" => EventType::CommandOutput,
+            event_type => panic!("unexpected Codex test event type {event_type:?}"),
+        }
+    }
+
+    fn lexical_body(&self) -> &str {
+        self.content.normalized_body.as_deref().unwrap()
+    }
+
+    fn structured_content(&self) -> &Option<Value> {
+        &self.content.structured_content
+    }
+
+    fn discovery_exclusion(&self) -> Option<CoreDiscoveryExclusion> {
+        self.content.discovery_exclusion
+    }
+
+    fn session_cwd(&self) -> &Option<String> {
+        &self.cwd
+    }
+
+    fn mcp_exchange(&self) -> &Option<ctx_history_core::McpExchangeContent> {
+        &self.content.mcp_exchange
+    }
+
+    fn provider_event_identity(&self) -> Option<super::rows::CodexProviderEventIdentityV0> {
+        let ctx_history_core::TypedKey::Composite(parts) = self.native_event_id.as_ref()? else {
+            return None;
+        };
+        let [ctx_history_core::TypedKey::Utf8(version), ctx_history_core::TypedKey::Utf8(kind), ctx_history_core::TypedKey::Utf8(value), ..] =
+            parts.as_slice()
+        else {
+            return None;
+        };
+        (version == "provider-native-v1").then(|| super::rows::CodexProviderEventIdentityV0 {
+            kind: match kind.as_str() {
+                "id" => super::rows::CodexProviderEventIdentityKindV0::Id,
+                "call_id" => super::rows::CodexProviderEventIdentityKindV0::CallId,
+                kind => panic!("unexpected Codex test provider identity kind {kind:?}"),
+            },
+            value: value.clone(),
+        })
+    }
+
+    fn estimated_owned_bytes(&self) -> Option<usize> {
+        self.encode_stored().ok().map(|bytes| bytes.len())
+    }
+}
 
 fn jsonl(value: Value) -> String {
     let mut line = serde_json::to_string(&value).unwrap();
@@ -153,7 +224,7 @@ pub(super) fn write_source(contents: &str) -> (TempDir, std::path::PathBuf) {
 
 #[derive(Default)]
 struct CollectingSink {
-    rows: Vec<CodexSourceBackedRowV0>,
+    rows: Vec<ctx_history_core::CoreRecord>,
     pages: Vec<(usize, usize)>,
     physical_records: Vec<u64>,
     owner_ids: BTreeSet<String>,
@@ -187,25 +258,34 @@ fn scan_collect(source: CodexCatalogSource) -> (TestSemanticScan, CollectingSink
     .unwrap();
     let mut input = JsonlFamilyExecutionIo::new(reader);
     let initial = input.position().unwrap();
-    let mut scanner = CodexNativeScanner::new_semantic(source).unwrap();
+    let mut attributor = crate::repository_attribution::RepositoryAttributor::default();
+    attributor.begin_source();
+    let mut scanner = CodexNativeScanner::new_semantic(source, None).unwrap();
     assert!(!scanner.preflight_semantic(&mut input).unwrap());
     assert!(input.settle_preflight(initial).unwrap());
     let mut collected = CollectingSink::default();
-    while let Some(page) = scanner.next_semantic_page(&mut input).unwrap() {
+    while let Some(page) = scanner
+        .next_semantic_page(&mut input, &mut attributor)
+        .unwrap()
+    {
         input.release_record_buffer().unwrap();
-        let units = page.source_backed_rows.len();
+        let units = page.records.len();
         assert!(units <= MAX_CODEX_PAGE_ROWS);
         assert!(
             page.serialized_bytes <= MAX_CODEX_PAGE_BYTES
                 || (units == 1
                     && page.serialized_bytes <= MAX_CODEX_SOURCE_BACKED_SINGLE_ROW_PAGE_BYTES)
         );
-        if let Some(owner) = page.owner.as_ref() {
-            collected.owner_ids.insert(owner.native_session_id.clone());
+        if let Some(owner) = page
+            .records
+            .first()
+            .and_then(|record| record.provider_session_id.as_ref())
+        {
+            collected.owner_ids.insert(owner.clone());
         }
         collected.pages.push((units, page.serialized_bytes));
         collected.physical_records.push(page.physical_records);
-        collected.rows.extend(page.source_backed_rows);
+        collected.rows.extend(page.records);
     }
     let complete_prefix_end = input.complete_prefix_end().unwrap();
     let scan = scanner.finish_semantic().unwrap();
@@ -224,6 +304,7 @@ fn scan_collect(source: CodexCatalogSource) -> (TestSemanticScan, CollectingSink
 use super::record;
 
 mod bounds;
+mod core_bytes;
 mod paging;
 mod profiles;
 mod structure;

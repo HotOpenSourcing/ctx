@@ -58,7 +58,8 @@ impl CodexNativeScanner {
                 self.counters.typed_json_parses = self.counters.typed_json_parses.saturating_add(1);
                 match parse_session_meta(record) {
                     Some(owner) if self.owner.is_none() => {
-                        self.owner = Some(validate_catalog_owner(&self.source, owner)?);
+                        let owner = validate_catalog_owner(&self.source, owner)?;
+                        self.owner = Some(owner);
                         return Ok(CodexRecordProjection::default());
                     }
                     Some(_) => {
@@ -162,11 +163,10 @@ impl CodexNativeScanner {
                 Ok(CodexRecordProjection {
                     context_mutation: Some(CodexContextMutation::SourceBackedRow {
                         row: built.row,
+                        estimated_bytes: row_bytes,
                         insert_context,
                         remove_contexts: Vec::new(),
                     }),
-                    source_backed_units: 1,
-                    core_serialized_bytes: row_bytes,
                 })
             }
             CodexRecordClass::ExcludedResult(result_kind) => self.process_output(
@@ -424,35 +424,41 @@ impl CodexNativeScanner {
                 return Ok(CodexRecordProjection {
                     context_mutation: Some(CodexContextMutation::SourceBackedRow {
                         row,
+                        estimated_bytes: row_bytes,
                         insert_context: None,
                         remove_contexts: call_id
                             .map(|call_id| linked_call_ids(call_id, context.as_ref()))
                             .unwrap_or_default(),
                     }),
-                    source_backed_units: 1,
-                    core_serialized_bytes: row_bytes,
                 });
             }
             None => call_id.map(|call_id| {
                 CodexContextMutation::Remove(linked_call_ids(call_id, context.as_ref()))
             }),
         };
-        Ok(CodexRecordProjection {
-            context_mutation,
-            source_backed_units: 0,
-            core_serialized_bytes: 0,
-        })
+        Ok(CodexRecordProjection { context_mutation })
     }
 
-    pub(super) fn apply_context_mutation(&mut self, mutation: CodexContextMutation) {
-        self.apply_context_mutation_inner(mutation, true);
+    pub(super) fn apply_context_mutation(
+        &mut self,
+        mutation: CodexContextMutation,
+        attributor: &mut crate::repository_attribution::RepositoryAttributor,
+    ) -> Result<()> {
+        self.apply_context_mutation_inner(mutation, Some(attributor))
     }
 
-    pub(super) fn apply_replayed_context_mutation(&mut self, mutation: CodexContextMutation) {
-        self.apply_context_mutation_inner(mutation, false);
+    pub(super) fn apply_replayed_context_mutation(
+        &mut self,
+        mutation: CodexContextMutation,
+    ) -> Result<()> {
+        self.apply_context_mutation_inner(mutation, None)
     }
 
-    fn apply_context_mutation_inner(&mut self, mutation: CodexContextMutation, retain_row: bool) {
+    fn apply_context_mutation_inner(
+        &mut self,
+        mutation: CodexContextMutation,
+        attributor: Option<&mut crate::repository_attribution::RepositoryAttributor>,
+    ) -> Result<()> {
         match mutation {
             CodexContextMutation::Remove(call_ids) => {
                 for call_id in call_ids {
@@ -502,20 +508,11 @@ impl CodexNativeScanner {
                 }
             },
             CodexContextMutation::SourceBackedRow {
-                mut row,
+                row,
+                estimated_bytes: _,
                 insert_context,
                 remove_contexts,
             } => {
-                if !self.local_turn_started {
-                    row.copied_from_native_session_id = self.owner.as_ref().and_then(|owner| {
-                        matches!(
-                            owner.session_relationship,
-                            SessionRelationshipKind::Forked | SessionRelationshipKind::ResumedFrom
-                        )
-                        .then(|| owner.parent_native_session_id.clone())
-                        .flatten()
-                    });
-                }
                 for call_id in remove_contexts {
                     self.remove_tool_context(&call_id);
                 }
@@ -550,14 +547,26 @@ impl CodexNativeScanner {
                         }
                     }
                 }
-                if retain_row {
+                if let Some(attributor) = attributor {
                     debug_assert!(self.active_core_page.is_some());
+                    let owner = self.owner.as_ref().ok_or(CaptureError::SystemInvariant(
+                        "Codex retained record has no session owner",
+                    ))?;
+                    let record = codex_core_record(
+                        &self.core_source,
+                        self.core_session_id,
+                        owner,
+                        row,
+                        &mut self.event_identity_state,
+                        attributor,
+                    )?;
                     if let Some(page) = self.active_core_page.as_mut() {
-                        page.source_backed_rows.push(row);
+                        page.records.push(record);
                     }
                 }
             }
         }
+        Ok(())
     }
 
     fn link_continuation_context(&mut self, call_id: &str, context: &mut CodexToolCallContext) {
@@ -985,27 +994,4 @@ fn attach_projected_invocation_if_fits(
 }
 
 #[cfg(test)]
-mod local_turn_boundary_tests {
-    use super::valid_local_turn_boundary;
-
-    #[test]
-    fn uuid_v7_boundary_uses_only_strictly_later_embedded_timestamps() {
-        let session = "019fb000-0000-7000-8000-0000000000ff";
-        let later = "019fb000-0001-7000-8000-000000000000";
-        let same_time_higher_randomness = "019fb000-0000-7fff-bfff-ffffffffffff";
-
-        assert!(valid_local_turn_boundary(session, later));
-        assert!(!valid_local_turn_boundary(
-            session,
-            same_time_higher_randomness
-        ));
-        assert!(!valid_local_turn_boundary(
-            session,
-            "550e8400-e29b-41d4-a716-446655440000"
-        ));
-        assert!(!valid_local_turn_boundary(
-            "550e8400-e29b-41d4-a716-446655440000",
-            later
-        ));
-    }
-}
+mod tests;

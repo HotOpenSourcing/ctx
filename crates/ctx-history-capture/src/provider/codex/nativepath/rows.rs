@@ -88,10 +88,9 @@ pub(crate) struct CodexSessionGitMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CodexSourceBackedRowV0 {
+pub(crate) struct CodexCoreRecordDraft {
     pub(crate) raw_ordinal: u64,
     pub(crate) provider_event_identity: Option<CodexProviderEventIdentityV0>,
-    pub(crate) copied_from_native_session_id: Option<String>,
     pub(crate) repository_result_origin: CodexInvocationOriginV0,
     pub(crate) occurred_at: DateTime<Utc>,
     pub(crate) event_type: EventType,
@@ -108,99 +107,68 @@ pub(crate) struct CodexSourceBackedRowV0 {
     pub(crate) repository_files: Vec<UnscopedFileObservation>,
 }
 
-impl CodexSourceBackedRowV0 {
+impl CodexCoreRecordDraft {
     pub(crate) fn estimated_owned_bytes(&self) -> Option<usize> {
-        let path_slots = self
-            .touched_paths
-            .capacity()
-            .checked_mul(size_of::<String>())?;
-        let path_bytes = self
-            .touched_paths
-            .iter()
-            .try_fold(0_usize, |total, path| total.checked_add(path.capacity()))?;
-        let repository_bytes = self
-            .repository_tools
-            .iter()
-            .fold(0_usize, |total, evidence| {
-                total
-                    .saturating_add(encoded_json_len(&evidence.structured_content).unwrap_or(0))
-                    .saturating_add(evidence.command.as_ref().map_or(0, String::capacity))
-                    .saturating_add(
-                        evidence
-                            .declared_workdir
-                            .as_ref()
-                            .map_or(0, String::capacity),
-                    )
-                    .saturating_add(
-                        evidence
-                            .file_observations
-                            .iter()
-                            .map(|observation| observation.path.capacity())
-                            .sum::<usize>(),
-                    )
-                    .saturating_add(
-                        evidence
-                            .file_invocations
-                            .capacity()
-                            .saturating_mul(size_of::<UnscopedRepositoryFileInvocationEvidence>()),
-                    )
-                    .saturating_add(
-                        evidence
-                            .file_invocations
-                            .iter()
-                            .map(|invocation| {
-                                invocation.path.capacity()
-                                    + invocation.prior_path.as_ref().map_or(0, String::capacity)
-                                    + invocation.tool_name.as_ref().map_or(0, String::capacity)
-                            })
-                            .sum::<usize>(),
-                    )
-                    .saturating_add(evidence.abstentions.capacity().saturating_mul(size_of::<(
-                        ctx_history_core::RepositoryAbstentionReason,
-                        &'static str,
-                    )>(
-                    )))
-            });
+        let repository_bytes =
+            self.repository_tools
+                .iter()
+                .fold(0_usize, |total, evidence| {
+                    let strings = string_capacities(
+                        [
+                            evidence.command.as_ref(),
+                            evidence.declared_workdir.as_ref(),
+                        ]
+                        .into_iter()
+                        .chain(
+                            evidence
+                                .file_observations
+                                .iter()
+                                .map(|item| Some(&item.path)),
+                        )
+                        .chain(evidence.file_invocations.iter().flat_map(|item| {
+                            [
+                                Some(&item.path),
+                                item.prior_path.as_ref(),
+                                item.tool_name.as_ref(),
+                            ]
+                        })),
+                    );
+                    let slots = evidence
+                        .file_invocations
+                        .capacity()
+                        .saturating_mul(size_of::<UnscopedRepositoryFileInvocationEvidence>())
+                        .saturating_add(evidence.abstentions.capacity().saturating_mul(
+                            size_of::<(ctx_history_core::RepositoryAbstentionReason, &'static str)>(
+                            ),
+                        ));
+                    total
+                        .saturating_add(encoded_json_len(&evidence.structured_content).unwrap_or(0))
+                        .saturating_add(strings)
+                        .saturating_add(slots)
+                });
         let repository_result_bytes = self.repository_result.as_ref().map_or(0, |evidence| {
-            evidence.origin_call_id.as_ref().map_or(0, String::capacity)
-                + evidence.result_call_id.as_ref().map_or(0, String::capacity)
-                + evidence.command.as_ref().map_or(0, String::capacity)
-                + evidence
-                    .declared_workdir
-                    .as_ref()
-                    .map_or(0, String::capacity)
-                + evidence
-                    .outcome_operation_repository_path
-                    .as_ref()
-                    .map_or(0, String::capacity)
-                + evidence
-                    .outcome_output_repository_path
-                    .as_ref()
-                    .map_or(0, String::capacity)
-                + encoded_json_len(&evidence.structured_content).unwrap_or(0)
+            string_capacities(
+                [
+                    evidence.origin_call_id.as_ref(),
+                    evidence.result_call_id.as_ref(),
+                    evidence.command.as_ref(),
+                    evidence.declared_workdir.as_ref(),
+                    evidence.outcome_operation_repository_path.as_ref(),
+                    evidence.outcome_output_repository_path.as_ref(),
+                ]
+                .into_iter(),
+            ) + encoded_json_len(&evidence.structured_content).unwrap_or(0)
                 + encoded_json_len(&evidence.provider_native_repository_aliases).unwrap_or(0)
                 + encoded_json_len(&evidence.outcomes).unwrap_or(0)
         });
-        let repository_file_bytes =
+        let repository_file_bytes = checked_string_capacities(
             self.repository_files
                 .iter()
-                .try_fold(0_usize, |total, observation| {
-                    total
-                        .checked_add(observation.path.capacity())?
-                        .checked_add(observation.prior_path.as_ref().map_or(0, String::capacity))
-                })?;
-        let mcp_tool_call_bytes = match self.mcp_tool_call.as_ref() {
-            Some(attribution) => attribution
-                .server
-                .capacity()
-                .checked_add(attribution.tool.capacity())?,
-            None => 0,
-        };
-        let mcp_exchange_bytes = self
-            .mcp_exchange
-            .as_ref()
-            .and_then(encoded_json_len)
-            .unwrap_or_default();
+                .flat_map(|item| [Some(&item.path), item.prior_path.as_ref()]),
+        )?;
+        let mcp_tool_call_bytes = self.mcp_tool_call.as_ref().map_or(Some(0), |item| {
+            item.server.capacity().checked_add(item.tool.capacity())
+        })?;
         let allocation_count = 3_usize
             .checked_add(self.touched_paths.len())?
             .checked_add(self.repository_files.len())?
@@ -210,40 +178,54 @@ impl CodexSourceBackedRowV0 {
             )))?
             .checked_add(usize::from(self.mcp_tool_call.is_some()).checked_mul(2)?)?
             .checked_add(usize::from(self.mcp_exchange.is_some()))?;
-        size_of::<Self>()
-            .checked_add(
-                self.provider_event_identity
-                    .as_ref()
-                    .map_or(0, |identity| identity.value.capacity()),
-            )?
-            .checked_add(
-                self.copied_from_native_session_id
-                    .as_ref()
-                    .map_or(0, String::capacity),
-            )?
-            .checked_add(match &self.repository_result_origin {
+        [
+            size_of::<Self>(),
+            self.provider_event_identity
+                .as_ref()
+                .map_or(0, |identity| identity.value.capacity()),
+            match &self.repository_result_origin {
                 CodexInvocationOriginV0::CopiedFromAncestor {
                     ancestor_native_session_id,
                 } => ancestor_native_session_id.capacity(),
                 CodexInvocationOriginV0::UniqueToSession | CodexInvocationOriginV0::Unproven => 0,
-            })?
-            .checked_add(self.lexical_body.capacity())?
-            .checked_add(
-                self.structured_content
-                    .as_ref()
-                    .and_then(encoded_json_len)
-                    .unwrap_or(0),
-            )?
-            .checked_add(mcp_tool_call_bytes)?
-            .checked_add(mcp_exchange_bytes)?
-            .checked_add(self.session_cwd.as_ref().map_or(0, String::capacity))?
-            .checked_add(path_slots)?
-            .checked_add(path_bytes)?
-            .checked_add(repository_bytes)?
-            .checked_add(repository_result_bytes)?
-            .checked_add(repository_file_bytes)?
-            .checked_add(allocation_count.checked_mul(OWNED_ALLOCATION_OVERHEAD_BYTES)?)
+            },
+            self.lexical_body.capacity(),
+            self.structured_content
+                .as_ref()
+                .and_then(encoded_json_len)
+                .unwrap_or(0),
+            mcp_tool_call_bytes,
+            self.mcp_exchange
+                .as_ref()
+                .and_then(encoded_json_len)
+                .unwrap_or(0),
+            self.session_cwd.as_ref().map_or(0, String::capacity),
+            self.touched_paths
+                .capacity()
+                .checked_mul(size_of::<String>())?,
+            checked_string_capacities(self.touched_paths.iter().map(Some))?,
+            repository_bytes,
+            repository_result_bytes,
+            repository_file_bytes,
+            allocation_count.checked_mul(OWNED_ALLOCATION_OVERHEAD_BYTES)?,
+        ]
+        .into_iter()
+        .try_fold(0_usize, usize::checked_add)
     }
+}
+
+fn string_capacities<'a>(values: impl Iterator<Item = Option<&'a String>>) -> usize {
+    values.flatten().fold(0_usize, |total, value| {
+        total.saturating_add(value.capacity())
+    })
+}
+
+fn checked_string_capacities<'a>(
+    values: impl Iterator<Item = Option<&'a String>>,
+) -> Option<usize> {
+    values
+        .flatten()
+        .try_fold(0_usize, |total, value| total.checked_add(value.capacity()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,7 +250,7 @@ pub(crate) struct CodexProviderEventIdentityV0 {
 }
 
 pub(super) struct CodexSourceBackedBuiltRowV0 {
-    pub(super) row: CodexSourceBackedRowV0,
+    pub(super) row: CodexCoreRecordDraft,
     pub(super) tool_context: Option<(String, CodexToolCallContext)>,
 }
 
@@ -318,10 +300,9 @@ pub(super) fn build_source_backed_event_row(
         }
     }
     Ok(Ok(CodexSourceBackedBuiltRowV0 {
-        row: CodexSourceBackedRowV0 {
+        row: CodexCoreRecordDraft {
             raw_ordinal,
             provider_event_identity: provider_event_identity(&retained.payload),
-            copied_from_native_session_id: None,
             repository_result_origin: CodexInvocationOriginV0::Unproven,
             occurred_at: retained.occurred_at,
             event_type: semantic.event_type,
@@ -356,7 +337,7 @@ pub(super) fn build_source_backed_sparse_output_row(
     mcp_exchange: Option<McpExchangeContent>,
     repository_result: Option<CodexRepositoryResultEvidence>,
     session_cwd: Option<String>,
-) -> CaptureResult<Option<CodexSourceBackedRowV0>> {
+) -> CaptureResult<Option<CodexCoreRecordDraft>> {
     let tool_name = context
         .map(|context| context.tool_name.as_str())
         .unwrap_or_else(|| result_kind.item_type());
@@ -373,16 +354,9 @@ pub(super) fn build_source_backed_sparse_output_row(
     let repository_result_origin = context
         .map(|context| context.invocation_origin.clone())
         .unwrap_or(CodexInvocationOriginV0::Unproven);
-    let copied_from_native_session_id = match &repository_result_origin {
-        CodexInvocationOriginV0::CopiedFromAncestor {
-            ancestor_native_session_id,
-        } => Some(ancestor_native_session_id.clone()),
-        CodexInvocationOriginV0::UniqueToSession | CodexInvocationOriginV0::Unproven => None,
-    };
-    Ok(Some(CodexSourceBackedRowV0 {
+    Ok(Some(CodexCoreRecordDraft {
         raw_ordinal,
         provider_event_identity,
-        copied_from_native_session_id,
         repository_result_origin,
         occurred_at,
         event_type,

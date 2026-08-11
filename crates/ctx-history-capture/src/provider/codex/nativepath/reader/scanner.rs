@@ -217,7 +217,7 @@ fn replay_semantic_prefix_record(
     let mut projection =
         scanner.process_record(bytes, raw_ordinal, start_byte, end_byte, record_digest)?;
     if let Some(mutation) = projection.context_mutation.take() {
-        scanner.apply_replayed_context_mutation(mutation);
+        scanner.apply_replayed_context_mutation(mutation)?;
     }
     scanner.counters = counters;
     Ok(())
@@ -339,7 +339,15 @@ fn preflight_semantic_authority(
 impl CodexNativeScanner {
     pub(in crate::provider::codex::nativepath) fn new_semantic(
         source: CodexCatalogSource,
+        base_event_lookup: Option<BaseEventIdentityLookup>,
     ) -> Result<Self> {
+        let native_session_id = source.catalog_native_session_id.as_deref().ok_or_else(|| {
+            CaptureError::from(CodexSourceBackedErrorV0::MissingNativeSessionId {
+                path: source.source_path.clone(),
+            })
+        })?;
+        let core_source = codex_source_key(native_session_id)?;
+        let core_session_id = codex_session_identity(&core_source, native_session_id)?;
         Ok(Self {
             source,
             owner: None,
@@ -350,8 +358,12 @@ impl CodexNativeScanner {
             repository_candidate_authority: CodexRepositoryCandidateAuthority::default(),
             counters: CodexScanCounters::default(),
             local_turn_started: false,
+            core_source,
+            core_session_id,
+            event_identity_state: base_event_lookup
+                .map(CodexEventIdentityStateV0::for_append)
+                .unwrap_or_default(),
             active_core_page: None,
-            ready_core_page: None,
             exhausted: false,
         })
     }
@@ -398,10 +410,8 @@ impl CodexNativeScanner {
     pub(in crate::provider::codex::nativepath) fn next_semantic_page(
         &mut self,
         input: &mut JsonlFamilyExecutionIo,
+        attributor: &mut crate::repository_attribution::RepositoryAttributor,
     ) -> Result<Option<CodexNativePage>> {
-        if let Some(page) = self.take_ready_semantic_page() {
-            return Ok(Some(page));
-        }
         if self.exhausted {
             return Ok(None);
         }
@@ -411,33 +421,25 @@ impl CodexNativeScanner {
 
         loop {
             let input_offset = input.offset()?;
-            let page_start = self
-                .active_core_page
-                .as_ref()
-                .ok_or(CaptureError::SystemInvariant(
-                    "Codex NativePath lost its active semantic page",
-                ))?
-                .expected_offset;
+            let page_start = self.active_semantic_page()?.expected_offset;
             let page_progress = input_offset.checked_sub(page_start).ok_or_else(|| {
                 CaptureError::InvalidPayload(
                     "Codex semantic physical page progress regressed".to_owned(),
                 )
             })?;
-            let core_is_full = self.active_core_page.as_ref().is_some_and(|page| {
-                page.units() >= MAX_CODEX_PAGE_UNITS
-                    || page.serialized_bytes > MAX_CODEX_PAGE_BYTES
-                    || page.physical_records >= MAX_CODEX_SOURCE_BACKED_PAGE_RECORDS
-                    || page_progress >= MAX_CODEX_SOURCE_BACKED_PAGE_PROGRESS_BYTES
-            });
+            let page = self.active_semantic_page()?;
+            let core_is_full = page.records.len() >= MAX_CODEX_PAGE_UNITS
+                || page.serialized_bytes > MAX_CODEX_PAGE_BYTES
+                || page.physical_records >= MAX_CODEX_SOURCE_BACKED_PAGE_RECORDS
+                || page_progress >= MAX_CODEX_SOURCE_BACKED_PAGE_PROGRESS_BYTES;
             if core_is_full {
-                return self.emit_active_semantic_page(input).map(Some);
+                return self.emit_active_semantic_page().map(Some);
             }
 
             let position = self.semantic_position(input)?;
             let Some(record) = input.next_record()? else {
                 self.exhausted = true;
-                self.queue_semantic_end_page(input)?;
-                return Ok(self.take_ready_semantic_page());
+                return self.emit_semantic_end_page();
             };
             self.counters.bytes_read = self.counters.bytes_read.saturating_add(record.byte_len());
             self.counters.peak_line_buffer_bytes = self
@@ -452,8 +454,7 @@ impl CodexNativeScanner {
                         self.counters.oversized_records.saturating_add(1);
                 }
                 self.exhausted = true;
-                self.queue_semantic_end_page(input)?;
-                return Ok(self.take_ready_semantic_page());
+                return self.emit_semantic_end_page();
             }
 
             self.counters.complete_records = self.counters.complete_records.saturating_add(1);
@@ -473,46 +474,34 @@ impl CodexNativeScanner {
                 )?
             };
 
-            let page = self
-                .active_core_page
-                .as_ref()
-                .ok_or(CaptureError::SystemInvariant(
-                    "Codex NativePath lost its active semantic page",
-                ))?;
-            let next_units = page.units().saturating_add(projection.core_units());
-            let next_bytes = page
-                .serialized_bytes
-                .saturating_add(projection.core_serialized_bytes);
-            let next_byte_limit = if page.units() == 0 && projection.core_units() == 1 {
+            let page = self.active_semantic_page()?;
+            let (record_units, record_bytes) = match projection.context_mutation.as_ref() {
+                Some(CodexContextMutation::SourceBackedRow {
+                    estimated_bytes, ..
+                }) => (1, *estimated_bytes),
+                _ => (0, 0),
+            };
+            let next_units = page.records.len().saturating_add(record_units);
+            let next_bytes = page.serialized_bytes.saturating_add(record_bytes);
+            let next_byte_limit = if page.records.is_empty() && record_units == 1 {
                 MAX_CODEX_SOURCE_BACKED_SINGLE_ROW_PAGE_BYTES
             } else {
                 MAX_CODEX_PAGE_BYTES
             };
             if next_units > MAX_CODEX_PAGE_UNITS || next_bytes > next_byte_limit {
-                if page.has_progress() {
+                if page.physical_records != 0 {
                     self.restore_semantic(input, position)?;
-                    return self.emit_active_semantic_page(input).map(Some);
+                    return self.emit_active_semantic_page().map(Some);
                 }
                 self.reject(false);
                 projection = CodexRecordProjection::default();
             } else {
-                let page = self
-                    .active_core_page
-                    .as_mut()
-                    .ok_or(CaptureError::SystemInvariant(
-                        "Codex NativePath lost its active semantic page",
-                    ))?;
-                page.serialized_bytes = next_bytes;
+                self.active_semantic_page()?.serialized_bytes = next_bytes;
             }
             if let Some(mutation) = projection.context_mutation.take() {
-                self.apply_context_mutation(mutation);
+                self.apply_context_mutation(mutation, attributor)?;
             }
-            let page = self
-                .active_core_page
-                .as_mut()
-                .ok_or(CaptureError::SystemInvariant(
-                    "Codex NativePath lost its active semantic page",
-                ))?;
+            let page = self.active_semantic_page()?;
             page.physical_records = page.physical_records.saturating_add(1);
         }
     }
