@@ -100,12 +100,9 @@ pub(crate) fn run_show(
 }
 
 fn history_provider(provider: ProviderArg) -> ctx_history_cli::ProviderArg {
-    let capture = provider.capture_provider();
-    ctx_history_cli::ProviderArg(if capture == ctx_history_core::CaptureProvider::Custom {
-        ctx_history_cli::HistoryProvider::Custom
-    } else {
-        ctx_history_cli::HistoryProvider::Native(capture.as_str().to_owned())
-    })
+    ctx_history_cli::ProviderArg(ctx_history_cli::HistoryProvider::from(
+        provider.capture_provider(),
+    ))
 }
 
 fn history_output_format(format: OutputFormat) -> ctx_history_cli::OutputFormat {

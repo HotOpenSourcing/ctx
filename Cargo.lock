@@ -1007,6 +1007,7 @@ dependencies = [
  "ctx-history-read-application",
  "ctx-history-refresh",
  "ctx-terminal",
+ "rusqlite",
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",

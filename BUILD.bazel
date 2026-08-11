@@ -71,6 +71,14 @@ sh_test(
     ],
 )
 
+sh_test(
+    name = "history_cli_boundary_check",
+    srcs = ["//tools/bazel:check-history-cli-boundary.sh"],
+    args = ["$(rootpath BUILD.bazel)"],
+    data = ["BUILD.bazel", "//crates/ctx-cli:cargo_package_data", "//crates/ctx-history-cli:cargo_package_data"],
+    tags = ["no-cache"],
+)
+
 config_setting(
     name = "dev_linux",
     define_values = {"ctx_dev_linux": "true"},

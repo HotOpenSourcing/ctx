@@ -435,7 +435,7 @@ fn content_scope_forwards_with_provider_workspace_since_file_agent_and_current_s
         term: Vec::new(),
         limit: 10,
         provider: Some(crate::ProviderArg(HistoryProvider::Native(
-            "codex".to_owned(),
+            CaptureProvider::Codex,
         ))),
         history_source: None,
         provider_key: None,

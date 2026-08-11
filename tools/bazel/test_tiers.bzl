@@ -160,6 +160,7 @@ _CI_RUST_TESTS = [
     "//crates/ctx-history-capture-model:unit_tests",
     "//crates/ctx-history-cli:unit_tests",
     "//crates/ctx-history-cli:request_parity_tests",
+    "//:history_cli_boundary_check",
     "//crates/ctx-history-ingest-application:unit_tests",
     "//crates/ctx-history-core:unit_tests",
     "//:history_source_discovery_dependency_boundary_check",
