@@ -40,9 +40,10 @@ use crate::{
         },
     },
     provider_sources::{
-        retain_sqlite_source_directory_authority, SqliteArtifactKind, SqliteCleanupStatus,
-        SqliteFailurePhase, SqliteLogicalSnapshot, SqliteSourceAccessError,
-        SqliteSourceDirectoryAuthority, SqliteSourceProgressError, SqliteSourceReadSnapshot,
+        retain_sqlite_source_directory_authority, sqlite_retry_decision, SqliteArtifactKind,
+        SqliteCleanupStatus, SqliteFailurePhase, SqliteLogicalSnapshot, SqliteRetryDecision,
+        SqliteSourceAccessError, SqliteSourceDirectoryAuthority, SqliteSourceErrorComposition,
+        SqliteSourceProgressError, SqliteSourceReadSnapshot,
     },
     CaptureError, MAX_PROVIDER_SQLITE_VALUE_BYTES,
 };
@@ -67,6 +68,11 @@ pub(crate) enum OpenCodeSourceBackedError {
     Sqlite(#[from] rusqlite::Error),
     #[error(transparent)]
     SqliteSource(#[from] SqliteSourceAccessError),
+    #[error("{primary}; SQLite source finalization also failed: {finalization}")]
+    SqliteFinalization {
+        primary: Box<OpenCodeSourceBackedError>,
+        finalization: Box<SqliteSourceAccessError>,
+    },
     #[error(transparent)]
     Projection(#[from] ProjectionContractError),
     #[error(transparent)]
@@ -82,6 +88,15 @@ pub(crate) enum OpenCodeSourceBackedError {
 }
 
 pub(crate) type OpenCodeSourceBackedResult<T> = Result<T, OpenCodeSourceBackedError>;
+
+impl SqliteSourceErrorComposition for OpenCodeSourceBackedError {
+    fn compose_sqlite_source_finalization(self, finalization: SqliteSourceAccessError) -> Self {
+        Self::SqliteFinalization {
+            primary: Box::new(self),
+            finalization: Box::new(finalization),
+        }
+    }
+}
 
 mod adapter;
 mod fingerprint;
@@ -375,7 +390,7 @@ fn diagnose_provider_query_error(
             }
             .with_diagnostic(
                 phase,
-                SqliteArtifactKind::PrivateBackup,
+                SqliteArtifactKind::PrivateSourceCopy,
                 0,
                 0,
                 SqliteCleanupStatus::NotRequired,
@@ -838,6 +853,7 @@ fn open_root_authorized_snapshot_retained_with_hook_and_progress(
         SourceBackedCurrentSourceProgress,
     ) -> SourceBackedRouteResult<()>,
 ) -> OpenCodeSourceBackedResult<OpenCodeAuthorizedSnapshot> {
+    const SOURCE_TRANSITION_ATTEMPTS: usize = 2;
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -855,12 +871,36 @@ fn open_root_authorized_snapshot_retained_with_hook_and_progress(
         .map_err(CaptureError::from)?;
     let sqlite_authority =
         retain_sqlite_source_directory_authority(data_root, &parent_handle, parent)?;
-    let sqlite_snapshot = sqlite_authority
-        .open_logical_online_backup_snapshot_with_progress(database_leaf, report_progress)
-        .map_err(|error| match error {
-            SqliteSourceProgressError::Source(error) => OpenCodeSourceBackedError::from(error),
-            SqliteSourceProgressError::Progress(error) => OpenCodeSourceBackedError::from(error),
-        })?;
+    let sqlite_snapshot = {
+        let mut attempt = 0;
+        loop {
+            match sqlite_authority.open_stable_snapshot_with_progress(database_leaf, |progress| {
+                report_progress(progress.into())
+            }) {
+                Ok(snapshot) => break snapshot,
+                Err(SqliteSourceProgressError::Source(error))
+                    if sqlite_retry_decision(&error)
+                        == SqliteRetryDecision::RetrySourceTransition
+                        && attempt + 1 < SOURCE_TRANSITION_ATTEMPTS =>
+                {
+                    attempt += 1;
+                }
+                Err(SqliteSourceProgressError::Source(error)) => {
+                    return Err(OpenCodeSourceBackedError::from(error));
+                }
+                Err(SqliteSourceProgressError::Progress(error)) => {
+                    return Err(OpenCodeSourceBackedError::from(error));
+                }
+                Err(SqliteSourceProgressError::ProgressAndFinalization {
+                    primary,
+                    finalization,
+                }) => {
+                    return Err(OpenCodeSourceBackedError::from(primary)
+                        .compose_sqlite_source_finalization(finalization));
+                }
+            }
+        }
+    };
     after_authorize();
     let configure = (|| {
         sqlite_snapshot.revalidate()?;

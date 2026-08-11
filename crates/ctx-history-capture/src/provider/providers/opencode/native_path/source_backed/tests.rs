@@ -1,11 +1,6 @@
 #[cfg(unix)]
 use std::process::Command;
-use std::{
-    ffi::OsStr,
-    fs::{self, OpenOptions},
-    io::{Seek, SeekFrom, Write},
-    path::Path,
-};
+use std::{fs, path::Path};
 
 use ctx_history_core::{
     CaptureProvider, EventOrigin, EventRole, EventType, RepositoryFileInvocationKind,
@@ -29,7 +24,6 @@ use super::ordering::{
 };
 use super::*;
 use crate::{
-    common::io::ProviderSourceRoot,
     provider::source_backed::{
         refresh_source_backed_generation, refresh_source_backed_generation_with_detailed_progress,
         refresh_source_backed_generation_with_progress, SourceBackedCoordinatorError,
@@ -37,9 +31,8 @@ use crate::{
         SourceBackedRouteError, SourceBackedRouteErrorKind, SourceBackedRouteSelection,
     },
     provider_sources::{
-        fail_next_opened_snapshot_cleanup_for_test,
-        open_root_handle_sqlite_source_online_backup_after_private_source_copy_for_test,
-        provider_source_for_path, retain_sqlite_source_directory_authority, SqliteRetryDecision,
+        fail_next_opened_snapshot_cleanup_for_test, provider_source_for_path,
+        sqlite_retry_decision, SqliteRetryDecision,
     },
 };
 
@@ -657,7 +650,7 @@ fn rejection_heavy_production_refresh_advances_bytes_and_clears_them_terminally(
 }
 
 #[test]
-fn detailed_progress_reports_backup_fingerprint_and_one_pass_scan() {
+fn detailed_progress_reports_source_copy_and_one_pass_scan() {
     const ROWS: i64 = 96;
     let temp = crate::test_support_paths::tempdir().unwrap();
     let database = temp.path().join("source/opencode.sqlite");
@@ -687,11 +680,7 @@ fn detailed_progress_reports_backup_fingerprint_and_one_pass_scan() {
     .unwrap();
 
     assert!(progress.iter().any(|update| {
-        matches!(
-            update.stage,
-            SourceBackedCurrentSourceProgressStage::OnlineBackup
-                | SourceBackedCurrentSourceProgressStage::SourceFamilyCopy
-        )
+        update.stage == SourceBackedCurrentSourceProgressStage::SourceFamilyCopy
     }));
     assert!(progress.iter().any(|update| {
         update.stage == SourceBackedCurrentSourceProgressStage::LogicalFingerprint
@@ -917,7 +906,7 @@ fn create_multisession_message_part_fixture(path: &Path, sessions: i64) {
 }
 
 #[test]
-fn admitted_opencode_backup_stays_stable_across_later_wal_commit_and_next_open_advances() {
+fn admitted_opencode_copy_stays_stable_across_later_wal_commit_and_next_open_advances() {
     let temp = crate::test_support_paths::tempdir().unwrap();
     let database = temp.path().join("source/opencode.sqlite");
     fs::create_dir_all(database.parent().unwrap()).unwrap();
@@ -970,7 +959,7 @@ fn admitted_opencode_backup_stays_stable_across_later_wal_commit_and_next_open_a
         authorized
             .sqlite_authority
             .snapshot_counters()
-            .logical_online_backup_opens(),
+            .copied_snapshot_opens(),
         1
     );
     let observation = observe_logical_source(
@@ -1080,7 +1069,7 @@ fn indexed_synthetic_cold_and_changed_use_one_snapshot_and_one_logical_row_trave
 
     let cold = refresh_fixture_with_work(&index_root, &registry);
     assert_eq!(cold.snapshot_opens, 1);
-    assert_eq!(cold.logical_online_backup_opens, 1);
+    assert_eq!(cold.copied_snapshot_opens, 1);
     assert_eq!(cold.schema_probe_passes, 1);
     assert_eq!(cold.schema_event_validation_traversals, 2);
     assert_eq!(cold.logical_fingerprint_passes, 0);
@@ -1116,7 +1105,7 @@ fn indexed_synthetic_cold_and_changed_use_one_snapshot_and_one_logical_row_trave
 
     let changed = refresh_fixture_with_work(&index_root, &registry);
     assert_eq!(changed.snapshot_opens, 1);
-    assert_eq!(changed.logical_online_backup_opens, 1);
+    assert_eq!(changed.copied_snapshot_opens, 1);
     assert_eq!(changed.logical_fingerprint_passes, 0);
     assert_eq!(changed.logical_row_traversals, 1);
     assert_eq!(changed.projection_passes, 1);
@@ -1193,7 +1182,7 @@ fn indexed_message_part_cold_scan_preserves_chronology_with_bounded_message_sort
 
     let cold = refresh_fixture_with_work(&index_root, &registry);
     assert_eq!(cold.snapshot_opens, 1);
-    assert_eq!(cold.logical_online_backup_opens, 1);
+    assert_eq!(cold.copied_snapshot_opens, 1);
     assert_eq!(cold.schema_probe_passes, 1);
     assert_eq!(cold.schema_event_validation_traversals, 2);
     assert_eq!(cold.logical_fingerprint_passes, 0);
@@ -1419,7 +1408,7 @@ fn unsafe_unreferenced_message_fails_with_complete_or_partial_part_index() {
 }
 
 #[test]
-fn kilo_and_mimocode_opt_into_one_logical_online_backup_and_streaming_pass() {
+fn kilo_and_mimocode_use_one_stable_copy_and_streaming_pass() {
     for provider in [CaptureProvider::Kilo, CaptureProvider::MiMoCode] {
         let temp = crate::test_support_paths::tempdir().unwrap();
         let database = temp.path().join("source/history.sqlite");
@@ -1436,7 +1425,7 @@ fn kilo_and_mimocode_opt_into_one_logical_online_backup_and_streaming_pass() {
 
         let work = refresh_fixture_with_work(&temp.path().join("index"), &registry);
         assert_eq!(work.snapshot_opens, 1, "{provider:?}");
-        assert_eq!(work.logical_online_backup_opens, 1, "{provider:?}");
+        assert_eq!(work.copied_snapshot_opens, 1, "{provider:?}");
         assert_eq!(work.logical_fingerprint_passes, 0, "{provider:?}");
         assert_eq!(work.logical_row_traversals, 1, "{provider:?}");
         assert_eq!(work.logical_rows_projected, 32, "{provider:?}");
