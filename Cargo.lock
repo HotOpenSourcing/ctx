@@ -996,7 +996,13 @@ dependencies = [
 name = "ctx-history-cli"
 version = "1.0.0"
 dependencies = [
+ "anyhow",
+ "chrono",
+ "ctx-history-read-application",
+ "tempfile",
  "thiserror 1.0.69",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

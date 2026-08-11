@@ -13,6 +13,7 @@ LOC_CHECK_SOURCE_DATA = [
     "//crates/ctx-daemon-service:loc_check_inputs",
     "//crates/ctx-history-capture:loc_check_inputs",
     "//crates/ctx-history-capture-model:loc_check_inputs",
+    "//crates/ctx-history-cli:loc_check_inputs",
     "//crates/ctx-history-core:loc_check_inputs",
     "//crates/ctx-history-ingest-application:loc_check_inputs",
     "//crates/ctx-history-index-format:loc_check_inputs",
