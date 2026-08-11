@@ -66,16 +66,20 @@ check_reverse_consumers() {
 check_reverse_consumers lib \
   'kind("rust_binary rule", rdeps(//crates/..., //crates/ctx-pro-application:lib)) union kind("rust_library rule", rdeps(//crates/..., //crates/ctx-pro-application:lib))' \
   '//crates/ctx-cli:ctx' \
+  '//crates/ctx-daemon-cli:lib' \
   '//crates/ctx-pro-application:lib'
 check_reverse_consumers test_support_lib \
   'kind("rust_library rule", rdeps(//crates/..., //crates/ctx-pro-application:test_support_lib)) union kind("rust_test rule", rdeps(//crates/..., //crates/ctx-pro-application:test_support_lib))' \
   '//crates/ctx-cli:unit_tests' \
+  '//crates/ctx-daemon-cli:test_support_lib' \
+  '//crates/ctx-daemon-cli:unit_tests' \
   '//crates/ctx-pro-application:test_support_lib'
 check_reverse_consumers qualification_lib \
   'kind("rust_binary rule", rdeps(//crates/..., //crates/ctx-pro-application:qualification_lib)) union kind("rust_library rule", rdeps(//crates/..., //crates/ctx-pro-application:qualification_lib))' \
   '//crates/ctx-cli:ctx_auto_upgrade_acceptance_fixture' \
   '//crates/ctx-cli:ctx_hosted_uninstall_test_host' \
   '//crates/ctx-cli:ctx_upgrade_test_harness' \
+  '//crates/ctx-daemon-cli:qualification_lib' \
   '//crates/ctx-pro-application:qualification_lib'
 check_reverse_consumers qualification_test_support_lib \
   'kind("rust_binary rule", rdeps(//crates/..., //crates/ctx-pro-application:qualification_test_support_lib)) union kind("rust_library rule", rdeps(//crates/..., //crates/ctx-pro-application:qualification_test_support_lib)) union kind("rust_test rule", rdeps(//crates/..., //crates/ctx-pro-application:qualification_test_support_lib))' \
@@ -83,6 +87,7 @@ check_reverse_consumers qualification_test_support_lib \
   '//crates/ctx-cli:pro_host_tests' \
   '//crates/ctx-cli:pro_mcp_tests' \
   '//crates/ctx-cli:pro_test_control_tests' \
+  '//crates/ctx-daemon-cli:qualification_test_support_lib' \
   '//crates/ctx-pro-application:qualification_test_support_lib'
 
 python3 - "${repo_root}" <<'PY'
@@ -137,7 +142,7 @@ for candidate in sorted((root / "crates").glob("*/Cargo.toml")):
         dependencies.update(target.get("build-dependencies", {}))
     if "ctx-pro-application" in dependencies:
         reverse.append(candidate.relative_to(root).as_posix())
-if reverse != ["crates/ctx-cli/Cargo.toml"]:
+if reverse != ["crates/ctx-cli/Cargo.toml", "crates/ctx-daemon-cli/Cargo.toml"]:
     raise SystemExit(f"unexpected reverse Cargo consumer of ctx-pro-application: {reverse}")
 
 physical = sum(
