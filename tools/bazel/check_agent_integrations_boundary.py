@@ -11,7 +11,7 @@ import tomllib
 
 PACKAGE = "ctx-agent-integrations"
 EXPECTED_LOCAL_DEPS = {"ctx-history-core", "ctx-pro-host-protocol"}
-ALLOWED_REVERSE_DEPENDENTS = {"ctx"}
+ALLOWED_REVERSE_DEPENDENTS = {"ctx", "ctx-agent-application"}
 HARD_CLOC_LIMIT = 20_000
 
 

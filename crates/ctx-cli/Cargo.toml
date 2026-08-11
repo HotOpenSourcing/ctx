@@ -48,6 +48,7 @@ xz2.workspace = true
 zeroize = { workspace = true, features = ["derive"] }
 zstd.workspace = true
 fs2 = "0.4.3"
+ctx-agent-application = { path = "../ctx-agent-application" }
 ctx-agent-integrations = { path = "../ctx-agent-integrations" }
 ctx-daemon-runtime = { path = "../ctx-daemon-runtime" }
 ctx-daemon-service = { path = "../ctx-daemon-service" }

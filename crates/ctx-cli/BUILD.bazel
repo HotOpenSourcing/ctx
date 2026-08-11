@@ -70,6 +70,7 @@ RELEASE_BUILD_RUSTC_ENV = select({
 })
 
 CTX_CLI_DEPS = [
+    "//crates/ctx-agent-application:lib",
     "//crates/ctx-agent-integrations:lib",
     "//crates/ctx-client-observability:lib",
     "//crates/ctx-daemon-runtime:lib",
@@ -90,6 +91,7 @@ CTX_CLI_DEPS = [
 ]
 
 CTX_CLI_TEST_DEPS = [
+    "//crates/ctx-agent-application:test_support_lib",
     "//crates/ctx-agent-integrations:lib",
     "//crates/ctx-client-observability:test_support_lib",
     "//crates/ctx-daemon-runtime:lib",
@@ -110,6 +112,7 @@ CTX_CLI_TEST_DEPS = [
 ]
 
 CTX_CLI_PRO_TEST_HOST_DEPS = [
+    "//crates/ctx-agent-application:lib",
     "//crates/ctx-agent-integrations:lib",
     "//crates/ctx-client-observability:lib",
     "//crates/ctx-daemon-runtime:lib",
@@ -130,6 +133,7 @@ CTX_CLI_PRO_TEST_HOST_DEPS = [
 ]
 
 CTX_CLI_QUALIFICATION_DEPS = [
+    "//crates/ctx-agent-application:lib",
     "//crates/ctx-agent-integrations:lib",
     "//crates/ctx-client-observability:lib",
     "//crates/ctx-daemon-runtime:qualification_lib",
@@ -465,69 +469,10 @@ ctx_cli_integration_test(
 )
 
 ctx_cli_integration_test(
-    name = "integrations_tests",
-    src = "tests/integrations.rs",
-)
-
-ctx_cli_integration_test(
-    name = "integrations_mcp_tests",
-    src = "tests/integrations_mcp.rs",
-)
-
-ctx_cli_integration_test(
     name = "local_usage_tests",
     src = "tests/local_usage.rs",
     extra_crates = ["rusqlite"],
     tags = ["privacy"],
-)
-
-ctx_cli_integration_test(
-    name = "mcp_local_usage_v2_tests",
-    src = "tests/mcp_local_usage_v2.rs",
-    tags = ["privacy"],
-    test_support = [
-        "base",
-        "fixtures",
-    ],
-)
-
-ctx_cli_integration_test(
-    name = "mcp_tests",
-    src = "tests/mcp.rs",
-    extra_srcs = ["tests/mcp/input_validation.rs"],
-    test_support = [
-        "base",
-        "fixtures",
-    ],
-)
-
-ctx_cli_integration_test(
-    name = "mcp_telemetry_tests",
-    src = "tests/mcp_telemetry.rs",
-)
-
-ctx_cli_integration_test(
-    name = "mcp_integration_e2e_tests",
-    src = "tests/mcp_integration_e2e.rs",
-    extra_crates = [
-        "serde_yaml",
-        "toml_edit",
-    ],
-    tags = ["integration"],
-)
-
-ctx_cli_integration_test(
-    name = "mcp_attribution_privacy_tests",
-    src = "tests/mcp_attribution_privacy.rs",
-    extra_deps = ["//crates/ctx-history-core:lib"],
-    tags = [
-        "privacy",
-        "provider-conformance",
-    ],
-    test_support = [
-        "base",
-        "fixtures",
-    ],
 )
 
 ctx_cli_integration_test(
@@ -746,18 +691,6 @@ ctx_cli_integration_test(
         "base",
         "fixtures",
     ],
-)
-
-ctx_cli_integration_test(
-    name = "skill_tests",
-    src = "tests/skill.rs",
-    extra_crates = ["sha2"],
-)
-
-ctx_cli_integration_test(
-    name = "slash_command_e2e_tests",
-    src = "tests/slash_command_e2e.rs",
-    tags = ["integration"],
 )
 
 ctx_cli_integration_test(

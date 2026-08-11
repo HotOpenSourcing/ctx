@@ -287,6 +287,7 @@ pub fn handle_protocol_message<B: ToolBackend>(
     initialized: &mut bool,
     server_identity: McpServerIdentity<'_>,
     backend: &B,
+    render_text: impl Fn(&Value) -> String,
 ) -> McpHandled<Option<Value>> {
     let Some(object) = message.as_object() else {
         return McpHandled::plain(Some(error_response(
@@ -350,6 +351,7 @@ pub fn handle_protocol_message<B: ToolBackend>(
             params,
             tool_operation.unwrap_or(McpToolKind::Missing),
             backend,
+            &render_text,
         ),
         _ => Err(McpHandled::plain(json_rpc_error(
             -32601,
@@ -442,6 +444,7 @@ fn handle_tools_call_with_backend<B: ToolBackend>(
     params: Value,
     operation: McpToolKind,
     backend: &B,
+    render_text: &impl Fn(&Value) -> String,
 ) -> Result<McpHandled<Value>, McpHandled<Value>> {
     let Some(name) = params.get("name").and_then(Value::as_str) else {
         return Err(McpHandled::plain(json_rpc_error(
@@ -510,7 +513,7 @@ fn handle_tools_call_with_backend<B: ToolBackend>(
             integration_receipt,
         }) => {
             usage.facts.merge(backend_usage);
-            let text = backend.render_text(compact.as_ref().unwrap_or(&structured));
+            let text = render_text(compact.as_ref().unwrap_or(&structured));
             Ok(McpHandled {
                 value: tool_result_with_text(structured, text),
                 integration_receipt,
@@ -861,10 +864,6 @@ mod request_id_tests {
             panic!("request-ID validation must run before the backend")
         }
 
-        fn render_text(&self, _value: &Value) -> String {
-            panic!("request-ID validation must run before the backend")
-        }
-
         fn parse_provider(&self, _value: &str) -> Option<CaptureProvider> {
             panic!("request-ID validation must run before the backend")
         }
@@ -911,6 +910,7 @@ mod request_id_tests {
                 version: "test",
             },
             &UnusedBackend,
+            |_| panic!("request-ID validation must run before text rendering"),
         )
         .value
         .unwrap();
@@ -928,6 +928,7 @@ mod request_id_tests {
                 version: "test",
             },
             &UnusedBackend,
+            |_| panic!("request-ID validation must run before text rendering"),
         )
         .value
         .unwrap();

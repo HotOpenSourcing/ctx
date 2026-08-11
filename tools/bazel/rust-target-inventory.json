@@ -1,6 +1,12 @@
 {
   "schema_version": 1,
   "packages": {
+    "ctx-agent-application": {
+      "manifest": "crates/ctx-agent-application/Cargo.toml",
+      "targets": {"lib:ctx_agent_application": "//crates/ctx-agent-application:lib"},
+      "native_unit": "//crates/ctx-agent-application:unit_tests",
+      "feature_variants": ["//crates/ctx-agent-application:test_support_lib"]
+    },
     "ctx-agent-integrations": {
       "manifest": "crates/ctx-agent-integrations/Cargo.toml",
       "targets": {"lib:ctx_agent_integrations": "//crates/ctx-agent-integrations:lib"},
@@ -23,14 +29,7 @@
         "test:hosted_uninstall_fence": "//crates/ctx-cli:hosted_uninstall_fence_tests",
         "test:import_change_reporting": "//crates/ctx-cli:import_change_reporting_tests",
         "test:index": "//crates/ctx-cli:index_tests",
-        "test:integrations": "//crates/ctx-cli:integrations_tests",
-        "test:integrations_mcp": "//crates/ctx-cli:integrations_mcp_tests",
         "test:local_usage": "//crates/ctx-cli:local_usage_tests",
-        "test:mcp": "//crates/ctx-cli:mcp_tests",
-        "test:mcp_attribution_privacy": "//crates/ctx-cli:mcp_attribution_privacy_tests",
-        "test:mcp_integration_e2e": "//crates/ctx-cli:mcp_integration_e2e_tests",
-        "test:mcp_local_usage_v2": "//crates/ctx-cli:mcp_local_usage_v2_tests",
-        "test:mcp_telemetry": "//crates/ctx-cli:mcp_telemetry_tests",
         "test:native_provider_real_shapes": "//crates/ctx-cli:native_provider_real_shapes_tests",
         "test:native_provider_rejections": "//crates/ctx-cli:native_provider_rejections_tests",
         "test:native_providers": "//crates/ctx-cli:native_providers_tests",
@@ -46,8 +45,6 @@
         "test:search_show": "//crates/ctx-cli:search_show_tests",
         "test:search_source_identity_filters": "//crates/ctx-cli:search_source_identity_filters_tests",
         "test:setup_sources_import": "//crates/ctx-cli:setup_sources_import_tests",
-        "test:skill": "//crates/ctx-cli:skill_tests",
-        "test:slash_command_e2e": "//crates/ctx-cli:slash_command_e2e_tests",
         "test:self_contained_core_content": "//crates/ctx-cli:self_contained_core_content_tests",
         "test:status_store_cutover": "//crates/ctx-cli:status_store_cutover_tests",
         "test:stats": "//crates/ctx-cli:stats_tests",

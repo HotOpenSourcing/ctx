@@ -87,6 +87,7 @@ fn parse_identity(identity: &str) -> Result<(String, String), String> {
         && path != "tests/raw_output_policy/self_tests.rs"
         && !path.starts_with("src/")
         && !path.starts_with("crates/ctx-terminal/src/")
+        && !path.starts_with("crates/ctx-agent-application/src/")
         && !path.starts_with("crates/ctx-agent-integrations/src/")
         && !path.starts_with("crates/ctx-client-observability/src/")
         && !path.starts_with("crates/ctx-pro-host/src/")
