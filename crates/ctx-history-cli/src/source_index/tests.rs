@@ -128,7 +128,8 @@ fn source_identity_error_restores_exact_cli_flag_spelling() {
 }
 
 #[test]
-fn query_authority_search_and_shared_gateways_accept_legacy_nonempty_and_authoritative_v2_empty() {
+fn query_authority_search_and_shared_gateways_accept_legacy_nonempty_and_authoritative_current_empty(
+) {
     let nonempty = tempdir().unwrap();
     write_test_generation(nonempty.path());
     let generation_id = republish_active_as_legacy_v1(nonempty.path());
@@ -144,8 +145,10 @@ fn query_authority_search_and_shared_gateways_accept_legacy_nonempty_and_authori
     );
 
     let empty = tempdir().unwrap();
-    let generation_id =
-        publish_empty_generation(empty.path(), EmptyPublicationAuthority::AuthoritativeV2);
+    let generation_id = publish_empty_generation(
+        empty.path(),
+        EmptyPublicationAuthority::AuthoritativeCurrent,
+    );
     let opened = open_index(empty.path()).unwrap();
     assert_eq!(opened.generation_id(), generation_id);
     assert_eq!(opened.document_count(), 0);
@@ -223,7 +226,7 @@ fn retained_compact_peer_enforces_generation_query_authority() {
     let authoritative_empty = tempdir().unwrap();
     let peer_generation = publish_empty_generation(
         authoritative_empty.path(),
-        EmptyPublicationAuthority::AuthoritativeV2,
+        EmptyPublicationAuthority::AuthoritativeCurrent,
     );
     write_test_generation(authoritative_empty.path());
     let current = open_index(authoritative_empty.path()).unwrap();
