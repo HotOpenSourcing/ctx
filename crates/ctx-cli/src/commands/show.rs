@@ -64,5 +64,52 @@ pub(crate) fn run_show(
     local_usage: &mut CliUsage,
     ui: &mut Ui,
 ) -> Result<()> {
-    crate::commands::source_index::run_show(args, data_root, telemetry, local_usage, ui)
+    let target = match args.target {
+        crate::ShowTarget::Session(args) => {
+            ctx_history_cli::ShowTarget::Session(ctx_history_cli::ShowSessionArgs {
+                id: args.id,
+                provider: args.provider.map(history_provider),
+                provider_session: args.provider_session,
+                mode: match args.mode {
+                    TranscriptMode::Full => ctx_history_cli::TranscriptMode::Full,
+                    TranscriptMode::Lite => ctx_history_cli::TranscriptMode::Lite,
+                    TranscriptMode::Log => ctx_history_cli::TranscriptMode::Log,
+                },
+                max_events: args.max_events,
+                format: history_output_format(args.format),
+                out: args.out,
+            })
+        }
+        crate::ShowTarget::Event(args) => {
+            ctx_history_cli::ShowTarget::Event(ctx_history_cli::ShowEventArgs {
+                id: args.id,
+                before: args.before,
+                after: args.after,
+                window: args.window,
+                format: history_output_format(args.format),
+            })
+        }
+    };
+    ctx_history_cli::run_show(
+        ctx_history_cli::ShowArgs { target },
+        data_root,
+        telemetry,
+        local_usage,
+        ui,
+    )
+}
+
+fn history_provider(provider: ProviderArg) -> ctx_history_cli::ProviderArg {
+    ctx_history_cli::ProviderArg(ctx_history_cli::HistoryProvider::from(
+        provider.capture_provider(),
+    ))
+}
+
+fn history_output_format(format: OutputFormat) -> ctx_history_cli::OutputFormat {
+    match format {
+        OutputFormat::Text => ctx_history_cli::OutputFormat::Text,
+        OutputFormat::Json => ctx_history_cli::OutputFormat::Json,
+        OutputFormat::Jsonl => ctx_history_cli::OutputFormat::Jsonl,
+        OutputFormat::Markdown => ctx_history_cli::OutputFormat::Markdown,
+    }
 }

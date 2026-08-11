@@ -109,6 +109,14 @@
       "targets": {"lib:ctx_history_capture_model": "//crates/ctx-history-capture-model:lib"},
       "native_unit": "//crates/ctx-history-capture-model:unit_tests"
     },
+    "ctx-history-cli": {
+      "manifest": "crates/ctx-history-cli/Cargo.toml",
+      "targets": {
+        "lib:ctx_history_cli": "//crates/ctx-history-cli:lib",
+        "test:request_parity": "//crates/ctx-history-cli:request_parity_tests"
+      },
+      "native_unit": "//crates/ctx-history-cli:unit_tests"
+    },
     "ctx-history-core": {
       "manifest": "crates/ctx-history-core/Cargo.toml",
       "targets": {"lib:ctx_history_core": "//crates/ctx-history-core:lib"},

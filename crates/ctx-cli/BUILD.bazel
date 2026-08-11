@@ -75,6 +75,7 @@ CTX_CLI_DEPS = [
     "//crates/ctx-client-observability:lib",
     "//crates/ctx-daemon-cli:lib",
     "//crates/ctx-history-capture:lib",
+    "//crates/ctx-history-cli:lib",
     "//crates/ctx-history-core:lib",
     "//crates/ctx-history-ingest-application:lib",
     "//crates/ctx-history-index:lib",
@@ -95,6 +96,7 @@ CTX_CLI_TEST_DEPS = [
     "//crates/ctx-client-observability:test_support_lib",
     "//crates/ctx-daemon-cli:test_support_lib",
     "//crates/ctx-history-capture:lib",
+    "//crates/ctx-history-cli:test_support_lib",
     "//crates/ctx-history-core:lib",
     "//crates/ctx-history-ingest-application:test_support_lib",
     "//crates/ctx-history-index:lib",
@@ -117,6 +119,7 @@ CTX_CLI_PRO_TEST_HOST_DEPS = [
     "//crates/ctx-client-observability:lib",
     "//crates/ctx-daemon-cli:qualification_test_support_lib",
     "//crates/ctx-history-capture:lib",
+    "//crates/ctx-history-cli:lib",
     "//crates/ctx-history-core:lib",
     "//crates/ctx-history-ingest-application:lib",
     "//crates/ctx-history-index:lib",
@@ -137,6 +140,7 @@ CTX_CLI_QUALIFICATION_DEPS = [
     "//crates/ctx-client-observability:lib",
     "//crates/ctx-daemon-cli:qualification_lib",
     "//crates/ctx-history-capture:lib",
+    "//crates/ctx-history-cli:lib",
     "//crates/ctx-history-core:lib",
     "//crates/ctx-history-ingest-application:qualification_lib",
     "//crates/ctx-history-index:lib",
@@ -157,7 +161,6 @@ CTX_CLI_COMPILE_DATA = [
 ]
 
 CTX_CLI_TEST_COMPILE_DATA = CTX_CLI_COMPILE_DATA + glob([
-    "src/commands/source_index/render/goldens/**",
     "testdata/**",
 ]) + [
     "//:release_contracts",
@@ -168,16 +171,10 @@ CTX_CLI_TEST_COMPILE_DATA = CTX_CLI_COMPILE_DATA + glob([
 
 RUST_SRCS = glob(["src/**/*.rs"])
 
-# These files are test-only after parsing, but their parent modules reach them
-# through unconditional include! calls, so production rustc actions need them.
-PROD_INCLUDE_SRCS = [
-    "src/commands/source_index/tests.rs",
-]
-
 PROD_SRCS = glob(
     ["src/**/*.rs"],
     exclude = RUST_PROD_SRC_EXCLUDES,
-) + PROD_INCLUDE_SRCS
+)
 
 ctx_rust_binary(
     name = "ctx",

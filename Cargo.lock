@@ -743,6 +743,7 @@ dependencies = [
  "ctx-daemon-cli",
  "ctx-daemon-service",
  "ctx-history-capture",
+ "ctx-history-cli",
  "ctx-history-core",
  "ctx-history-index",
  "ctx-history-ingest-application",
@@ -989,6 +990,32 @@ dependencies = [
  "serde_json",
  "sha2",
  "uuid",
+]
+
+[[package]]
+name = "ctx-history-cli"
+version = "1.0.0"
+dependencies = [
+ "anstream",
+ "anyhow",
+ "chrono",
+ "ctx-client-observability",
+ "ctx-daemon-cli",
+ "ctx-history-capture",
+ "ctx-history-core",
+ "ctx-history-index",
+ "ctx-history-ingest-application",
+ "ctx-history-read-application",
+ "ctx-history-refresh",
+ "ctx-terminal",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "unicode-segmentation",
+ "unicode-width",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

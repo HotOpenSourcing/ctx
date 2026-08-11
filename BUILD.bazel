@@ -10,6 +10,7 @@ load(
     "non_rust_gate",
     "real_harness_gate",
 )
+load("//tools/bazel:history_cli_boundary.bzl", "history_cli_boundary")
 load("//tools/bazel:loc_check_data.bzl", "LOC_CHECK_SOURCE_DATA")
 load(
     "//tools/bazel:release_routes.bzl",
@@ -133,6 +134,7 @@ CARGO_WORKSPACE_PACKAGE_DATA = [
     "//crates/ctx-daemon-service:cargo_package_data",
     "//crates/ctx-history-capture:cargo_package_data",
     "//crates/ctx-history-capture-model:cargo_package_data",
+    "//crates/ctx-history-cli:cargo_package_data",
     "//crates/ctx-history-core:cargo_package_data",
     "//crates/ctx-history-ingest-application:cargo_package_data",
     "//crates/ctx-history-index-format:cargo_package_data",
@@ -159,6 +161,11 @@ CARGO_WORKSPACE_PACKAGE_DATA = [
     "//crates/ctx-sdk:cargo_package_data",
 ]
 
+history_cli_boundary(
+    cargo_package_data = CARGO_WORKSPACE_PACKAGE_DATA,
+    history_build_label = "//crates/ctx-history-cli:BUILD.bazel",
+)
+
 loc_check_manifest(
     name = "loc_check_source_manifest",
     srcs = LOC_CHECK_SOURCE_DATA,
@@ -184,6 +191,7 @@ RELEASE_PACKAGE_AUDIT_DATA = NON_RUST_GATE_DATA + [
     "//crates/ctx-daemon-service:cargo_package_data",
     "//crates/ctx-history-capture:cargo_package_data",
     "//crates/ctx-history-capture-model:cargo_package_data",
+    "//crates/ctx-history-cli:cargo_package_data",
     "//crates/ctx-history-core:cargo_package_data",
     "//crates/ctx-history-index-format:cargo_package_data",
     "//crates/ctx-history-index:cargo_package_data",
@@ -769,6 +777,7 @@ configured_license_materials(
         "//crates/ctx-daemon-service:Cargo.toml",
         "//crates/ctx-history-capture:Cargo.toml",
         "//crates/ctx-history-capture-model:Cargo.toml",
+        "//crates/ctx-history-cli:Cargo.toml",
         "//crates/ctx-history-core:Cargo.toml",
         "//crates/ctx-history-ingest-application:Cargo.toml",
         "//crates/ctx-history-index-format:Cargo.toml",
@@ -907,6 +916,7 @@ sh_test(
         "//crates/ctx-history-index-format:Cargo.toml",
         "//crates/ctx-history-index-generation:Cargo.toml",
         "//crates/ctx-history-index-query:Cargo.toml",
+        "//crates/ctx-history-cli:Cargo.toml",
         "//crates/ctx-history-read-application:Cargo.toml",
         "//tools/bazel:pinned_rust_objcopy",
         "//tools/bazel:pinned_rustc",
