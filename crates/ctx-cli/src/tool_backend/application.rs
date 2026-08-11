@@ -33,6 +33,42 @@ pub(crate) struct LocalToolBackend {
     data_root: PathBuf,
 }
 
+fn adapt_tool_search_request(
+    request: ToolSearchRequest,
+) -> crate::commands::source_index::SourceSearchRequest {
+    crate::commands::source_index::SourceSearchRequest {
+        query: request.query,
+        terms: Vec::new(),
+        limit: request.limit,
+        provider: request.provider,
+        history_source: request.history_source,
+        provider_key: request.provider_key,
+        source_id: request.source_id,
+        source_format: request.source_format,
+        workspace: request.workspace,
+        since: request.since,
+        primary_only: request.primary_only,
+        include_subagents: request.include_subagents,
+        content_scope: match request.content_scope {
+            ToolSearchContentScope::All => SearchContentScope::All,
+            ToolSearchContentScope::Transcript => SearchContentScope::Transcript,
+            ToolSearchContentScope::Calls => SearchContentScope::Calls,
+            ToolSearchContentScope::Outputs => SearchContentScope::Outputs,
+        },
+        event_type: request.event_type,
+        file: request.file,
+        session: request.session,
+        events: request.events,
+        include_current_session: request.include_current_session,
+        backend: request.backend.map(|backend| match backend {
+            ToolSearchBackend::Lexical => crate::SearchBackendArg::Lexical,
+            ToolSearchBackend::Semantic => crate::SearchBackendArg::Semantic,
+            ToolSearchBackend::Hybrid => crate::SearchBackendArg::Hybrid,
+        }),
+        semantic_weight: request.semantic_weight,
+    }
+}
+
 impl LocalToolBackend {
     pub(crate) fn new(data_root: PathBuf) -> Self {
         Self { data_root }
@@ -89,40 +125,7 @@ impl LocalToolBackend {
     }
 
     fn search(&self, request: ToolSearchRequest) -> Result<LocalToolOutcome, ToolBackendError> {
-        let request = crate::commands::source_index::SourceSearchRequest {
-            query: request.query,
-            terms: Vec::new(),
-            limit: request.limit,
-            provider: request.provider,
-            history_source: request.history_source,
-            provider_key: request.provider_key,
-            source_id: request.source_id,
-            source_format: request.source_format,
-            workspace: request.workspace,
-            since: request.since,
-            primary_only: request.primary_only,
-            include_subagents: request.include_subagents,
-            content_scope: match request.content_scope {
-                ToolSearchContentScope::All => SearchContentScope::All,
-                ToolSearchContentScope::Transcript => SearchContentScope::Transcript,
-                ToolSearchContentScope::Calls => SearchContentScope::Calls,
-                ToolSearchContentScope::Outputs => SearchContentScope::Outputs,
-            },
-            event_type: request.event_type,
-            file: request.file,
-            session: request.session,
-            events: request.events,
-            include_current_session: request.include_current_session,
-            backend: request.backend.map(|backend| match backend {
-                ToolSearchBackend::Lexical => crate::SearchBackendArg::Lexical,
-                ToolSearchBackend::Semantic => crate::SearchBackendArg::Semantic,
-                ToolSearchBackend::Hybrid => crate::SearchBackendArg::Hybrid,
-            }),
-            semantic_weight: request.semantic_weight,
-            semantic_enabled: false,
-            semantic_daemon_enabled: false,
-            refresh: crate::RefreshArg::Off,
-        };
+        let request = adapt_tool_search_request(request);
         crate::commands::source_index::validate_explicit_semantic_scope(&request)
             .map_err(classify_mcp_search_error)?;
         let config = config::AppConfig::load(&self.data_root);
@@ -568,6 +571,7 @@ fn classify_application_error(error: anyhow::Error) -> ToolBackendError {
 mod tests {
     use std::cell::Cell;
 
+    use clap::Parser;
     use ctx_history_core::RepositoryFileInvocationKind;
     use ctx_pro_host_protocol::{
         BlameAttribution, BlameCoverage, BlameCoverageUnit, BlameOutcome, BlameResult,
@@ -605,6 +609,65 @@ mod tests {
             backend: Some(ToolSearchBackend::Lexical),
             semantic_weight: 0.35,
         }
+    }
+
+    #[test]
+    fn cli_and_mcp_search_adapters_produce_the_same_typed_query_request() {
+        let cli = crate::Cli::try_parse_from([
+            "ctx",
+            "search",
+            "adapter parity",
+            "--limit",
+            "8",
+            "--provider",
+            "claude",
+            "--workspace",
+            "/workspace/pinned",
+            "--since",
+            "30d",
+            "--content-scope",
+            "transcript",
+            "--file",
+            "src/lib.rs",
+            "--session",
+            "019fa000-0000-7000-8000-0000000000d1",
+            "--events",
+            "--include-subagents",
+            "--include-current-session",
+            "--backend",
+            "lexical",
+            "--semantic-weight",
+            "0.4",
+            "--refresh",
+            "off",
+        ])
+        .unwrap();
+        let crate::cli::CommandRoot::Search(args) = cli.command else {
+            panic!("expected search command")
+        };
+        let cli_request = crate::commands::source_index::source_search_request(&args);
+        let mcp_request = adapt_tool_search_request(ToolSearchRequest {
+            query: "adapter parity".to_owned(),
+            limit: 8,
+            provider: Some(ctx_history_core::CaptureProvider::Claude),
+            history_source: None,
+            provider_key: None,
+            source_id: None,
+            source_format: None,
+            workspace: Some("/workspace/pinned".to_owned()),
+            since: Some("30d".to_owned()),
+            primary_only: false,
+            include_subagents: true,
+            content_scope: ToolSearchContentScope::Transcript,
+            event_type: None,
+            file: Some(PathBuf::from("src/lib.rs")),
+            session: Some("019fa000-0000-7000-8000-0000000000d1".to_owned()),
+            events: true,
+            include_current_session: true,
+            backend: Some(ToolSearchBackend::Lexical),
+            semantic_weight: 0.4,
+        });
+        assert_eq!(cli_request, mcp_request);
     }
 
     #[test]

@@ -87,7 +87,7 @@ fn search_presentation_hydration_rejects_missing_duplicate_and_misaligned_hits()
     )
     .unwrap();
     assert_eq!(presentations.len(), 1);
-    assert_eq!(presentations[0].event, &expected_event);
+    assert_eq!(hit.event, expected_event);
 
     let duplicate_error = presentations_for_search_hits_with_budget(
         &index,
