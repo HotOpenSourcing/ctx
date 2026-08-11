@@ -23,10 +23,7 @@ struct HydratedEvidenceBatch {
     records: Vec<CoreEventRecord>,
 }
 
-pub fn hydrate_evidence_previews(
-    data_root: &Path,
-    result: &BlameResult,
-) -> EvidencePreviewModel {
+pub fn hydrate_evidence_previews(data_root: &Path, result: &BlameResult) -> EvidencePreviewModel {
     hydrate_evidence_previews_with(
         result,
         |generation_id, event_ids, maximum_events, budget| {

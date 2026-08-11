@@ -35,8 +35,7 @@ use crate::pro::client::smoke_helper_at_path;
 #[cfg(test)]
 use crate::pro::client::HelperSmoke;
 use crate::pro::client::{
-    materialize, materialize_in, smoke_validated_helper, status, status_for_core,
-    ProSetupRepairability, ProStatus,
+    materialize, materialize_in, smoke_validated_helper, status, status_for_core, ProStatus,
 };
 use crate::pro::commercial_lifecycle::CommercialLifecycleService;
 use crate::pro::lifecycle::lifecycle_manifest::ReleaseTrust;
@@ -259,11 +258,7 @@ pub(crate) trait ProLifecycleService {
 
 /// Local-only destruction seam. Implementations may locate and delete native
 /// vault records, but do not need commercial configuration or network access.
-pub(crate) trait ProDeletionService {
-    fn delete_graph_data(&mut self, data_root: &Path) -> Result<()>;
-    fn delete_commercial_credentials(&mut self, data_root: &Path) -> Result<()>;
-    fn finish_deletion(&mut self, data_root: &Path) -> Result<()>;
-}
+pub(crate) use ctx_pro_application::ProDeletionService;
 
 pub(crate) fn run_lifecycle(
     args: ProArgs,

@@ -10,7 +10,10 @@ pub struct LifecycleStatus {
 
 impl LifecycleStatus {
     pub const fn new(helper: ProStatus, preserved_data: bool) -> Self {
-        Self { helper, preserved_data }
+        Self {
+            helper,
+            preserved_data,
+        }
     }
 
     pub fn into_json(self) -> Value {
@@ -28,8 +31,14 @@ pub fn lifecycle_status_value(helper: ProStatus, preserved_data: bool) -> Value 
     let materialized = helper_response_valid && helper.materialized;
     let (state, next_command, next_reason) = if !helper.installed {
         match helper.setup_repairability {
-            ProSetupRepairability::Automated => ("repair_required", Some("ctx pro"), "helper_artifacts_invalid"),
-            ProSetupRepairability::ManualDiagnosis => ("unavailable", None, "manual_diagnosis_required"),
+            ProSetupRepairability::Automated => (
+                "repair_required",
+                Some("ctx pro"),
+                "helper_artifacts_invalid",
+            ),
+            ProSetupRepairability::ManualDiagnosis => {
+                ("unavailable", None, "manual_diagnosis_required")
+            }
             ProSetupRepairability::NotNeeded if preserved_data => (
                 "uninstalled_data_preserved",
                 Some("ctx pro"),
@@ -40,16 +49,20 @@ pub fn lifecycle_status_value(helper: ProStatus, preserved_data: bool) -> Value 
     } else {
         match helper.error_code.as_deref() {
             None if ready => ("ready", Some("ctx pro manage"), "billing_and_account"),
-            Some("entitlement_expired") => ("locked", Some("ctx pro manage"), "subscription_or_trial_ended"),
-            Some("not_materialized" | "needs_rebuild" | "partial" | "finalizing" | "needs_resume") => (
-                "catch_up_required", Some("ctx pro"), "graph_not_current",
+            Some("entitlement_expired") => (
+                "locked",
+                Some("ctx pro manage"),
+                "subscription_or_trial_ended",
             ),
-            Some("helper_upgrade_required" | "protocol_mismatch") => (
-                "repair_required", Some("ctx pro"), "helper_incompatible",
-            ),
-            Some("key_store_unavailable" | "key_store_locked" | "corrupt_graph") => (
-                "repair_required", Some("ctx pro"), "local_pro_unavailable",
-            ),
+            Some(
+                "not_materialized" | "needs_rebuild" | "partial" | "finalizing" | "needs_resume",
+            ) => ("catch_up_required", Some("ctx pro"), "graph_not_current"),
+            Some("helper_upgrade_required" | "protocol_mismatch") => {
+                ("repair_required", Some("ctx pro"), "helper_incompatible")
+            }
+            Some("key_store_unavailable" | "key_store_locked" | "corrupt_graph") => {
+                ("repair_required", Some("ctx pro"), "local_pro_unavailable")
+            }
             None if materialized => ("not_blame_ready", None, "no_available_blame_operations"),
             Some(_) | None => ("unavailable", Some("ctx pro"), "helper_unavailable"),
         }

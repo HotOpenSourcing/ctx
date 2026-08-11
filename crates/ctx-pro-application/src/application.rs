@@ -20,6 +20,8 @@ pub trait CoreOrchestration {
     /// Requests, but never waits for, ordinary blame's one permitted background
     /// source refresh.
     fn wake_blame_refresh(&self, data_root: &Path) -> Result<()>;
+
+    fn cancel_core_finalization(&self, data_root: &Path, reason: &str) -> Result<()>;
 }
 
 /// Installed-helper plus Core orchestration authority.  Keeping this as one
@@ -83,10 +85,7 @@ impl<'a, H: ProApplicationHost + ?Sized> ProApplication<'a, H> {
         ctx_pro_host::sync_core_materialization(self.host, data_root, index)
     }
 
-    pub fn materialize(
-        &self,
-        data_root: &Path,
-    ) -> Result<MaterializationOutcome> {
+    pub fn materialize(&self, data_root: &Path) -> Result<MaterializationOutcome> {
         self.materialize_in(data_root, None)
     }
 
@@ -96,7 +95,9 @@ impl<'a, H: ProApplicationHost + ?Sized> ProApplication<'a, H> {
         operation: Option<&LifecycleOperation>,
     ) -> Result<MaterializationOutcome> {
         let start = match operation {
-            Some(operation) => ctx_pro_host::start_materialization_in(self.host, data_root, operation),
+            Some(operation) => {
+                ctx_pro_host::start_materialization_in(self.host, data_root, operation)
+            }
             None => ctx_pro_host::start_materialization(self.host, data_root),
         }?;
         let generation_id = self.host.prepare_materialization_generation(data_root)?;
@@ -110,7 +111,9 @@ impl<'a, H: ProApplicationHost + ?Sized> ProApplication<'a, H> {
                 start,
                 generation_id,
             ),
-            None => ctx_pro_host::finish_materialization(self.host, data_root, start, generation_id),
+            None => {
+                ctx_pro_host::finish_materialization(self.host, data_root, start, generation_id)
+            }
         }?;
         match operation {
             Some(operation) => {
@@ -133,10 +136,18 @@ impl<'a, H: ProApplicationHost + ?Sized> ProApplication<'a, H> {
 
     fn wait_for_current_blame_generation(&self, data_root: &Path) -> Result<String> {
         self.materialize(data_root)?;
-        let mut expected = self.host.pin_active_core_generation(data_root)?.generation_id().to_owned();
+        let mut expected = self
+            .host
+            .pin_active_core_generation(data_root)?
+            .generation_id()
+            .to_owned();
         for _ in 0..3 {
             self.host.wait_for_pro_generation(data_root, &expected)?;
-            let active = self.host.pin_active_core_generation(data_root)?.generation_id().to_owned();
+            let active = self
+                .host
+                .pin_active_core_generation(data_root)?
+                .generation_id()
+                .to_owned();
             if active == expected {
                 return Ok(expected);
             }
@@ -166,5 +177,14 @@ impl<'a, H: ProApplicationHost + ?Sized> ProApplication<'a, H> {
             cursor,
             expected_active_generation,
         )
+    }
+
+    pub fn uninstall(
+        &self,
+        data_root: &Path,
+        deletion: Option<&mut dyn crate::ProDeletionService>,
+        disposition: crate::UninstallDataDisposition,
+    ) -> Result<crate::UninstallOutcome> {
+        crate::uninstall::uninstall(self.host, data_root, deletion, disposition)
     }
 }

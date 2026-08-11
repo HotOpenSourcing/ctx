@@ -25,6 +25,27 @@ CTX_PRO_APPLICATION_DEPS = [
     "//crates/ctx-pro-lifecycle:lib",
 ]
 
+CTX_PRO_APPLICATION_TEST_DEPS = [
+    "//crates/ctx-history-index:lib",
+    "//crates/ctx-pro-host:test_support_lib",
+    "//crates/ctx-pro-host-protocol:lib",
+    "//crates/ctx-pro-lifecycle:test_support_lib",
+]
+
+CTX_PRO_APPLICATION_QUALIFICATION_DEPS = [
+    "//crates/ctx-history-index:lib",
+    "//crates/ctx-pro-host:qualification_lib",
+    "//crates/ctx-pro-host-protocol:lib",
+    "//crates/ctx-pro-lifecycle:qualification_lib",
+]
+
+CTX_PRO_APPLICATION_QUALIFICATION_TEST_DEPS = [
+    "//crates/ctx-history-index:lib",
+    "//crates/ctx-pro-host:qualification_test_support_lib",
+    "//crates/ctx-pro-host-protocol:lib",
+    "//crates/ctx-pro-lifecycle:qualification_test_support_lib",
+]
+
 rust_library(
     name = "lib",
     srcs = PROD_SRCS,
@@ -37,6 +58,45 @@ rust_library(
     rustc_env = COMMON_RUSTC_ENV,
 )
 
+rust_library(
+    name = "test_support_lib",
+    testonly = True,
+    srcs = PROD_SRCS,
+    crate_name = "ctx_pro_application",
+    crate_root = "src/lib.rs",
+    edition = crate_edition(),
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + CTX_PRO_APPLICATION_TEST_DEPS,
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    rustc_env = COMMON_RUSTC_ENV,
+)
+
+rust_library(
+    name = "qualification_lib",
+    testonly = True,
+    srcs = PROD_SRCS,
+    crate_name = "ctx_pro_application",
+    crate_root = "src/lib.rs",
+    edition = crate_edition(),
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + CTX_PRO_APPLICATION_QUALIFICATION_DEPS,
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    rustc_env = COMMON_RUSTC_ENV,
+)
+
+rust_library(
+    name = "qualification_test_support_lib",
+    testonly = True,
+    srcs = PROD_SRCS,
+    crate_name = "ctx_pro_application",
+    crate_root = "src/lib.rs",
+    edition = crate_edition(),
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + CTX_PRO_APPLICATION_QUALIFICATION_TEST_DEPS,
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    rustc_env = COMMON_RUSTC_ENV,
+)
+
 ctx_rust_test(
     name = "unit_tests",
     srcs = RUST_SRCS,
@@ -44,7 +104,7 @@ ctx_rust_test(
     crate_root = "src/lib.rs",
     edition = crate_edition(),
     aliases = aliases(normal_dev = True, proc_macro_dev = True),
-    deps = all_crate_deps(normal = True, normal_dev = True) + CTX_PRO_APPLICATION_DEPS + [
+    deps = all_crate_deps(normal = True, normal_dev = True) + CTX_PRO_APPLICATION_TEST_DEPS + [
         "//crates/ctx-history-core:lib",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),

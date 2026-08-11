@@ -13,10 +13,6 @@ pub(super) use ctx_pro_lifecycle::installation::{
 };
 pub(super) use ctx_pro_lifecycle::release_manifest as lifecycle_manifest;
 
-pub(super) mod lifecycle_lock {
-    pub(super) type LifecycleLock = ctx_pro_lifecycle::operation::LifecycleOperation;
-}
-
 #[path = "lifecycle_commands.rs"]
 mod commands;
 #[cfg(test)]

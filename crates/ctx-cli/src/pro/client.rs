@@ -2,17 +2,16 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use ctx_pro_access::authorization::AuthorizationProvider as _;
+use ctx_pro_application::{CoreOrchestration, MaterializationMode, ProApplication};
 use ctx_pro_host::{
     AuthorizationMode, AuthorizationReceipt, CoreGenerationHost, CoreGenerationPin,
     InstalledProHost,
 };
-use ctx_pro_application::{CoreOrchestration, MaterializationMode, ProApplication};
 use ctx_pro_host_protocol::{AuthorizationRequest, BlameTarget, AUTHORIZATION_CHALLENGE_BYTES};
 use ctx_pro_lifecycle::installed_artifact::ValidatedArtifactIdentity;
 
 use crate::analytics::{
-    pro_helper_connection_outcome, ProHelperConnectionOutcomeV1, ProMaterializationModeV1,
-    ProMaterializationTelemetryV1,
+    ProHelperConnectionOutcomeV1, ProMaterializationModeV1, ProMaterializationTelemetryV1,
 };
 
 use super::{
@@ -23,13 +22,15 @@ use super::{
 #[cfg(test)]
 pub(crate) use ctx_pro_host::default_helper_path;
 pub(super) use ctx_pro_host::typed_blame_diagnostic;
+#[cfg(test)]
+pub(crate) use ctx_pro_host::ProSetupRepairability;
 pub(crate) use ctx_pro_host::{
     blame_boundary_error, blame_diagnostic, core_finalization_generation_lease,
     invalid_blame_request, reconstruct_core_finalization_generation_lease,
     release_core_finalization_generation_lease, stable_error_code,
     validate_core_finalization_generation_lease, BlameResultFreshness,
-    CoreMaterializationSyncOutcome, HelperSmoke, HostedBlameResult, ProSetupRepairability,
-    ProStatus, RESOURCE_NOT_FOUND_DIAGNOSTIC,
+    CoreMaterializationSyncOutcome, HelperSmoke, HostedBlameResult, ProStatus,
+    RESOURCE_NOT_FOUND_DIAGNOSTIC,
 };
 
 pub(crate) type MaterializeReport = ctx_pro_host::MaterializationFinalizationReceipt;
@@ -167,6 +168,10 @@ impl CoreOrchestration for CtxInstalledProHost {
         )
         .map(|_| ())
     }
+
+    fn cancel_core_finalization(&self, data_root: &Path, reason: &str) -> Result<()> {
+        crate::semantic::cancel_core_finalization_generation_lease(data_root, reason).map(drop)
+    }
 }
 
 pub(crate) fn preflight_core_materialization(data_root: &Path) -> Result<()> {
@@ -246,10 +251,22 @@ fn materialize_with_operation(
             });
             telemetry.complete(
                 outcome.report.batches,
-                if outcome.mode == MaterializationMode::NoOp { 0 } else { outcome.report.source_count },
-                if outcome.mode == MaterializationMode::NoOp { 0 } else { outcome.report.source_count },
+                if outcome.mode == MaterializationMode::NoOp {
+                    0
+                } else {
+                    outcome.report.source_count
+                },
+                if outcome.mode == MaterializationMode::NoOp {
+                    0
+                } else {
+                    outcome.report.source_count
+                },
                 outcome.report.replayed_batches,
-                if outcome.mode == MaterializationMode::NoOp { 0 } else { outcome.report.source_count },
+                if outcome.mode == MaterializationMode::NoOp {
+                    0
+                } else {
+                    outcome.report.source_count
+                },
             );
             outcome.report
         });
@@ -266,6 +283,14 @@ pub(crate) fn blame(
     cursor: Option<String>,
 ) -> Result<HostedBlameResult> {
     ProApplication::new(&HOST).blame(data_root, target, limit, cursor)
+}
+
+pub(crate) fn uninstall(
+    data_root: &Path,
+    deletion: Option<&mut dyn ctx_pro_application::ProDeletionService>,
+    disposition: ctx_pro_application::UninstallDataDisposition,
+) -> Result<ctx_pro_application::UninstallOutcome> {
+    ProApplication::new(&HOST).uninstall(data_root, deletion, disposition)
 }
 
 #[cfg(test)]
