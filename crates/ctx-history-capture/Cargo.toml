@@ -36,6 +36,7 @@ ctx-history-index = { path = "../ctx-history-index" }
 ctx-history-jsonl = { path = "../ctx-history-jsonl" }
 ctx-history-repository-evidence = { path = "../ctx-history-repository-evidence" }
 ctx-history-source-io = { path = "../ctx-history-source-io" }
+ctx-history-source-discovery = { path = "../ctx-history-source-discovery" }
 ctx-pro-host-protocol = { path = "../ctx-pro-host-protocol" }
 
 [dev-dependencies]

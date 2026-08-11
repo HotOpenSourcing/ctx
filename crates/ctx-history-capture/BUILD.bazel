@@ -25,7 +25,7 @@ filegroup(
     srcs = glob(
         [
             "src/provider/**/*.rs",
-            "src/provider_sources/**/*.rs",
+            "src/provider_sources.rs",
         ],
         exclude = RUST_PROD_SRC_EXCLUDES,
     ),
@@ -64,6 +64,7 @@ CTX_HISTORY_CAPTURE_DEPS = [
     "//crates/ctx-history-index:lib",
     "//crates/ctx-history-jsonl:lib",
     "//crates/ctx-history-repository-evidence:lib",
+    "//crates/ctx-history-source-discovery:lib",
     "//crates/ctx-history-source-io:lib",
     "//crates/ctx-pro-host-protocol:lib",
 ]
@@ -74,6 +75,7 @@ CTX_HISTORY_CAPTURE_TEST_DEPS = [
     "//crates/ctx-history-index:lib",
     "//crates/ctx-history-jsonl:lib",
     "//crates/ctx-history-repository-evidence:lib",
+    "//crates/ctx-history-source-discovery:lib",
     "//crates/ctx-history-source-io:test_support_lib",
     "//crates/ctx-pro-host-protocol:lib",
 ]
