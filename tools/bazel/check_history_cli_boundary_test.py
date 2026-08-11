@@ -10,7 +10,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from check_history_cli_boundary import BoundaryError, validate
+from check_history_cli_boundary import (
+    HISTORY_LABEL,
+    HISTORY_TEST_SUPPORT_LABEL,
+    BoundaryError,
+    validate,
+)
 
 
 REPOSITORY = (
@@ -28,13 +33,14 @@ class HistoryCliBoundaryMutations(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         shutil.copy2(REPOSITORY / "Cargo.toml", self.root / "Cargo.toml")
-        for manifest in (REPOSITORY / "crates").glob("*/Cargo.toml"):
-            destination = self.root / manifest.relative_to(REPOSITORY)
+        shutil.copy2(REPOSITORY / "BUILD.bazel", self.root / "BUILD.bazel")
+        workspace_inputs = list((REPOSITORY / "crates").glob("*/Cargo.toml"))
+        workspace_inputs.extend((REPOSITORY / "crates").glob("*/BUILD.bazel"))
+        for source in workspace_inputs:
+            destination = self.root / source.relative_to(REPOSITORY)
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(manifest, destination)
+            shutil.copy2(source, destination)
         for relative in (
-            "crates/ctx-history-cli/BUILD.bazel",
-            "crates/ctx-cli/BUILD.bazel",
             "crates/ctx-cli/src/provider_args.rs",
             "crates/ctx-cli/src/provider_sources.rs",
         ):
@@ -65,7 +71,7 @@ class HistoryCliBoundaryMutations(unittest.TestCase):
     def final_build(self) -> Path:
         return self.root / "crates/ctx-cli/BUILD.bazel"
 
-    def arguments(self) -> tuple[Path, ...]:
+    def fixed_arguments(self) -> tuple[Path, ...]:
         return (
             self.root / "Cargo.toml",
             self.history_cargo,
@@ -75,12 +81,31 @@ class HistoryCliBoundaryMutations(unittest.TestCase):
             self.root / "crates/ctx-history-cli/src",
             self.root / "crates/ctx-cli/src/provider_args.rs",
             self.root / "crates/ctx-cli/src/provider_sources.rs",
-            *sorted((self.root / "crates").glob("*/Cargo.toml")),
+        )
+
+    def member_cargos(self) -> tuple[Path, ...]:
+        return tuple(sorted((self.root / "crates").glob("*/Cargo.toml")))
+
+    def member_builds(self) -> tuple[Path, ...]:
+        return (
+            self.root / "BUILD.bazel",
+            *sorted((self.root / "crates").glob("*/BUILD.bazel")),
+        )
+
+    def cli_arguments(self) -> tuple[str, ...]:
+        return (
+            *(str(path) for path in self.fixed_arguments()),
+            *(str(path) for path in self.member_cargos()),
+            "--member-builds",
+            *(str(path) for path in self.member_builds()),
         )
 
     def validate(self) -> None:
-        arguments = self.arguments()
-        validate(*arguments[:8], arguments[8:])
+        validate(
+            *self.fixed_arguments(),
+            self.member_cargos(),
+            self.member_builds(),
+        )
 
     def replace(self, path: Path, before: str, after: str) -> None:
         source = path.read_text(encoding="utf-8")
@@ -145,10 +170,50 @@ class HistoryCliBoundaryMutations(unittest.TestCase):
                 self.reset()
                 source = self.root / "crates/ctx-history-cli/src/lib.rs"
 
+    def test_identity_and_unknown_provider_authority_fail_closed(self) -> None:
+        source = self.root / "crates/ctx-history-cli/src/lib.rs"
+        for identifier in (
+            "identity::home_dir()",
+            "CaptureProvider::Unknown",
+        ):
+            with self.subTest(identifier=identifier):
+                source.write_text(
+                    source.read_text(encoding="utf-8")
+                    + f"\nfn forbidden() {{ let _ = {identifier}; }}\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(BoundaryError, "prohibited identifiers"):
+                    self.validate()
+                self.reset()
+                source = self.root / "crates/ctx-history-cli/src/lib.rs"
+
     def test_comments_are_not_false_positives(self) -> None:
         source = self.root / "crates/ctx-history-cli/src/lib.rs"
-        source.write_text(source.read_text(encoding="utf-8") + "\n// ctx_agent_application::comment_only()\n/* ctx_pro_host::comment_only() */\n", encoding="utf-8")
+        source.write_text(
+            source.read_text(encoding="utf-8")
+            + """
+// ctx_agent_application::comment_only()
+/* outer ctx_pro_host::comment_only()
+   /* nested identity::home_dir() and CaptureProvider::Unknown */
+   ctx_agent_integrations::comment_only()
+*/
+const RAW_BOUNDARY_TEXT: &str = r####"ctx_agent_application::inside_raw()
+identity::home_dir(); CaptureProvider::Unknown; "quoted""####;
+""",
+            encoding="utf-8",
+        )
         self.validate()
+
+    def test_real_identifier_after_raw_string_is_rejected(self) -> None:
+        source = self.root / "crates/ctx-history-cli/src/lib.rs"
+        source.write_text(
+            source.read_text(encoding="utf-8")
+            + 'const RAW: &str = r######"ctx_pro_host::text()"######;\n'
+            + "fn forbidden_after_raw() { identity::home_dir(); }\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(BoundaryError, "identity::home_dir"):
+            self.validate()
 
     def test_reverse_cargo_consumer_fails_closed(self) -> None:
         consumer = self.root / "crates/ctx-terminal/Cargo.toml"
@@ -181,6 +246,53 @@ class HistoryCliBoundaryMutations(unittest.TestCase):
         with self.assertRaisesRegex(BoundaryError, "reverse history-cli labels"):
             self.validate()
 
+    def test_unreviewed_workspace_build_consumer_fails_closed(self) -> None:
+        for label in (HISTORY_LABEL, HISTORY_TEST_SUPPORT_LABEL):
+            with self.subTest(label=label):
+                terminal_build = self.root / "crates/ctx-terminal/BUILD.bazel"
+                self.replace(
+                    terminal_build,
+                    "deps = all_crate_deps(normal = True),",
+                    f'deps = all_crate_deps(normal = True) + ["{label}"],',
+                )
+                with self.assertRaisesRegex(BoundaryError, "unexpected reverse"):
+                    self.validate()
+                self.reset()
+
+    def test_workspace_build_input_inventory_fails_closed(self) -> None:
+        with self.assertRaisesRegex(BoundaryError, "BUILD input inventory"):
+            validate(
+                *self.fixed_arguments(),
+                self.member_cargos(),
+                self.member_builds()[:-1],
+            )
+
+    def test_ctx_cli_dependency_inventory_cannot_feed_integration_tests(self) -> None:
+        self.replace(
+            self.final_build,
+            'extra_deps = ["//crates/ctx-history-core:lib"],',
+            "extra_deps = CTX_CLI_DEPS,",
+        )
+        with self.assertRaisesRegex(BoundaryError, "reviewed Rust targets"):
+            self.validate()
+
+    def test_test_support_library_is_testonly_and_has_exact_uses(self) -> None:
+        self.replace(
+            self.history_build,
+            'name = "test_support_lib",\n    testonly = True,',
+            'name = "test_support_lib",',
+        )
+        with self.assertRaisesRegex(BoundaryError, "must set testonly"):
+            self.validate()
+        self.reset()
+        self.replace(
+            self.final_build,
+            'extra_deps = ["//crates/ctx-history-core:lib"],',
+            "extra_deps = CTX_CLI_TEST_DEPS,",
+        )
+        with self.assertRaisesRegex(BoundaryError, "reviewed Rust targets"):
+            self.validate()
+
     def test_proc_macro_composition_fails_closed(self) -> None:
         self.replace(
             self.history_build,
@@ -192,12 +304,12 @@ class HistoryCliBoundaryMutations(unittest.TestCase):
 
     def test_malformed_toml_checker_cli_fails_closed(self) -> None:
         self.history_cargo.write_text("[dependencies\n", encoding="utf-8")
-        result = subprocess.run([sys.executable, str(CHECKER), *(str(path) for path in self.arguments())], check=False, capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(CHECKER), *self.cli_arguments()], check=False, capture_output=True, text=True)
         self.assertEqual(result.returncode, 1, result.stderr)
 
     def test_checker_cli_returns_failure(self) -> None:
         self.history_cargo.write_text(self.history_cargo.read_text(encoding="utf-8") + "\n[build-dependencies]\nclap_alias = { package = \"clap\", version = \"4\" }\n", encoding="utf-8")
-        result = subprocess.run([sys.executable, str(CHECKER), *(str(path) for path in self.arguments())], check=False, capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(CHECKER), *self.cli_arguments()], check=False, capture_output=True, text=True)
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("forbidden Cargo dependencies", result.stderr)
 
