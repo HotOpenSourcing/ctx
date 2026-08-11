@@ -1007,8 +1007,10 @@ mod fidelity_identity_tests {
     use super::super::*;
     use crate::{
         provider::source_backed::{
+            family::jsonl::set_after_jsonl_semantic_preflight_hook,
             refresh_source_backed_generation, register_landed_source_backed_route,
             SourceBackedProviderRegistry, SourceBackedRouteSelection,
+            SourceBackedSourceFailureClass,
         },
         ProviderCatalogSupport, ProviderImportSupport, ProviderSource, ProviderSourceKind,
         ProviderSourceStatus,
@@ -1761,6 +1763,117 @@ mod fidelity_identity_tests {
             super::assert_no_linked_repository_evidence(corrected_result);
             super::assert_no_linked_repository_evidence(ambiguous_result);
         }
+    }
+
+    #[test]
+    fn cursor_projector_preflight_rejects_same_length_interpass_rewrite() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("cursor-data");
+        let native_session_id = "preflight-race";
+        let transcript = transcript_path(&root, "project", native_session_id);
+        write_transcript(
+            &transcript,
+            &[message("user", "2026-07-31T12:00:00Z", "stable baseline")],
+        );
+        let registry = registry(&root);
+        let index = temp.path().join("index");
+        let initial =
+            refresh_source_backed_generation(&index, &registry, writer_options()).unwrap();
+        assert!(initial.failed_routes.is_empty());
+
+        append_transcript(
+            &transcript,
+            &message("assistant", "2026-07-31T12:00:01Z", "race-before"),
+        );
+        let hook_path = fs::canonicalize(&transcript).unwrap();
+        set_after_jsonl_semantic_preflight_hook(hook_path.clone(), move || {
+            let before = fs::read_to_string(&hook_path).unwrap();
+            let after = before.replace("race-before", "race-after!");
+            assert_eq!(before.len(), after.len());
+            assert_ne!(before, after);
+            fs::write(hook_path, after).unwrap();
+        });
+
+        let failed = refresh_source_backed_generation(&index, &registry, writer_options()).unwrap();
+        assert_eq!(failed.failed_routes.len(), 1);
+        assert_eq!(
+            failed.failed_routes[0].class,
+            SourceBackedSourceFailureClass::SourceChanged
+        );
+        assert!(failed.failed_routes[0].carried_forward);
+        let retained = indexed_records(&index, native_session_id);
+        assert_eq!(retained.len(), 1);
+        assert_eq!(
+            retained[0].content.normalized_body.as_deref(),
+            Some("stable baseline")
+        );
+    }
+
+    #[test]
+    fn cursor_ambiguous_leaf_replacement_does_not_expand_clean_sibling_work() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("cursor-data");
+        let ambiguous_session = "ambiguous-leaf";
+        let clean_session = "clean-leaf";
+        let ambiguous_path = transcript_path(&root, "project-a", ambiguous_session);
+        let clean_path = transcript_path(&root, "project-b", clean_session);
+        let call_id = "duplicate-result";
+        let call = json!({
+            "timestamp": "2026-07-31T12:00:00Z",
+            "role": "assistant",
+            "message": {"role": "assistant", "content": [{
+                "type": "tool_use",
+                "id": call_id,
+                "name": "run_shell_command",
+                "input": {"command": "ctx search leaf-local"}
+            }]}
+        });
+        let result = |content: &str, timestamp: &str| {
+            json!({
+                "timestamp": timestamp,
+                "role": "user",
+                "message": {"role": "user", "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": call_id,
+                    "content": content,
+                    "is_error": false
+                }]}
+            })
+        };
+        write_transcript(
+            &ambiguous_path,
+            &[call, result("first result", "2026-07-31T12:00:01Z")],
+        );
+        write_transcript(
+            &clean_path,
+            &[message("user", "2026-07-31T12:00:00Z", "clean base")],
+        );
+        let registry = registry(&root);
+        let index = temp.path().join("index");
+        refresh_source_backed_generation(&index, &registry, writer_options()).unwrap();
+
+        append_transcript(
+            &ambiguous_path,
+            &result("second result", "2026-07-31T12:00:02Z"),
+        );
+        append_transcript(
+            &clean_path,
+            &message("assistant", "2026-07-31T12:00:01Z", "clean append"),
+        );
+        let ambiguous_source = source_key(ambiguous_session).unwrap();
+        let clean_source = source_key(clean_session).unwrap();
+        reset_cursor_projected_records(&ambiguous_source);
+        reset_cursor_projected_records(&clean_source);
+
+        let appended =
+            refresh_source_backed_generation(&index, &registry, writer_options()).unwrap();
+        assert!(appended.failed_routes.is_empty());
+        assert_eq!(take_cursor_projected_records(&ambiguous_source), 3);
+        assert_eq!(
+            take_cursor_projected_records(&clean_source),
+            1,
+            "an ambiguous sibling must not force a clean append leaf into replacement"
+        );
     }
 
     #[test]

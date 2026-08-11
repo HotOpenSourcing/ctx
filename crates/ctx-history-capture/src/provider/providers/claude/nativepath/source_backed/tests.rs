@@ -3,8 +3,9 @@ use super::*;
 use crate::repository_attribution::RepositoryAttributor;
 use crate::{
     provider::source_backed::{
-        refresh_source_backed_generation, register_landed_source_backed_route,
-        SourceBackedProviderRegistry, SourceBackedRouteSelection,
+        family::jsonl::set_after_jsonl_semantic_preflight_hook, refresh_source_backed_generation,
+        register_landed_source_backed_route, SourceBackedProviderRegistry,
+        SourceBackedRouteSelection, SourceBackedSourceFailureClass,
     },
     ProviderCatalogSupport, ProviderImportSupport, ProviderSource, ProviderSourceKind,
     ProviderSourceStatus,
@@ -1264,6 +1265,61 @@ fn claude_late_duplicate_result_forces_replacement_and_retracts_prior_exclusion(
     );
     assert_no_linked_repository_evidence(&corrected[1]);
     assert_no_linked_repository_evidence(&corrected[2]);
+}
+
+#[test]
+fn claude_projector_preflight_rejects_same_length_interpass_rewrite() {
+    let temp = tempfile::tempdir().unwrap();
+    let projects = temp.path().join("projects");
+    let transcript = projects.join("project").join("preflight-race.jsonl");
+    let index = temp.path().join("index");
+    let native_session_id = "preflight-race";
+    write_claude_transcript(
+        &transcript,
+        &[serde_json::json!({
+            "type": "user",
+            "uuid": "stable-record",
+            "sessionId": native_session_id,
+            "message": {"role": "user", "content": "stable baseline"},
+        })],
+    );
+    let registry = claude_test_registry(&projects);
+    let initial =
+        refresh_source_backed_generation(&index, &registry, claude_test_writer_options()).unwrap();
+    assert!(initial.failed_routes.is_empty());
+
+    append_claude_transcript(
+        &transcript,
+        &serde_json::json!({
+            "type": "assistant",
+            "uuid": "racing-record",
+            "sessionId": native_session_id,
+            "message": {"role": "assistant", "content": "race-before"},
+        }),
+    );
+    let hook_path = fs::canonicalize(&transcript).unwrap();
+    set_after_jsonl_semantic_preflight_hook(hook_path.clone(), move || {
+        let before = fs::read_to_string(&hook_path).unwrap();
+        let after = before.replace("race-before", "race-after!");
+        assert_eq!(before.len(), after.len());
+        assert_ne!(before, after);
+        fs::write(hook_path, after).unwrap();
+    });
+
+    let failed =
+        refresh_source_backed_generation(&index, &registry, claude_test_writer_options()).unwrap();
+    assert_eq!(failed.failed_routes.len(), 1);
+    assert_eq!(
+        failed.failed_routes[0].class,
+        SourceBackedSourceFailureClass::SourceChanged
+    );
+    assert!(failed.failed_routes[0].carried_forward);
+    let retained = indexed_claude_records(&index, native_session_id);
+    assert_eq!(retained.len(), 1);
+    assert_eq!(
+        retained[0].content.normalized_body.as_deref(),
+        Some("stable baseline")
+    );
 }
 
 #[test]

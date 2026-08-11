@@ -4,7 +4,7 @@ use std::{
     collections::{BTreeSet, HashMap},
     fs, io,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use chrono::{DateTime, Utc};
@@ -32,7 +32,7 @@ use crate::repository_attribution::{
 };
 use crate::OutputOutcome;
 use crate::{
-    common::io::{open_provider_source_file, OpenedProviderSourceFile, ProviderSourceRoot},
+    common::io::{OpenedProviderSourceFile, ProviderSourceRoot},
     provider::{
         ctx_retrieval::{
             classify_direct_cli_tool_input, classify_linked_result, classify_mcp_invocation,
@@ -46,7 +46,7 @@ use crate::{
             JsonlFamilyInventory, JsonlFamilyLeaf, JsonlFamilyProjectionMode, JsonlFamilyProjector,
             JsonlFamilyWorkerContext, JsonlFileObservation, JsonlPendingExchangeLookup,
             JsonlPendingExchangeRemember, JsonlPendingExchangeState, JsonlReader, JsonlRecordRef,
-            JsonlSourceIdentity, JsonlTerminalAuthority, JsonlTerminalObservationRegion,
+            JsonlTerminalAuthority, JsonlTerminalObservationRegion,
         },
     },
     CaptureError, Result, CLAUDE_PROJECTS_SOURCE_FORMAT,
@@ -74,15 +74,7 @@ use checkpoint::*;
 use normalized_body::{event_kind, lexical_body};
 
 #[derive(Debug, Default)]
-struct ClaudeJsonlAdapter {
-    preflight: Mutex<ClaudePreflightState>,
-}
-
-#[derive(Debug, Default)]
-struct ClaudePreflightState {
-    replacement_required: bool,
-    authorities: HashMap<[u8; 32], ClaudeResultTerminalAuthority>,
-}
+struct ClaudeJsonlAdapter;
 
 type ClaudeResultTerminalAuthority = JsonlTerminalAuthority;
 
@@ -108,43 +100,7 @@ impl JsonlFamilyAdapter for ClaudeJsonlAdapter {
     }
 
     fn append_mode(&self) -> JsonlFamilyAppendMode {
-        if self
-            .preflight
-            .lock()
-            .map(|state| state.replacement_required)
-            .unwrap_or(true)
-        {
-            JsonlFamilyAppendMode::Replacement
-        } else {
-            JsonlFamilyAppendMode::CertifiedSuffix
-        }
-    }
-
-    fn prepare_leaf_scans(
-        &self,
-        leaves: &[JsonlFamilyLeaf],
-        bases: &HashMap<[u8; 32], &CertifiedSource>,
-    ) -> Result<Option<usize>> {
-        let mut authorities = HashMap::new();
-        let mut replacement_required = false;
-        for leaf in leaves {
-            let digest = leaf.source().exact_descriptor_digest();
-            let certified_prefix_end = bases
-                .get(&digest)
-                .and_then(|base| base.frontier())
-                .map(|frontier| frontier.certified_prefix_bytes());
-            let opened = open_preflight_source(leaf)?;
-            let authority = preflight_claude_result_terminals(leaf, opened, certified_prefix_end)?;
-            replacement_required |=
-                certified_prefix_end.is_some() && authority.append_requires_replacement();
-            authorities.insert(digest, authority);
-        }
-        let mut state = self.preflight.lock().map_err(|_| {
-            CaptureError::SystemInvariant("Claude result-terminal preflight lock was poisoned")
-        })?;
-        state.replacement_required = replacement_required;
-        state.authorities = authorities;
-        Ok(None)
+        JsonlFamilyAppendMode::ProjectorPreflight(true)
     }
 
     fn discover(&self, root: &Path) -> Result<JsonlFamilyInventory> {
@@ -207,26 +163,10 @@ impl JsonlFamilyAdapter for ClaudeJsonlAdapter {
         JsonlFamilyInventory::present(self.provider(), root, authority, leaves)
     }
 
-    fn projector(
-        &self,
-        leaf: &JsonlFamilyLeaf,
-        source_file: Arc<OpenedProviderSourceFile>,
-        imported_at: DateTime<Utc>,
-    ) -> Result<Box<dyn JsonlFamilyProjector>> {
-        self.projector_with_provider_checkpoint(
-            leaf,
-            source_file,
-            imported_at,
-            None,
-            None,
-            JsonlFamilyProjectionMode::Cold,
-        )
-    }
-
     fn projector_with_provider_checkpoint(
         &self,
         leaf: &JsonlFamilyLeaf,
-        source_file: Arc<OpenedProviderSourceFile>,
+        _source_file: Arc<OpenedProviderSourceFile>,
         _imported_at: DateTime<Utc>,
         checkpoint: Option<&TypedKey>,
         base_event_lookup: Option<BaseEventIdentityLookup>,
@@ -234,17 +174,6 @@ impl JsonlFamilyAdapter for ClaudeJsonlAdapter {
     ) -> Result<Box<dyn JsonlFamilyProjector>> {
         let binding = decode_binding(leaf)?;
         let identities = identities(&binding)?;
-        let source_digest = leaf.source().exact_descriptor_digest();
-        let result_terminal_authority = self
-            .preflight
-            .lock()
-            .map_err(|_| {
-                CaptureError::SystemInvariant("Claude result-terminal preflight lock was poisoned")
-            })?
-            .authorities
-            .remove(&source_digest)
-            .map(Ok)
-            .unwrap_or_else(|| preflight_claude_result_terminals(leaf, source_file, None))?;
         let restored = checkpoint
             .map(|checkpoint| decode_projector_checkpoint(checkpoint, &binding))
             .transpose()?;
@@ -272,7 +201,7 @@ impl JsonlFamilyAdapter for ClaudeJsonlAdapter {
             identities,
             pending_calls,
             linkage_capacity_exceeded,
-            result_terminal_authority,
+            result_terminal_authority: ClaudeResultTerminalAuthority::default(),
             rejected_records: 0,
             fallback_identities: match (mode, base_event_lookup) {
                 (JsonlFamilyProjectionMode::CertifiedAppend, Some(base_lookup)) => {
@@ -282,80 +211,6 @@ impl JsonlFamilyAdapter for ClaudeJsonlAdapter {
             },
         }))
     }
-}
-
-fn open_preflight_source(leaf: &JsonlFamilyLeaf) -> Result<Arc<OpenedProviderSourceFile>> {
-    let opened = open_provider_source_file(leaf.source_path())?;
-    if observe_opened_file(leaf.source_path(), &opened)? != *leaf.observation() {
-        return Err(CaptureError::SourceChangedDuringCapture);
-    }
-    Ok(Arc::new(opened))
-}
-
-fn preflight_claude_result_terminals(
-    leaf: &JsonlFamilyLeaf,
-    source_file: Arc<OpenedProviderSourceFile>,
-    certified_prefix_end: Option<u64>,
-) -> Result<ClaudeResultTerminalAuthority> {
-    let identity = JsonlSourceIdentity::new(
-        CaptureProvider::Claude.as_str(),
-        PARSER_REVISION,
-        "claude-result-terminal-preflight-v1",
-        leaf.source().exact_descriptor_digest(),
-        leaf.source_path(),
-    );
-    let mut reader = JsonlReader::open(identity, source_file, None, None)?;
-    let mut authority = ClaudeResultTerminalAuthority::available();
-    while reader
-        .visit_page(&mut |record: JsonlRecordRef<'_>| -> Result<()> {
-            let evidence = record.evidence();
-            let locator = ClaudePhysicalLocator {
-                path: leaf.source_path().to_path_buf(),
-                byte_start: evidence.byte_start(),
-                byte_end_exclusive: evidence.byte_end_exclusive(),
-                line_number: evidence.physical_ordinal().saturating_add(1),
-                record_sha256: evidence.record_digest(),
-            };
-            let exact_json_authority =
-                crate::common::json::raw_object_keys_are_unique(record.bytes());
-            if !exact_json_authority {
-                authority.observe_ambiguous_terminal();
-            }
-            let parsed =
-                match parse_native_record(record.bytes(), evidence.physical_ordinal(), &locator) {
-                    Ok(parsed) => parsed,
-                    Err(_) => return Ok(()),
-                };
-            let in_certified_prefix = certified_prefix_end
-                .is_some_and(|prefix_end| evidence.byte_end_exclusive() <= prefix_end);
-            for result in parsed
-                .rows
-                .iter()
-                .filter_map(|row| row.tool_result.as_ref())
-            {
-                if result.retrieval_input_ambiguous {
-                    authority.observe_ambiguous_terminal();
-                    continue;
-                }
-                let Some(call_id) = result.call_id.as_deref() else {
-                    continue;
-                };
-                authority.observe(
-                    RESULT_TERMINAL_CALL_ID_DOMAIN,
-                    call_id,
-                    if in_certified_prefix {
-                        JsonlTerminalObservationRegion::CertifiedPrefix
-                    } else {
-                        JsonlTerminalObservationRegion::AppendedSuffix
-                    },
-                    MAX_PENDING_CALLS,
-                );
-            }
-            Ok(())
-        })?
-        .is_some()
-    {}
-    Ok(authority)
 }
 
 struct Identities {
@@ -427,6 +282,75 @@ impl ClaudeProjector {
 }
 
 impl JsonlFamilyProjector for ClaudeProjector {
+    fn preflight(
+        &mut self,
+        reader: &mut JsonlReader,
+        certified_prefix_end: Option<u64>,
+    ) -> Result<bool> {
+        let mut authority = ClaudeResultTerminalAuthority::available();
+        while reader
+            .visit_page(&mut |record: JsonlRecordRef<'_>| -> Result<()> {
+                let evidence = record.evidence();
+                let locator = ClaudePhysicalLocator {
+                    path: PathBuf::from(&self.source_path),
+                    byte_start: evidence.byte_start(),
+                    byte_end_exclusive: evidence.byte_end_exclusive(),
+                    line_number: evidence.physical_ordinal().saturating_add(1),
+                    record_sha256: evidence.record_digest(),
+                };
+                if !crate::common::json::raw_object_keys_are_unique(record.bytes()) {
+                    authority.observe_ambiguous_terminal();
+                }
+                let parsed = match parse_native_record(
+                    record.bytes(),
+                    evidence.physical_ordinal(),
+                    &locator,
+                ) {
+                    Ok(parsed) => parsed,
+                    Err(_) => return Ok(()),
+                };
+                let in_certified_prefix =
+                    certified_prefix_end.is_some_and(|end| evidence.byte_end_exclusive() <= end);
+                for result in parsed
+                    .rows
+                    .iter()
+                    .filter_map(|row| row.tool_result.as_ref())
+                {
+                    if result.retrieval_input_ambiguous {
+                        authority.observe_ambiguous_terminal();
+                        continue;
+                    }
+                    let Some(call_id) = result.call_id.as_deref() else {
+                        continue;
+                    };
+                    authority.observe(
+                        RESULT_TERMINAL_CALL_ID_DOMAIN,
+                        call_id,
+                        if in_certified_prefix {
+                            JsonlTerminalObservationRegion::CertifiedPrefix
+                        } else {
+                            JsonlTerminalObservationRegion::AppendedSuffix
+                        },
+                        MAX_PENDING_CALLS,
+                    );
+                }
+                Ok(())
+            })?
+            .is_some()
+        {}
+        self.result_terminal_authority = authority;
+        Ok(certified_prefix_end.is_some()
+            && self.result_terminal_authority.append_requires_replacement())
+    }
+
+    fn retry_replacement(&mut self) {
+        self.session = ClaudeSessionMetadata::new(self.binding.key.clone());
+        self.pending_calls.clear();
+        self.linkage_capacity_exceeded = false;
+        self.rejected_records = 0;
+        self.fallback_identities = FallbackEventIdentityState::default();
+    }
+
     fn project(
         &mut self,
         record: JsonlRecordRef<'_>,

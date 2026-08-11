@@ -10,6 +10,13 @@ use crate::repository_attribution::RepositoryAttributor;
 pub(crate) enum JsonlFamilyAppendMode {
     CertifiedSuffix,
     Replacement,
+    ProjectorPreflight(bool),
+}
+
+impl JsonlFamilyAppendMode {
+    pub(super) fn certified_suffix(self) -> bool {
+        matches!(self, Self::CertifiedSuffix | Self::ProjectorPreflight(true))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,7 +174,8 @@ impl JsonlFamilyExecutionIo {
         &mut self,
         initial: JsonlFamilyExecutionPosition,
     ) -> Result<bool> {
-        self.reader.settle_semantic_preflight(initial.physical)
+        self.reader
+            .settle_semantic_preflight(initial.physical, true, false)
     }
 
     pub(crate) fn restore(&mut self, position: JsonlFamilyExecutionPosition) -> Result<()> {

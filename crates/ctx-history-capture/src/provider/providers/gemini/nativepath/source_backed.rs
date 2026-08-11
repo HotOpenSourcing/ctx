@@ -1,8 +1,8 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     fs, io,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 mod file_invocation;
@@ -10,9 +10,9 @@ mod projection;
 
 use chrono::{DateTime, Utc};
 use ctx_history_core::{
-    CaptureProvider, CertifiedSource, CoreRecord, CoreRecordError, ProjectionContractError,
-    RepositoryAbstention, RepositoryAbstentionReason, RepositoryEvidenceKind,
-    RepositoryFileObservationKind, SourceKey, StableEntityId, TypedKey,
+    CaptureProvider, CoreRecord, CoreRecordError, ProjectionContractError, RepositoryAbstention,
+    RepositoryAbstentionReason, RepositoryEvidenceKind, RepositoryFileObservationKind, SourceKey,
+    StableEntityId, TypedKey,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -28,16 +28,15 @@ use super::{
     GeminiTranscriptSource,
 };
 use crate::{
-    common::io::{open_provider_source_file, OpenedProviderSourceFile, ProviderSourceRoot},
+    common::io::{OpenedProviderSourceFile, ProviderSourceRoot},
     provider::ctx_retrieval,
     provider::source_backed::{
         executable_route,
         family::jsonl::{
-            jsonl_family_driver, observe_opened_file, remember_pending_exchange,
-            JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf,
-            JsonlFamilyProjector, JsonlFamilyWorkerContext, JsonlPendingExchangeRemember,
-            JsonlPendingExchangeState, JsonlReader, JsonlRecordRef, JsonlSourceIdentity,
-            JsonlTerminalAuthority, JsonlTerminalObservationRegion,
+            jsonl_family_driver, remember_pending_exchange, JsonlFamilyAdapter,
+            JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf, JsonlFamilyProjector,
+            JsonlFamilyWorkerContext, JsonlPendingExchangeRemember, JsonlPendingExchangeState,
+            JsonlReader, JsonlRecordRef, JsonlTerminalAuthority, JsonlTerminalObservationRegion,
         },
         SourceBackedCoordinatorResult, SourceBackedProviderRegistry, SourceBackedRouteSelection,
         SourceBackedSelectorAuthority,
@@ -125,9 +124,7 @@ impl GeminiFamilyBinding {
 }
 
 #[derive(Debug, Default)]
-struct GeminiJsonlAdapter {
-    preflight: Mutex<HashMap<[u8; 32], GeminiResultTerminalAuthority>>,
-}
+struct GeminiJsonlAdapter;
 
 type GeminiResultTerminalAuthority = JsonlTerminalAuthority;
 
@@ -153,26 +150,7 @@ impl JsonlFamilyAdapter for GeminiJsonlAdapter {
     }
 
     fn append_mode(&self) -> JsonlFamilyAppendMode {
-        JsonlFamilyAppendMode::Replacement
-    }
-
-    fn prepare_leaf_scans(
-        &self,
-        leaves: &[JsonlFamilyLeaf],
-        _bases: &HashMap<[u8; 32], &CertifiedSource>,
-    ) -> crate::Result<Option<usize>> {
-        let mut authorities = HashMap::new();
-        for leaf in leaves {
-            let opened = open_gemini_preflight_source(leaf)?;
-            authorities.insert(
-                leaf.source().exact_descriptor_digest(),
-                preflight_gemini_result_terminals(leaf, opened)?,
-            );
-        }
-        *self.preflight.lock().map_err(|_| {
-            CaptureError::SystemInvariant("Gemini result-terminal preflight lock was poisoned")
-        })? = authorities;
-        Ok(None)
+        JsonlFamilyAppendMode::ProjectorPreflight(false)
     }
 
     fn discover(&self, root: &Path) -> crate::Result<JsonlFamilyInventory> {
@@ -233,16 +211,6 @@ impl JsonlFamilyAdapter for GeminiJsonlAdapter {
         if !expected_source.exact_descriptor_eq(leaf.source()) {
             return Err(CaptureError::SourceChangedDuringCapture);
         }
-        let source_digest = leaf.source().exact_descriptor_digest();
-        let result_terminal_authority = self
-            .preflight
-            .lock()
-            .map_err(|_| {
-                CaptureError::SystemInvariant("Gemini result-terminal preflight lock was poisoned")
-            })?
-            .remove(&source_digest)
-            .map(Ok)
-            .unwrap_or_else(|| preflight_gemini_result_terminals(leaf, Arc::clone(&source_file)))?;
         let session_id = gemini_session_id(leaf.source(), &binding.session.native_session_id)
             .map_err(capture_error)?;
         let parent_session_id = binding
@@ -258,7 +226,8 @@ impl JsonlFamilyAdapter for GeminiJsonlAdapter {
         let root_session_id = parent_session_id.unwrap_or(session_id);
         let transcript = binding.transcript(leaf);
         Ok(Box::new(GeminiProjector {
-            parser: GeminiBorrowedRecordParser::new(transcript, binding.session.clone()),
+            parser: GeminiBorrowedRecordParser::new(transcript.clone(), binding.session.clone()),
+            preflight_transcript: Some(transcript),
             source: leaf.source().clone(),
             session: binding.session,
             session_id,
@@ -268,78 +237,16 @@ impl JsonlFamilyAdapter for GeminiJsonlAdapter {
             authority: Arc::clone(leaf.authority()),
             tool_contexts: BTreeMap::new(),
             linkage_capacity_exceeded: false,
-            result_terminal_authority,
+            result_terminal_authority: GeminiResultTerminalAuthority::default(),
             native_item_ids: GeminiSourceNativeItemIds::default(),
             emitted_event_digests: BTreeSet::new(),
         }))
     }
 }
 
-fn open_gemini_preflight_source(
-    leaf: &JsonlFamilyLeaf,
-) -> crate::Result<Arc<OpenedProviderSourceFile>> {
-    let opened = open_provider_source_file(leaf.source_path())?;
-    if observe_opened_file(leaf.source_path(), &opened)? != *leaf.observation() {
-        return Err(CaptureError::SourceChangedDuringCapture);
-    }
-    Ok(Arc::new(opened))
-}
-
-fn preflight_gemini_result_terminals(
-    leaf: &JsonlFamilyLeaf,
-    source_file: Arc<OpenedProviderSourceFile>,
-) -> crate::Result<GeminiResultTerminalAuthority> {
-    let binding = decode_binding(leaf)?;
-    let mut parser =
-        GeminiBorrowedRecordParser::new(binding.transcript(leaf), binding.session.clone());
-    let identity = JsonlSourceIdentity::new(
-        CaptureProvider::Gemini.as_str(),
-        GEMINI_SOURCE_BACKED_PARSER_REVISION,
-        "gemini-result-terminal-preflight-v1",
-        leaf.source().exact_descriptor_digest(),
-        leaf.source_path(),
-    );
-    let mut reader = JsonlReader::open(identity, source_file, None, None)?;
-    let mut authority = GeminiResultTerminalAuthority::available();
-    while reader
-        .visit_page(&mut |record: JsonlRecordRef<'_>| -> crate::Result<()> {
-            let evidence = record.evidence();
-            if gemini_result_terminal_authority_is_ambiguous(record.bytes()) {
-                authority.observe_ambiguous_terminal();
-            }
-            let events = parser
-                .project(
-                    record.bytes(),
-                    evidence.physical_ordinal(),
-                    evidence.byte_start(),
-                    evidence.byte_end_exclusive(),
-                    evidence.record_digest(),
-                )
-                .map_err(capture_scan_error)?;
-            for event in events {
-                if let GeminiEventBody::OutputDiagnostic {
-                    call_id: Some(call_id),
-                    ..
-                } = event.body
-                {
-                    authority.observe(
-                        RESULT_TERMINAL_CALL_ID_DOMAIN,
-                        &call_id,
-                        JsonlTerminalObservationRegion::WholeSource,
-                        MAX_GEMINI_TOOL_CONTEXTS,
-                    );
-                }
-            }
-            Ok(())
-        })?
-        .is_some()
-    {}
-    parser.finish().map_err(capture_scan_error)?;
-    Ok(authority)
-}
-
 struct GeminiProjector {
     parser: GeminiBorrowedRecordParser,
+    preflight_transcript: Option<GeminiTranscriptSource>,
     source: SourceKey,
     session: GeminiSession,
     session_id: StableEntityId,
@@ -422,6 +329,56 @@ struct GeminiToolContext {
 type GeminiToolContextState = JsonlPendingExchangeState<GeminiToolContext>;
 
 impl JsonlFamilyProjector for GeminiProjector {
+    fn preflight(
+        &mut self,
+        reader: &mut JsonlReader,
+        _certified_prefix_end: Option<u64>,
+    ) -> crate::Result<bool> {
+        let mut authority = GeminiResultTerminalAuthority::available();
+        while reader
+            .visit_page(&mut |record: JsonlRecordRef<'_>| -> crate::Result<()> {
+                let evidence = record.evidence();
+                if gemini_result_terminal_authority_is_ambiguous(record.bytes()) {
+                    authority.observe_ambiguous_terminal();
+                }
+                let events = self
+                    .parser
+                    .project(
+                        record.bytes(),
+                        evidence.physical_ordinal(),
+                        evidence.byte_start(),
+                        evidence.byte_end_exclusive(),
+                        evidence.record_digest(),
+                    )
+                    .map_err(capture_scan_error)?;
+                for event in events {
+                    if let GeminiEventBody::OutputDiagnostic {
+                        call_id: Some(call_id),
+                        ..
+                    } = event.body
+                    {
+                        authority.observe(
+                            RESULT_TERMINAL_CALL_ID_DOMAIN,
+                            &call_id,
+                            JsonlTerminalObservationRegion::WholeSource,
+                            MAX_GEMINI_TOOL_CONTEXTS,
+                        );
+                    }
+                }
+                Ok(())
+            })?
+            .is_some()
+        {}
+        self.parser.finish().map_err(capture_scan_error)?;
+        self.result_terminal_authority = authority;
+        let transcript = self
+            .preflight_transcript
+            .take()
+            .ok_or(CaptureError::SystemInvariant("repeated Gemini preflight"))?;
+        self.parser = GeminiBorrowedRecordParser::new(transcript, self.session.clone());
+        Ok(false)
+    }
+
     fn project(
         &mut self,
         record: JsonlRecordRef<'_>,
