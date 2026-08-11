@@ -742,7 +742,6 @@ dependencies = [
  "ctx-daemon-runtime",
  "ctx-daemon-service",
  "ctx-history-capture",
- "ctx-history-capture-model",
  "ctx-history-core",
  "ctx-history-index",
  "ctx-history-query",
