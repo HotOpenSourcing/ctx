@@ -982,8 +982,8 @@ fn primitive_at(
     {
         if previous_is(tokens, index, "fn") {
             return match path {
-                "src/output.rs" => Some(Primitive::OutputRawHelper),
-                "src/ui/writer.rs" => Some(Primitive::UiRawWriter),
+                "crates/ctx-terminal/src/output.rs" => Some(Primitive::OutputRawHelper),
+                "crates/ctx-terminal/src/ui/writer.rs" => Some(Primitive::UiRawWriter),
                 _ => None,
             };
         }
@@ -998,13 +998,13 @@ fn primitive_at(
         text,
         "write_stdout" | "write_stdout_line" | "write_stderr_line"
     ) && tokens.get(index + 1).map(|token| token.text.as_str()) == Some("(")
-        && ((path == "src/output.rs" && previous_is(tokens, index, "fn"))
+        && ((path == "crates/ctx-terminal/src/output.rs" && previous_is(tokens, index, "fn"))
             || origins.aliases.is_output_helper(tokens, index))
     {
         return Some(Primitive::OutputRawHelper);
     }
     if text == "with_writers"
-        && ((path == "src/ui/writer.rs" && previous_is(tokens, index, "fn"))
+        && ((path == "crates/ctx-terminal/src/ui/writer.rs" && previous_is(tokens, index, "fn"))
             || (tokens.get(index + 1).map(|token| token.text.as_str()) == Some("(")
                 && path_contains(tokens, index, "Ui")))
     {
@@ -1014,7 +1014,7 @@ fn primitive_at(
         && tokens.get(index + 1).map(|token| token.text.as_str()) == Some("(")
         && ((previous_is(tokens, index, ".")
             && documents.render_receiver_is_document(tokens, functions, index, document_catalog))
-            || (path == "src/ui/document.rs" && previous_is(tokens, index, "fn")))
+            || (path == "crates/ctx-terminal/src/ui/document.rs" && previous_is(tokens, index, "fn")))
     {
         return Some(Primitive::DocumentRender);
     }
@@ -1023,7 +1023,7 @@ fn primitive_at(
             && tokens.get(index + 2).map(|token| token.text.as_str()) == Some("&")
             && tokens.get(index + 3).map(|token| token.text.as_str()) != Some("mut")
             && documents.render_receiver_is_document(tokens, functions, index, document_catalog);
-        let document_api = path == "src/ui/document.rs" && previous_is(tokens, index, "fn");
+        let document_api = path == "crates/ctx-terminal/src/ui/document.rs" && previous_is(tokens, index, "fn");
         if document_call || document_api {
             return Some(Primitive::DocumentRender);
         }
@@ -1287,8 +1287,14 @@ const fn fnv1a64(bytes: &[u8]) -> u64 {
 
 fn package_root() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if manifest.join("src").is_dir() {
+    if manifest.ends_with("ctx-cli") && manifest.join("src").is_dir() {
         return manifest;
+    }
+    if let Some(workspace_root) = manifest.parent().and_then(Path::parent) {
+        let cli = workspace_root.join("crates/ctx-cli");
+        if cli.join("src").is_dir() {
+            return cli;
+        }
     }
     if let (Ok(source_dir), Ok(workspace)) = (env::var("TEST_SRCDIR"), env::var("TEST_WORKSPACE")) {
         let runfiles = PathBuf::from(source_dir)
@@ -1333,6 +1339,7 @@ fn production_source_paths(root: &Path) -> Vec<PathBuf> {
     let daemon_runtime_root = workspace_root.join("crates/ctx-daemon-runtime");
     let pro_host_root = workspace_root.join("crates/ctx-pro-host");
     let engine_root = workspace_root.join("crates/ctx-upgrade-engine");
+    let terminal_root = workspace_root.join("crates/ctx-terminal");
     let mut paths = vec![
         root.join("build.rs"),
         workspace_root.join("crates/ctx-semantic-model/build.rs"),
@@ -1340,6 +1347,7 @@ fn production_source_paths(root: &Path) -> Vec<PathBuf> {
     ];
     visit_production_source_files(&integrations_root.join("src"), &mut paths);
     visit_production_source_files(&root.join("src"), &mut paths);
+    visit_production_source_files(&terminal_root.join("src"), &mut paths);
     visit_production_source_files(&daemon_runtime_root.join("src"), &mut paths);
     visit_production_source_files(&pro_host_root.join("src"), &mut paths);
     visit_production_source_files(&engine_root.join("src"), &mut paths);
@@ -1374,6 +1382,7 @@ fn scan_package() -> Vec<Site> {
     let daemon_runtime_root = workspace_root.join("crates/ctx-daemon-runtime");
     let pro_host_root = workspace_root.join("crates/ctx-pro-host");
     let engine_root = workspace_root.join("crates/ctx-upgrade-engine");
+    let terminal_root = workspace_root.join("crates/ctx-terminal");
     let mut sources = Vec::new();
     for path in production_source_paths(&root) {
         let relative = if path == model_build {
@@ -1396,6 +1405,11 @@ fn scan_package() -> Vec<Site> {
         } else if let Ok(relative) = path.strip_prefix(&engine_root) {
             format!(
                 "crates/ctx-upgrade-engine/{}",
+                relative.to_string_lossy().replace('\\', "/")
+            )
+        } else if let Ok(relative) = path.strip_prefix(&terminal_root) {
+            format!(
+                "crates/ctx-terminal/{}",
                 relative.to_string_lossy().replace('\\', "/")
             )
         } else {

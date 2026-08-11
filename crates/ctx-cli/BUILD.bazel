@@ -85,6 +85,7 @@ CTX_CLI_DEPS = [
     "//crates/ctx-pro-lifecycle:lib",
     "//crates/ctx-semantic-index:lib",
     "//crates/ctx-semantic-model:lib",
+    "//crates/ctx-terminal:lib",
     "//crates/ctx-upgrade-engine:lib",
 ]
 
@@ -104,6 +105,7 @@ CTX_CLI_TEST_DEPS = [
     "//crates/ctx-pro-lifecycle:test_support_lib",
     "//crates/ctx-semantic-index:test_support_lib",
     "//crates/ctx-semantic-model:test_support_lib",
+    "//crates/ctx-terminal:lib",
     "//crates/ctx-upgrade-engine:test_support_lib",
 ]
 
@@ -123,6 +125,7 @@ CTX_CLI_PRO_TEST_HOST_DEPS = [
     "//crates/ctx-pro-lifecycle:qualification_test_support_lib",
     "//crates/ctx-semantic-index:lib",
     "//crates/ctx-semantic-model:lib",
+    "//crates/ctx-terminal:lib",
     "//crates/ctx-upgrade-engine:lib",
 ]
 
@@ -142,6 +145,7 @@ CTX_CLI_QUALIFICATION_DEPS = [
     "//crates/ctx-pro-lifecycle:qualification_lib",
     "//crates/ctx-semantic-index:lib",
     "//crates/ctx-semantic-model:lib",
+    "//crates/ctx-terminal:lib",
     "//crates/ctx-upgrade-engine:qualification_lib",
 ]
 
@@ -330,34 +334,6 @@ ctx_rust_test(
         "CARGO_BIN_EXE_ctx": "$(rootpath :ctx)",
     },
     tags = ["exclusive"],
-)
-
-ctx_rust_test(
-    name = "raw_output_policy_tests",
-    srcs = [
-        "tests/raw_output_policy.rs",
-        "tests/raw_output_policy/allowlist.rs",
-        "tests/raw_output_policy/output_origins.rs",
-        "tests/raw_output_policy/owning_test.rs",
-        "tests/raw_output_policy/self_tests.rs",
-        "tests/raw_output_policy/sink_analysis.rs",
-        "tests/raw_output_policy/source_analysis.rs",
-    ],
-    crate_name = "raw_output_policy_tests",
-    crate_root = "tests/raw_output_policy.rs",
-    data = glob(["src/**/*.rs"]) + [
-        "build.rs",
-        "//crates/ctx-agent-integrations:cargo_package_data",
-        "//crates/ctx-client-observability:cargo_package_data",
-        "//crates/ctx-daemon-runtime:cargo_package_data",
-        "//crates/ctx-daemon-service:cargo_package_data",
-        "//crates/ctx-pro-host:cargo_package_data",
-        "//crates/ctx-semantic-model:build.rs",
-        "//crates/ctx-upgrade-engine:cargo_package_data",
-    ],
-    edition = crate_edition(),
-    rustc_env = COMMON_RUSTC_ENV,
-    rustc_flags = CTX_CLI_RUSTC_FLAGS,
 )
 
 ctx_cli_integration_test(

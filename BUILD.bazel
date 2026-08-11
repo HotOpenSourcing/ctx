@@ -140,6 +140,7 @@ CARGO_WORKSPACE_PACKAGE_DATA = [
     "//crates/ctx-pro-lifecycle:cargo_package_data",
     "//crates/ctx-semantic-index:cargo_package_data",
     "//crates/ctx-semantic-model:cargo_package_data",
+    "//crates/ctx-terminal:cargo_package_data",
     "//crates/ctx-upgrade-engine:cargo_package_data",
     "//crates/ctx-pro-access:cargo_package_data",
     "//crates/ctx-pro-host-protocol:cargo_package_data",
@@ -1262,6 +1263,18 @@ sh_test(
         "no-cache",
         "no-sandbox",
     ],
+)
+
+sh_test(
+    name = "terminal_dependency_boundary_check",
+    srcs = ["//tools/bazel:check-terminal-dependency-boundary.sh"],
+    args = ["$(rootpath //crates/ctx-terminal:Cargo.toml)"],
+    data = [
+        "Cargo.toml",
+        "//crates/ctx-terminal:Cargo.toml",
+        "//crates/ctx-terminal:boundary_sources",
+    ],
+    tags = ["build-graph", "exclusive", "no-cache", "no-sandbox"],
 )
 
 sh_test(

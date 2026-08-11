@@ -634,14 +634,11 @@ pub(crate) fn run(args: ReferralArgs, data_root: PathBuf, ui: &mut Ui) -> Result
     result
 }
 
-pub(crate) fn show_cta_once<D>(data_root: &Path, eligible: bool, output: &mut D) -> bool
-where
-    D: CtaDestination + ?Sized,
-{
+pub(crate) fn show_cta_once(data_root: &Path, eligible: bool, output: &mut Ui) -> bool {
     let Ok(channel) = selected_channel() else {
         return false;
     };
-    show_cta_once_for_channel(data_root, eligible, channel, output)
+    show_cta_once_for_channel(data_root, eligible, channel, &mut UiCtaDestination(output))
 }
 
 fn show_cta_once_for_channel<D>(
@@ -672,13 +669,15 @@ pub(crate) trait CtaDestination {
     fn write_cta(&mut self, document: &Document) -> io::Result<()>;
 }
 
-impl CtaDestination for Ui {
+struct UiCtaDestination<'a>(&'a mut Ui);
+
+impl CtaDestination for UiCtaDestination<'_> {
     fn cta_context(&self) -> &RenderContext {
-        self.stderr_context()
+        self.0.stderr_context()
     }
 
     fn write_cta(&mut self, document: &Document) -> io::Result<()> {
-        self.write_stderr(document)
+        self.0.write_stderr(document)
     }
 }
 

@@ -27,15 +27,15 @@ const GATE: TestOwner = TestOwner::behavioral(
     &["compare_policy", "scan_package", "is_closed"],
 );
 const UNIT: TestOwner = TestOwner::behavioral(
-    "src/ui/tests.rs::ui_owns_independent_injectable_streams_and_capabilities",
+    "crates/ctx-terminal/src/ui/tests.rs::ui_owns_independent_injectable_streams_and_capabilities",
     &[
         "src/commands/blame.rs",
         "src/dispatch.rs",
         "src/main.rs",
-        "src/output.rs",
+        "crates/ctx-terminal/src/output.rs",
         "src/release_build_identity.rs",
         "src/transcript.rs",
-        "src/ui/",
+        "crates/ctx-terminal/src/ui/",
     ],
     &[
         "Ui",
@@ -51,13 +51,13 @@ const ANALYTICS: TestOwner = TestOwner::behavioral(
     &["post_event_chunks", "failure_on_post", "is_ok"],
 );
 const LIVE_OUTPUT: TestOwner = TestOwner::behavioral(
-    "src/ui/writer.rs::live_controller_bytes_cover_first_grow_shrink_and_final_frames",
-    &["src/ui/writer.rs"],
+    "crates/ctx-terminal/src/ui/writer.rs::live_controller_bytes_cover_first_grow_shrink_and_final_frames",
+    &["crates/ctx-terminal/src/ui/writer.rs"],
     &["LiveOutput", "write_frame", "assert_eq"],
 );
 const APPEND_OUTPUT: TestOwner = TestOwner::behavioral(
-    "src/ui/writer.rs::append_controller_writes_documents_and_lines_exactly",
-    &["src/ui/writer.rs"],
+    "crates/ctx-terminal/src/ui/writer.rs::append_controller_writes_documents_and_lines_exactly",
+    &["crates/ctx-terminal/src/ui/writer.rs"],
     &["LiveOutput", "write_document", "write_line", "assert_eq"],
 );
 const INDEX: TestOwner = TestOwner::behavioral(
@@ -216,7 +216,7 @@ const MCP_OPERATION: &str = "src/integrations/mcp/operation.rs";
 const SLASH_COMMANDS: &str = "src/integrations/slash_commands.rs";
 const MAIN: &str = "src/main.rs";
 const MCP_MODULE: &str = "src/mcp.rs";
-const OUTPUT: &str = "src/output.rs";
+const OUTPUT: &str = "crates/ctx-terminal/src/output.rs";
 const PRO_LIFECYCLE: &str = "src/pro/lifecycle_commands.rs";
 const PRO_SETUP_REPLAY: &str = "src/pro/lifecycle_commands/setup_replay.rs";
 const PRO_UNINSTALL: &str = "src/pro/lifecycle_commands/uninstall.rs";
@@ -227,9 +227,9 @@ const RELEASE_IDENTITY: &str = "src/release_build_identity.rs";
 const SKILL_INSTALL: &str = "src/skill/install.rs";
 const SKILL_SELECTION: &str = "src/skill/selection.rs";
 const TRANSCRIPT: &str = "src/transcript.rs";
-const UI_DOCUMENT: &str = "src/ui/document.rs";
-const UI_MODULE: &str = "src/ui/mod.rs";
-const UI_WRITER: &str = "src/ui/writer.rs";
+const UI_DOCUMENT: &str = "crates/ctx-terminal/src/ui/document.rs";
+const UI_MODULE: &str = "crates/ctx-terminal/src/ui/mod.rs";
+const UI_WRITER: &str = "crates/ctx-terminal/src/ui/writer.rs";
 const UPGRADE_HUMAN: &str = "src/upgrade/command/human.rs";
 const UPGRADE_STATUS: &str = "src/upgrade/command/status.rs";
 const HOSTED_TRANSACTION: &str =
@@ -712,7 +712,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         OUTPUT,
-        "<module>#1@c614d2315222fabf",
+        "<module>#1@f7d8c8de216a4a5f",
         OutputRawHelper,
         Infrastructure,
         RAW_INFRASTRUCTURE,
@@ -720,7 +720,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         OUTPUT,
-        "<module>#2@7a634fe26bf78e12",
+        "<module>#2@04727f0794baa772",
         OutputRawHelper,
         Infrastructure,
         RAW_INFRASTRUCTURE,
@@ -728,7 +728,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         OUTPUT,
-        "<module>#3@469e3a07ae927e23",
+        "<module>#3@d400c41874c73f83",
         OutputRawHelper,
         Infrastructure,
         RAW_INFRASTRUCTURE,
@@ -736,7 +736,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         OUTPUT,
-        "<module>#4@270a7b6cfa1ef559",
+        "<module>#4@95a6dcc21d1c9339",
         OutputRawHelper,
         Infrastructure,
         RAW_INFRASTRUCTURE,
@@ -1008,7 +1008,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         UI_DOCUMENT,
-        "<module>#1@a550bb37792fb090",
+        "<module>#1@c63b922269e6f670",
         DocumentRender,
         Infrastructure,
         UI_INFRASTRUCTURE,
@@ -1016,7 +1016,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         UI_DOCUMENT,
-        "<module>#2@46aa89441e8b06f3",
+        "<module>#2@1f3e3a85e7741e93",
         DocumentRender,
         Infrastructure,
         UI_INFRASTRUCTURE,
@@ -1136,7 +1136,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         UI_WRITER,
-        "<module>#1@68508a6fdfc44ce9",
+        "<module>#1@7446ea7cb0e48e89",
         UiRawWriter,
         Infrastructure,
         UI_INFRASTRUCTURE,
@@ -1144,7 +1144,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         UI_WRITER,
-        "<module>#1@8af2b2040e9e92e3",
+        "<module>#1@37471075d156ae43",
         UiWriterInjection,
         Infrastructure,
         UI_INFRASTRUCTURE,
@@ -1152,7 +1152,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         UI_WRITER,
-        "<module>#2@154aef9fb34123dc",
+        "<module>#2@b080a0d53dc5dc7c",
         UiRawWriter,
         Infrastructure,
         UI_INFRASTRUCTURE,

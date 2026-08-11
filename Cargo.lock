@@ -752,6 +752,7 @@ dependencies = [
  "ctx-pro-lifecycle",
  "ctx-semantic-index",
  "ctx-semantic-model",
+ "ctx-terminal",
  "ctx-upgrade-engine",
  "ed25519-dalek",
  "flate2",
@@ -1292,6 +1293,22 @@ dependencies = [
  "uuid",
  "windows-sys 0.61.2",
  "xz2",
+]
+
+[[package]]
+name = "ctx-terminal"
+version = "1.0.0"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "anyhow",
+ "serde",
+ "serde_json",
+ "supports-unicode",
+ "terminal_size",
+ "unicode-segmentation",
+ "unicode-width",
+ "uuid",
 ]
 
 [[package]]

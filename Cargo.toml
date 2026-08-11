@@ -25,6 +25,7 @@ members = [
     "crates/ctx-pro-lifecycle",
     "crates/ctx-semantic-index",
     "crates/ctx-semantic-model",
+    "crates/ctx-terminal",
     "crates/ctx-pro-host-protocol",
     "crates/ctx-protocol",
     "crates/ctx-sdk",
