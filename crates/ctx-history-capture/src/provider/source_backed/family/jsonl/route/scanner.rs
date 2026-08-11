@@ -182,6 +182,13 @@ impl JsonlFamilyExecutionIo {
         self.reader.execution_complete_prefix_end()
     }
 
+    /// Boundary between the previously certified source prefix and bytes
+    /// admitted by this append. No physical checkpoint state crosses the
+    /// shared executor seam.
+    pub(crate) fn certified_prefix_end(&self) -> Option<u64> {
+        self.reader.execution_certified_prefix_end()
+    }
+
     pub(crate) fn release_record_buffer(&mut self) -> Result<()> {
         self.reader.release_execution_record_buffer()
     }
