@@ -131,6 +131,7 @@ CARGO_WORKSPACE_PACKAGE_DATA = [
     "//crates/ctx-history-capture:cargo_package_data",
     "//crates/ctx-history-capture-model:cargo_package_data",
     "//crates/ctx-history-core:cargo_package_data",
+    "//crates/ctx-history-ingest-application:cargo_package_data",
     "//crates/ctx-history-index-format:cargo_package_data",
     "//crates/ctx-history-index:cargo_package_data",
     "//crates/ctx-history-index-generation:cargo_package_data",
@@ -167,6 +168,7 @@ LOC_CHECK_SOURCE_DATA = [
     "//crates/ctx-history-capture:loc_check_inputs",
     "//crates/ctx-history-capture-model:loc_check_inputs",
     "//crates/ctx-history-core:loc_check_inputs",
+    "//crates/ctx-history-ingest-application:loc_check_inputs",
     "//crates/ctx-history-index-format:loc_check_inputs",
     "//crates/ctx-history-index:loc_check_inputs",
     "//crates/ctx-history-index-generation:loc_check_inputs",
@@ -804,6 +806,7 @@ configured_license_materials(
         "//crates/ctx-history-capture:Cargo.toml",
         "//crates/ctx-history-capture-model:Cargo.toml",
         "//crates/ctx-history-core:Cargo.toml",
+        "//crates/ctx-history-ingest-application:Cargo.toml",
         "//crates/ctx-history-index-format:Cargo.toml",
         "//crates/ctx-history-index:Cargo.toml",
         "//crates/ctx-history-index-generation:Cargo.toml",
@@ -1131,6 +1134,7 @@ sh_test(
         "//crates/ctx-cli:BUILD.bazel",
         "//crates/ctx-cli:build.rs",
         "//crates/ctx-cli:test_targets.bzl",
+        "//tools/bazel:binary_contracts.bzl",
     ],
 )
 
@@ -1249,6 +1253,22 @@ sh_test(
         "BUILD.bazel",
         "scripts/bazelw",
         "scripts/check-rust-crate-size.py",
+    ] + CARGO_WORKSPACE_PACKAGE_DATA + LOC_CHECK_SOURCE_DATA,
+    tags = [
+        "build-graph",
+        "exclusive",
+        "no-cache",
+        "no-sandbox",
+    ],
+)
+
+sh_test(
+    name = "history_ingest_application_dependency_boundary_check",
+    srcs = ["//tools/bazel:check-history-ingest-application-boundary.sh"],
+    args = ["$(rootpath BUILD.bazel)"],
+    data = [
+        "BUILD.bazel",
+        "scripts/bazelw",
     ] + CARGO_WORKSPACE_PACKAGE_DATA + LOC_CHECK_SOURCE_DATA,
     tags = [
         "build-graph",
