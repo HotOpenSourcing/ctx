@@ -28,6 +28,8 @@ load(
     "RUST_FORMAT_TARGETS",
 )
 
+exports_files(["BUILD.bazel"])
+
 filegroup(
     name = "cloud_removed_build_inputs",
     srcs = [
@@ -69,14 +71,6 @@ sh_test(
         "no-cache",
         "no-sandbox",
     ],
-)
-
-sh_test(
-    name = "history_cli_boundary_check",
-    srcs = ["//tools/bazel:check-history-cli-boundary.sh"],
-    args = ["$(rootpath BUILD.bazel)"],
-    data = ["BUILD.bazel", "//crates/ctx-cli:cargo_package_data", "//crates/ctx-history-cli:cargo_package_data"],
-    tags = ["no-cache"],
 )
 
 config_setting(
@@ -167,6 +161,28 @@ CARGO_WORKSPACE_PACKAGE_DATA = [
     "//crates/ctx-protocol:cargo_package_data",
     "//crates/ctx-sdk:cargo_package_data",
 ]
+
+filegroup(
+    name = "history_cli_boundary_inputs",
+    srcs = CARGO_WORKSPACE_PACKAGE_DATA + [
+        "BUILD.bazel",
+        "//crates/ctx-cli:BUILD.bazel",
+        "//crates/ctx-history-cli:BUILD.bazel",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+sh_test(
+    name = "history_cli_boundary_check",
+    srcs = ["//tools/bazel:check-history-cli-boundary.sh"],
+    args = ["$(rootpath BUILD.bazel)"],
+    data = [
+        "BUILD.bazel",
+        ":history_cli_boundary_inputs",
+        "//tools/bazel:check_history_cli_boundary.py",
+    ],
+    tags = ["no-cache"],
+)
 
 loc_check_manifest(
     name = "loc_check_source_manifest",
