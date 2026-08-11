@@ -549,7 +549,7 @@
           "FILE:@@//crates/ctx-pro-access/Cargo.toml 58acbea77e2b196dcb744bdbf296c52e3a6ebdcd54ba3863497bd15b3dcab9cb",
           "FILE:@@//crates/ctx-pro-host/Cargo.toml 3801bbddf1c1b82f0eeaacdf2ee36ecd34f47ba695352d0bab98ab646cccafa9",
           "FILE:@@//crates/ctx-pro-lifecycle/Cargo.toml b05da59faba6acea96bc8fd876a0502e78ae1de607376007144d52b58179f182",
-          "FILE:@@//crates/ctx-terminal/Cargo.toml a8c2a4c0ac189e1b4341cd81997e84b019bfb22829624af84fad940a2dc09444",
+          "FILE:@@//crates/ctx-terminal/Cargo.toml eff65c29320081b6fc6760454e2ef1aeb73f67ae28a36a7469ec1e07869408da",
           "FILE:@@//crates/ctx-protocol/Cargo.toml e9e75a7c7ca116f86e58ee0e09d174612607c8c45cce0213e66825e403046bce",
           "FILE:@@//crates/ctx-sdk/Cargo.toml 31348dbc2316f67b5e1305c062806e6beb41d55f9abdce6e58284dffb9a81968"
         ],

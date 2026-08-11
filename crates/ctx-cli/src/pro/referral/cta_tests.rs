@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Barrier, Mutex},
 };
 
-use super::{cta_marker, render, show_cta_once_for_channel};
+use super::{cta_marker, render, show_cta_once_for_channel, UiCtaDestination};
 use crate::pro::lifecycle::lifecycle_manifest::ReleaseChannel;
 use crate::ui::{ColorMode, RenderContext, StreamKind, TestContext, Ui};
 
@@ -197,7 +197,7 @@ fn cta_uses_ui_stderr_capabilities_without_touching_stdout() {
         root.path(),
         true,
         ReleaseChannel::Stable,
-        &mut ui,
+        &mut UiCtaDestination(&mut ui),
     ));
     assert!(stdout_copy.bytes().is_empty());
     let rendered = String::from_utf8(stderr_copy.bytes()).unwrap();

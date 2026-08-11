@@ -174,6 +174,7 @@ LOC_CHECK_SOURCE_DATA = [
     "//crates/ctx-pro-lifecycle:loc_check_inputs",
     "//crates/ctx-semantic-index:loc_check_inputs",
     "//crates/ctx-semantic-model:loc_check_inputs",
+    "//crates/ctx-terminal:loc_check_inputs",
     "//crates/ctx-upgrade-engine:loc_check_inputs",
     "//crates/ctx-pro-access:loc_check_inputs",
     "//crates/ctx-pro-host-protocol:loc_check_inputs",
@@ -225,6 +226,7 @@ RELEASE_PACKAGE_AUDIT_DATA = NON_RUST_GATE_DATA + [
     "//crates/ctx-pro-lifecycle:cargo_package_data",
     "//crates/ctx-semantic-index:cargo_package_data",
     "//crates/ctx-semantic-model:cargo_package_data",
+    "//crates/ctx-terminal:cargo_package_data",
     "//crates/ctx-upgrade-engine:cargo_package_data",
     "//crates/ctx-pro-access:cargo_package_data",
 ]

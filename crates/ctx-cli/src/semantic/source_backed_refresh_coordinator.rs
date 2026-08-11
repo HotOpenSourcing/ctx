@@ -7,9 +7,8 @@ use super::daemon_service_ports::AVAILABILITY;
 
 pub(crate) use ctx_daemon_service::{
     pin_active_verified_generation, published_explicit_source_relocation_authority,
-    PinnedSourceBackedGeneration, RefreshStatus, SourceBackedCurrentSourceProgress,
-    SourceBackedRefreshDaemonUnavailable, SourceBackedRefreshMode, SourceBackedRefreshObservation,
-    SourceBackedRefreshPendingPublication,
+    PinnedSourceBackedGeneration, RefreshStatus, SourceBackedRefreshDaemonUnavailable,
+    SourceBackedRefreshMode, SourceBackedRefreshObservation, SourceBackedRefreshPendingPublication,
 };
 #[cfg(test)]
 pub(crate) use ctx_history_refresh::{count_verified_index_opens, source_backed_index_root};

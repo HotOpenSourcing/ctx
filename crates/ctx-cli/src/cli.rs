@@ -34,7 +34,11 @@ pub(crate) const CLAP_STYLES: clap::builder::styling::Styles =
         .usage(Style::new().bold())
         .literal(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan))))
         .placeholder(Style::new().dimmed())
-        .error(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red))).bold())
+        .error(
+            Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Red)))
+                .bold(),
+        )
         .valid(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))))
         .invalid(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow))))
         .context(Style::new().dimmed())

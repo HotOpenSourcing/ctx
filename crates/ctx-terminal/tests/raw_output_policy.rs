@@ -1014,7 +1014,8 @@ fn primitive_at(
         && tokens.get(index + 1).map(|token| token.text.as_str()) == Some("(")
         && ((previous_is(tokens, index, ".")
             && documents.render_receiver_is_document(tokens, functions, index, document_catalog))
-            || (path == "crates/ctx-terminal/src/ui/document.rs" && previous_is(tokens, index, "fn")))
+            || (path == "crates/ctx-terminal/src/ui/document.rs"
+                && previous_is(tokens, index, "fn")))
     {
         return Some(Primitive::DocumentRender);
     }
@@ -1023,7 +1024,8 @@ fn primitive_at(
             && tokens.get(index + 2).map(|token| token.text.as_str()) == Some("&")
             && tokens.get(index + 3).map(|token| token.text.as_str()) != Some("mut")
             && documents.render_receiver_is_document(tokens, functions, index, document_catalog);
-        let document_api = path == "crates/ctx-terminal/src/ui/document.rs" && previous_is(tokens, index, "fn");
+        let document_api =
+            path == "crates/ctx-terminal/src/ui/document.rs" && previous_is(tokens, index, "fn");
         if document_call || document_api {
             return Some(Primitive::DocumentRender);
         }
