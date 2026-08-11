@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use anstyle::{AnsiColor, Color, Style};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::{
@@ -27,6 +28,42 @@ use crate::{
 pub(crate) const MAX_SEARCH_LIMIT: usize = 200;
 pub(crate) const MAX_EVENT_WINDOW: usize = 50;
 
+pub(crate) const CLAP_STYLES: clap::builder::styling::Styles =
+    clap::builder::styling::Styles::styled()
+        .header(Style::new().bold())
+        .usage(Style::new().bold())
+        .literal(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan))))
+        .placeholder(Style::new().dimmed())
+        .error(
+            Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Red)))
+                .bold(),
+        )
+        .valid(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))))
+        .invalid(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow))))
+        .context(Style::new().dimmed())
+        .context_value(Style::new());
+
+/// Clap-facing color argument. Rendering stays terminal-owned and receives
+/// this value only after parsing at the CLI composition boundary.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum CliColorMode {
+    #[default]
+    Auto,
+    Always,
+    Never,
+}
+
+impl From<CliColorMode> for ColorMode {
+    fn from(value: CliColorMode) -> Self {
+        match value {
+            CliColorMode::Auto => Self::Auto,
+            CliColorMode::Always => Self::Always,
+            CliColorMode::Never => Self::Never,
+        }
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "ctx",
@@ -34,7 +71,7 @@ pub(crate) const MAX_EVENT_WINDOW: usize = 50;
     version,
     about = "Search local agent history",
     max_term_width = 100,
-    styles = crate::ui::CLAP_STYLES
+    styles = crate::cli::CLAP_STYLES
 )]
 pub(crate) struct Cli {
     #[arg(long, env = "CTX_DATA_ROOT", hide_env_values = true, global = true)]
@@ -46,7 +83,7 @@ pub(crate) struct Cli {
         global = true,
         help = "Control color in human output: auto, always, or never"
     )]
-    pub(crate) color: ColorMode,
+    pub(crate) color: CliColorMode,
     #[arg(
         long,
         global = true,
@@ -62,7 +99,7 @@ pub(crate) struct Cli {
 #[command(
     name = commands::index::dashboard_fixture::COMMAND_NAME,
     disable_help_subcommand = true,
-    styles = crate::ui::CLAP_STYLES
+    styles = crate::cli::CLAP_STYLES
 )]
 pub(crate) struct IndexDashboardFixtureArgs {
     #[arg(long, value_enum)]
@@ -79,7 +116,7 @@ pub(crate) struct IndexDashboardFixtureArgs {
     #[arg(long = "random-seed")]
     pub(crate) random_seed: String,
     #[arg(long, value_enum, default_value = "auto")]
-    pub(crate) color: ColorMode,
+    pub(crate) color: CliColorMode,
 }
 
 #[derive(Debug, Subcommand)]

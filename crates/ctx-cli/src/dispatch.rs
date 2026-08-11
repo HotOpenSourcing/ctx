@@ -116,7 +116,7 @@ fn run_index_dashboard_fixture_if_requested() -> Option<ExitCode> {
             return Some(ExitCode::from(exit_code));
         }
     };
-    let mut ui = Ui::stdio(args.color);
+    let mut ui = Ui::stdio(args.color.into());
     let result =
         crate::commands::index::dashboard_fixture::run(args, &mut ui).and_then(|exit_code| {
             ui.flush()
@@ -164,7 +164,7 @@ pub(crate) fn run_cli() -> Result<()> {
     let started = Instant::now();
     let output_measurement = OutputMeasurement::start();
     let cli = parse_cli_from(env::args_os())?;
-    let mut ui = Ui::stdio(cli.color);
+    let mut ui = Ui::stdio(cli.color.into());
     let json_output = command_json_output(&cli.command);
     let machine_output = command_machine_readable_output(&cli.command, json_output);
     let blame_error_json = command_uses_blame_error_json(&cli.command, json_output);

@@ -39,6 +39,7 @@ source_paths=(
   crates/ctx-pro-access/src
   crates/ctx-pro-host/src
   crates/ctx-pro-lifecycle/src
+  crates/ctx-terminal/src
   crates/ctx-upgrade-engine/src
   crates/ctx-history-capture/src
   crates/ctx-history-jsonl/src
