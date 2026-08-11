@@ -304,6 +304,78 @@ fn query_authority_show_locate_and_mcp_show_reject_empty_before_not_found() {
 }
 
 #[test]
+fn search_reports_query_observation_before_output_failure() {
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+            Err(io::Error::other("injected search output failure"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let temp = tempdir().unwrap();
+    write_test_generation(temp.path());
+    let context = RenderContext::for_test(TestContext::pipe(StreamKind::Stdout));
+    let stderr_context = RenderContext::for_test(TestContext::pipe(StreamKind::Stderr));
+    let mut ui = Ui::with_writers(
+        FailingWriter,
+        context,
+        SharedWriter::default(),
+        stderr_context,
+    );
+    let mut local_usage = CliUsage::excluded();
+    let mut observed = None;
+    let error = run_search(
+        SearchArgs {
+            query: Some(TEST_QUERY.to_owned()),
+            term: Vec::new(),
+            limit: 10,
+            provider: Some(crate::ProviderArg(HistoryProvider::Native(
+                CaptureProvider::Codex,
+            ))),
+            history_source: None,
+            provider_key: None,
+            source_id: None,
+            source_format: None,
+            workspace: None,
+            since: None,
+            primary_only: false,
+            include_subagents: false,
+            content_scope: None,
+            event_type: None,
+            file: None,
+            session: None,
+            events: false,
+            backend: Some(crate::SearchBackendArg::Lexical),
+            semantic_weight: 0.35,
+            refresh: RefreshArg::Off,
+            include_current_session: true,
+            format: JsonOutputFormat::Text,
+            verbose: false,
+        },
+        temp.path().to_path_buf(),
+        history_snapshot(false, false),
+        &mut local_usage,
+        &mut ui,
+        |observation| observed = Some(observation),
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("injected search output failure"));
+    let observation = observed.expect("query observation must precede fallible output");
+    assert_eq!(
+        observation.backend_effective,
+        ctx_history_read_application::SearchBackend::Lexical
+    );
+    assert!(observation.result_count > 0);
+    assert_eq!(observation.render_duration, None);
+}
+
+#[test]
 fn normalized_query_representation_covers_terms_echo_and_safe_follow_up_arguments() {
     let mut source_request = request(RefreshArg::Off);
     source_request.query = "  build failure  ".to_owned();
