@@ -998,7 +998,11 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "ctx-history-capture",
+ "ctx-history-core",
+ "ctx-history-ingest-application",
  "ctx-history-read-application",
+ "serde_json",
  "tempfile",
  "thiserror 1.0.69",
  "uuid",
