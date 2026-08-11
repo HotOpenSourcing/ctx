@@ -184,13 +184,6 @@ struct CodexPatchOperation {
     patch_text_range: Range<usize>,
 }
 
-/// Reads measured native argument objects and Codex's static nested-tool
-/// orchestration envelope. The nested path decodes JSON-compatible literals;
-/// it never evaluates JavaScript or executes captured commands.
-pub(crate) fn repository_tool_evidence(payload: &Value) -> Vec<CodexRepositoryToolEvidence> {
-    repository_tool_evidence_for_core(payload, None)
-}
-
 pub(crate) fn repository_tool_evidence_for_core(
     payload: &Value,
     normalized_body: Option<&str>,

@@ -1,12 +1,16 @@
 use ctx_history_core::{
     RepositoryAbstentionReason, RepositoryFileInvocationKind, RepositoryFileObservationKind,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 
-use super::{repository_tool_evidence, repository_tool_evidence_for_core};
+use super::{repository_tool_evidence_for_core, CodexRepositoryToolEvidence};
 use crate::provider::codex::events::CodexToolCallContext;
 use crate::repository_attribution::{attribute, AttributionInput, CommandEvidenceDisposition};
 use crate::{OutputOutcome, OutputOutcomeMetadata};
+
+fn repository_tool_evidence(payload: &Value) -> Vec<CodexRepositoryToolEvidence> {
+    repository_tool_evidence_for_core(payload, None)
+}
 
 #[test]
 fn accepts_only_one_top_level_native_argument_decode_and_redacts_it() {
