@@ -97,8 +97,8 @@ pub fn open_test_artifact_identity(
     path: &Path,
 ) -> Result<ValidatedArtifactIdentity> {
     let artifact_file = open_candidate(path, MAX_ARTIFACT_BYTES, "test Pro helper")?;
-    let artifact = read_bounded_handle(&artifact_file, MAX_ARTIFACT_BYTES, "test Pro helper")?;
-    let artifact_sha256 = format!("{:x}", Sha256::digest(&artifact));
+    let (artifact_size, artifact_sha256) =
+        digest_bounded_handle(&artifact_file, MAX_ARTIFACT_BYTES, "test Pro helper")?;
     let manifest = ProManifest {
         schema_version: 1,
         product: "ctx-pro".to_owned(),
@@ -114,7 +114,7 @@ pub fn open_test_artifact_identity(
         target: crate::release_manifest::platform_target(),
         architecture: std::env::consts::ARCH.to_owned(),
         artifact_object: "test/ctx-pro".to_owned(),
-        artifact_size: artifact.len() as u64,
+        artifact_size,
         artifact_sha256: artifact_sha256.clone(),
         public_artifact_sha256: "4".repeat(64),
         public_package_sha256: "5".repeat(64),
@@ -125,7 +125,7 @@ pub fn open_test_artifact_identity(
     };
     Ok(ValidatedArtifactIdentity::new(
         path.to_path_buf(),
-        artifact.len() as u64,
+        artifact_size,
         artifact_sha256,
         manifest,
         artifact_file,
@@ -331,24 +331,36 @@ pub(crate) fn open_validated_pair_identity(
         MAX_INSTALL_MARKER_BYTES,
         "installed Pro marker",
     )?;
-    let locked = validate_pair_bytes(
-        read_bounded_handle(&artifact_file, MAX_ARTIFACT_BYTES, "installed Pro helper")?,
-        read_bounded_handle(
-            &marker_file,
-            MAX_INSTALL_MARKER_BYTES,
-            "installed Pro marker",
-        )?,
-        trust.public_key_pem,
+    let marker_bytes = read_bounded_handle(
+        &marker_file,
+        MAX_INSTALL_MARKER_BYTES,
+        "installed Pro marker",
     )?;
-    validate_manifest_release_trust(&locked.manifest, trust)?;
-    if locked.identity != expected.identity {
+    let marker: ProInstallMarker = serde_json::from_slice(&marker_bytes)
+        .context("invalid_response: parse installed Pro marker")?;
+    let manifest = marker.signed_manifest(trust.public_key_pem)?;
+    validate_manifest_release_trust(&manifest, trust)?;
+    let (artifact_size, artifact_sha256) =
+        digest_bounded_handle(&artifact_file, MAX_ARTIFACT_BYTES, "installed Pro helper")?;
+    if artifact_size != manifest.artifact_size
+        || !artifact_sha256.eq_ignore_ascii_case(&manifest.artifact_sha256)
+    {
+        bail!("invalid_response: installed Pro helper does not match its signed marker");
+    }
+    let locked_identity = PairIdentity {
+        artifact_size,
+        artifact_sha256,
+        marker_sha256: format!("{:x}", Sha256::digest(&marker_bytes)),
+        version: manifest.version.clone(),
+    };
+    if locked_identity != expected.identity {
         bail!("invalid_response: installed Pro helper changed during validation");
     }
     Ok(ValidatedArtifactIdentity::new(
         helper_path.to_path_buf(),
-        locked.identity.artifact_size,
-        locked.identity.artifact_sha256,
-        locked.manifest,
+        locked_identity.artifact_size,
+        locked_identity.artifact_sha256,
+        manifest,
         artifact_file,
         operation.clone(),
     ))
@@ -360,16 +372,16 @@ pub(crate) fn open_validated_staged_identity(
     manifest: ProManifest,
 ) -> Result<ValidatedArtifactIdentity> {
     let artifact_file = open_candidate(&path, MAX_ARTIFACT_BYTES, "staged Pro helper")?;
-    let artifact = read_bounded_handle(&artifact_file, MAX_ARTIFACT_BYTES, "staged Pro helper")?;
-    let artifact_sha256 = format!("{:x}", Sha256::digest(&artifact));
-    if artifact.len() as u64 != manifest.artifact_size
+    let (artifact_size, artifact_sha256) =
+        digest_bounded_handle(&artifact_file, MAX_ARTIFACT_BYTES, "staged Pro helper")?;
+    if artifact_size != manifest.artifact_size
         || !artifact_sha256.eq_ignore_ascii_case(&manifest.artifact_sha256)
     {
         bail!("invalid_response: staged Pro helper changed after verification");
     }
     Ok(ValidatedArtifactIdentity::new(
         path,
-        artifact.len() as u64,
+        artifact_size,
         artifact_sha256,
         manifest,
         artifact_file,
@@ -434,6 +446,43 @@ fn read_bounded_handle(file: &fs::File, maximum: u64, label: &str) -> Result<Vec
         bail!("invalid_response: {label} exceeds maximum size");
     }
     Ok(bytes)
+}
+
+fn digest_bounded_handle(file: &fs::File, maximum: u64, label: &str) -> Result<(u64, String)> {
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("invalid_request: inspect {label}"))?;
+    if !metadata.is_file() || metadata.len() > maximum {
+        bail!("invalid_response: {label} is invalid");
+    }
+    let mut reader = file
+        .try_clone()
+        .with_context(|| format!("invalid_request: clone {label} handle"))?;
+    reader
+        .seek(SeekFrom::Start(0))
+        .with_context(|| format!("invalid_request: seek {label} handle"))?;
+    let mut digest = Sha256::new();
+    let mut total = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .with_context(|| format!("invalid_request: read {label} handle"))?;
+        if read == 0 {
+            break;
+        }
+        total = total
+            .checked_add(read as u64)
+            .ok_or_else(|| anyhow::anyhow!("invalid_response: {label} exceeds maximum size"))?;
+        if total > maximum {
+            bail!("invalid_response: {label} exceeds maximum size");
+        }
+        digest.update(&buffer[..read]);
+    }
+    if total != metadata.len() {
+        bail!("invalid_response: {label} changed while reading");
+    }
+    Ok((total, format!("{:x}", digest.finalize())))
 }
 
 pub fn read_candidate(path: &Path, maximum: u64) -> Result<Option<Vec<u8>>> {
