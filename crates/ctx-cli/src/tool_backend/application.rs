@@ -130,8 +130,16 @@ impl LocalToolBackend {
             }
         };
         let (structured, observation, compact) =
-            crate::commands::source_index::mcp_search_with_compact(request, &self.data_root)
-                .map_err(classify_mcp_search_error)?;
+            crate::commands::source_index::mcp_search_with_compact(
+                request,
+                &self.data_root,
+                ctx_history_cli::HistoryCliConfig {
+                    daemon_enabled: config.daemon.enabled,
+                    semantic_search_enabled: config.semantic_search_enabled(),
+                    local_usage_enabled: config.local_usage.enabled,
+                },
+            )
+            .map_err(classify_mcp_search_error)?;
         let search = observation
             .complete_byte_totals()
             .map(|(delivered, matched)| ToolSearchUsageFacts::complete(delivered, matched))
@@ -636,7 +644,9 @@ mod tests {
         let crate::cli::CommandRoot::Search(args) = cli.command else {
             panic!("expected search command")
         };
-        let cli_request = crate::commands::source_index::source_search_request(&args);
+        let cli_request = ctx_history_cli::source_search_request(
+            &ctx_history_cli::SearchRequest::from(crate::commands::search::adapt(args)),
+        );
         let mcp_request = adapt_tool_search_request(ToolSearchRequest {
             query: "adapter parity".to_owned(),
             limit: 8,

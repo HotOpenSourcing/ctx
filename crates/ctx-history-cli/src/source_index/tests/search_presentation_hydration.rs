@@ -55,7 +55,7 @@ fn file_only_search_keeps_an_oversized_grapheme_body_without_requiring_a_body_ma
     assert_eq!(value["results"][0]["snippet"], "");
     assert_eq!(value["results"][0]["snippet_truncated"], true);
 
-    let (mcp, _) = mcp_search(source_request, temp.path()).unwrap();
+    let (mcp, _) = mcp_search(source_request, temp.path(), history_snapshot(true, true)).unwrap();
     assert_eq!(
         mcp["results"][0]["ctx_event_id"],
         json!(event.event_id.as_uuid())
