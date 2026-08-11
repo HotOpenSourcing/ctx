@@ -198,6 +198,7 @@ CI_TESTS = [
     ":freebsd_ort_exit_contract_mutation_tests",
     ":history_capture_build_cfg_parity_check",
     ":history_query_dependency_boundary_check",
+    ":history_source_discovery_boundary_mutation_tests",
     ":installer_path_smoke",
     ":linux_bazel_controller_receipt_tests",
     ":linux_bazel_release_controller_tests",

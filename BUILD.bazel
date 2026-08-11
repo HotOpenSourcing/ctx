@@ -45,7 +45,23 @@ sh_test(
     args = ["$(rootpath BUILD.bazel)"],
     data = [
         "BUILD.bazel",
+        "Cargo.toml",
+        "scripts/bazelw",
+        "//crates/ctx-history-capture-model:BUILD.bazel",
+        "//crates/ctx-history-capture-model:cargo_package_data",
+        "//crates/ctx-history-core:BUILD.bazel",
+        "//crates/ctx-history-core:cargo_package_data",
+        "//crates/ctx-history-source-discovery:BUILD.bazel",
         "//crates/ctx-history-source-discovery:cargo_package_data",
+        "//crates/ctx-history-source-io:BUILD.bazel",
+        "//crates/ctx-history-source-io:cargo_package_data",
+        "//tools/bazel:check_history_source_discovery_boundary.py",
+    ],
+    tags = [
+        "build-graph",
+        "exclusive",
+        "no-cache",
+        "no-sandbox",
     ],
 )
 
@@ -352,6 +368,16 @@ py_test(
         "//crates/ctx-agent-integrations:BUILD.bazel",
         "//crates/ctx-agent-integrations:Cargo.toml",
     ] + CARGO_WORKSPACE_PACKAGE_DATA,
+)
+
+py_test(
+    name = "history_source_discovery_boundary_mutation_tests",
+    srcs = [
+        "//tools/bazel:check_history_source_discovery_boundary.py",
+        "//tools/bazel:check_history_source_discovery_boundary_test.py",
+    ],
+    imports = ["tools/bazel"],
+    main = "//tools/bazel:check_history_source_discovery_boundary_test.py",
 )
 
 py_test(
