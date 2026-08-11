@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use ctx_client_observability::{
     analytics::{
         ImportSourceMode, ImportTelemetry, ProBlameTargetV1, ProgressMode, RenderFormat,
-        SearchBackend, TranscriptModeKind,
+        TranscriptModeKind,
     },
     local_usage::{
         McpCompletionFacts, McpContextTarget, McpCorrelationFact, McpToolUsageFacts, ProOutcome,
@@ -110,14 +110,6 @@ pub(crate) const fn transcript_mode(
         crate::transcript::TranscriptMode::Lite => TranscriptModeKind::Lite,
         crate::transcript::TranscriptMode::Full => TranscriptModeKind::Full,
         crate::transcript::TranscriptMode::Log => TranscriptModeKind::Log,
-    }
-}
-
-pub(crate) const fn search_backend(value: crate::SearchBackendArg) -> SearchBackend {
-    match value {
-        crate::SearchBackendArg::Hybrid => SearchBackend::Hybrid,
-        crate::SearchBackendArg::Lexical => SearchBackend::Lexical,
-        crate::SearchBackendArg::Semantic => SearchBackend::Semantic,
     }
 }
 

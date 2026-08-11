@@ -38,8 +38,9 @@ use crate::{
         publish_empty_generation, republish_active_as_legacy_v1, EmptyPublicationAuthority,
     },
     ui::{RenderContext, StreamKind, TestContext, Ui},
-    HistoryCliConfig, LocateArgs, LocateEventArgs, LocateTarget, ShowArgs, ShowEventArgs,
-    ShowSessionArgs, ShowTarget, TranscriptMode,
+    ContentScopeArg, HistoryCliConfig, HistoryProvider, LocateArgs, LocateEventArgs, LocateTarget,
+    SearchArgs, SearchRequest, ShowArgs, ShowEventArgs, ShowSessionArgs, ShowTarget,
+    TranscriptMode,
 };
 
 use super::*;
@@ -49,8 +50,8 @@ use super::{
     },
     search::{
         presentations_for_search_hits_with_budget, resolve_source_search_backend,
-        semantic_reason_code, source_search_request, NormalizedSearchQuery, SearchCollection,
-        SearchEventMetadata, SearchHit, SearchPresentation, SearchPresentationHydrationBudget,
+        semantic_reason_code, NormalizedSearchQuery, SearchCollection, SearchEventMetadata,
+        SearchHit, SearchPresentation, SearchPresentationHydrationBudget,
         SearchPresentationRetentionBudgetExceeded, SearchResultWindow,
         SEARCH_PRESENTATION_HYDRATION_BUDGET, SEARCH_PRESENTATION_MAX_RETAINED_SNIPPET_BYTES,
     },
@@ -335,6 +336,140 @@ fn normalized_query_representation_covers_terms_echo_and_safe_follow_up_argument
         NormalizedSearchQuery::from_request(&source_request).terms(),
         &["--option-like"]
     );
+}
+
+#[test]
+fn omitted_and_explicit_all_resolve_to_identical_weighted_retrieval() {
+    let search_args = |content_scope| SearchArgs {
+        query: Some(TEST_QUERY.to_owned()),
+        term: Vec::new(),
+        limit: 10,
+        provider: None,
+        history_source: None,
+        provider_key: None,
+        source_id: None,
+        source_format: None,
+        workspace: None,
+        since: None,
+        primary_only: false,
+        include_subagents: false,
+        content_scope,
+        event_type: None,
+        file: None,
+        session: None,
+        events: false,
+        backend: Some(crate::SearchBackendArg::Hybrid),
+        semantic_weight: 0.35,
+        refresh: RefreshArg::Off,
+        include_current_session: true,
+        format: JsonOutputFormat::Json,
+        verbose: false,
+    };
+    let omitted = SourceSearchRequest::from(SearchRequest::from(search_args(None)));
+    let explicit =
+        SourceSearchRequest::from(SearchRequest::from(search_args(Some(ContentScopeArg::All))));
+    assert_eq!(omitted.content_scope, SearchContentScope::All);
+    assert_eq!(explicit.content_scope, SearchContentScope::All);
+
+    let temp = tempdir().unwrap();
+    write_test_generation(temp.path());
+    let index = open_index(temp.path()).unwrap();
+    let omitted_filters = index_search_filters(&omitted, &index).unwrap();
+    let explicit_filters = index_search_filters(&explicit, &index).unwrap();
+    assert_eq!(omitted_filters, explicit_filters);
+
+    let collect = |request: &SourceSearchRequest, filters: &EventSearchFilters| {
+        collect_search_hits_with_backend_using(
+            request,
+            &index,
+            temp.path(),
+            request.semantic_weight,
+            filters,
+            |index, _data_root, query, filters, candidate_limit| {
+                Ok((
+                    index.search_event_candidates_any_with_filters(
+                        &[query],
+                        filters,
+                        candidate_limit,
+                    )?,
+                    json!({"fixture": "weighted"}),
+                ))
+            },
+        )
+        .unwrap()
+    };
+    let omitted_collection = collect(&omitted, &omitted_filters);
+    let explicit_collection = collect(&explicit, &explicit_filters);
+    assert_eq!(
+        omitted_collection
+            .result_window
+            .hits
+            .iter()
+            .map(|hit| (hit.event.event_id, hit.score))
+            .collect::<Vec<_>>(),
+        explicit_collection
+            .result_window
+            .hits
+            .iter()
+            .map(|hit| (hit.event.event_id, hit.score))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        omitted_collection.effective_backend,
+        ctx_history_read_application::SearchBackend::Hybrid
+    );
+    assert_eq!(
+        explicit_collection.effective_backend,
+        ctx_history_read_application::SearchBackend::Hybrid
+    );
+    assert_eq!(
+        omitted_collection.semantic_weight,
+        explicit_collection.semantic_weight
+    );
+}
+
+#[test]
+fn content_scope_forwards_with_provider_workspace_since_file_agent_and_current_session_controls() {
+    let request = SourceSearchRequest::from(SearchRequest::from(SearchArgs {
+        query: Some(TEST_QUERY.to_owned()),
+        term: Vec::new(),
+        limit: 10,
+        provider: Some(crate::ProviderArg(HistoryProvider::Native(
+            "codex".to_owned(),
+        ))),
+        history_source: None,
+        provider_key: None,
+        source_id: None,
+        source_format: None,
+        workspace: Some("/workspace/pinned".to_owned()),
+        since: Some("30d".to_owned()),
+        primary_only: false,
+        include_subagents: true,
+        content_scope: Some(ContentScopeArg::Calls),
+        event_type: None,
+        file: Some("src/lib.rs".into()),
+        session: None,
+        events: true,
+        backend: None,
+        semantic_weight: 0.35,
+        refresh: RefreshArg::Off,
+        include_current_session: true,
+        format: JsonOutputFormat::Json,
+        verbose: false,
+    }));
+    let temp = tempdir().unwrap();
+    write_test_generation(temp.path());
+    let filters = index_search_filters(&request, &open_index(temp.path()).unwrap()).unwrap();
+
+    assert_eq!(request.content_scope, SearchContentScope::Calls);
+    assert!(request.events);
+    assert_eq!(filters.content_scope, SearchContentScope::Calls);
+    assert_eq!(filters.provider.as_deref(), Some("codex"));
+    assert_eq!(filters.workspace.as_deref(), Some("/workspace/pinned"));
+    assert!(filters.since_unix_ms.is_some());
+    assert_eq!(filters.file.as_deref(), Some("src/lib.rs"));
+    assert_eq!(filters.agent_scope, AgentScope::All);
+    assert!(filters.exclude_session_tree.is_none());
 }
 
 #[test]
@@ -922,6 +1057,52 @@ fn refresh_off_uses_the_existing_generation_without_activation() {
         outcome.pin.generation_id(),
         open_index(temp.path()).unwrap().generation_id()
     );
+}
+
+#[test]
+fn core_search_consumes_the_coordinator_pin_after_active_generation_pointer_deletion() {
+    let temp = tempdir().unwrap();
+    write_test_generation(temp.path());
+    let requested_mode = Cell::new(None);
+    let pin = crate::semantic::pin_active_verified_generation(temp.path()).unwrap();
+    let outcome = refresh_for_search_with(
+        &request(RefreshArg::Off),
+        RefreshArg::Off,
+        temp.path(),
+        |_data_root, mode| {
+            requested_mode.set(Some(mode));
+            Ok(ctx_daemon_cli::SourceBackedRefreshObservation {
+                mode,
+                status: "off".to_owned(),
+                request_id: None,
+                daemon_available: false,
+                source_count: 0,
+                request_previous_generation: None,
+                request_generation_changed: false,
+                scanned_routes: None,
+                receipt: None,
+                pin,
+            })
+        },
+    )
+    .unwrap();
+    assert_eq!(requested_mode.get(), Some(SourceBackedRefreshMode::Off));
+    let generation = outcome.pin.generation_id().to_owned();
+
+    fs::remove_file(index_root(temp.path()).join("active-generation.json")).unwrap();
+    let (value, collection, index) = search_existing_generation(
+        &request(RefreshArg::Off),
+        outcome.pin.into_index(),
+        temp.path(),
+        0.35,
+        outcome.status,
+        outcome.source_count,
+    )
+    .unwrap();
+
+    assert_eq!(index.generation_id(), generation);
+    assert_eq!(value["retrieval"]["generation_id"], generation);
+    assert_eq!(collection.result_window.hits.len(), 1);
 }
 
 #[test]

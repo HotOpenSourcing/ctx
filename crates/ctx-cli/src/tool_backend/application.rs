@@ -644,8 +644,8 @@ mod tests {
         let crate::cli::CommandRoot::Search(args) = cli.command else {
             panic!("expected search command")
         };
-        let cli_request = ctx_history_cli::source_search_request(
-            &ctx_history_cli::SearchRequest::from(crate::commands::search::adapt(args)),
+        let cli_request = ctx_history_read_application::SearchRequest::from(
+            ctx_history_cli::SearchRequest::from(crate::commands::search::adapt(args)),
         );
         let mcp_request = adapt_tool_search_request(ToolSearchRequest {
             query: "adapter parity".to_owned(),
