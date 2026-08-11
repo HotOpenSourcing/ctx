@@ -57,9 +57,8 @@ mod tests {
         },
         search::{
             presentations_for_search_hits_with_budget, resolve_source_search_backend,
-            semantic_reason_code, source_search_request,
-            NormalizedSearchQuery, SearchCollection, SearchEventMetadata, SearchHit,
-            SearchPresentation, SearchPresentationHydrationBudget,
+            semantic_reason_code, source_search_request, NormalizedSearchQuery, SearchCollection,
+            SearchEventMetadata, SearchHit, SearchPresentation, SearchPresentationHydrationBudget,
             SearchPresentationRetentionBudgetExceeded, SearchResultWindow,
             SEARCH_PRESENTATION_HYDRATION_BUDGET, SEARCH_PRESENTATION_MAX_RETAINED_SNIPPET_BYTES,
         },
@@ -82,6 +81,25 @@ mod tests {
             .downcast_ref::<ctx_history_refresh::GenerationQueryAuthorityError>()
             .expect("query gateway must preserve the typed publication-authority error");
         assert_eq!(authority.error_code(), expected_code);
+    }
+
+    #[test]
+    fn source_identity_error_restores_exact_cli_flag_spelling() {
+        let error =
+            anyhow::Error::new(ctx_history_query::SourceIdentityFilterError::InvalidHistorySource);
+
+        assert_eq!(
+            externalize_query_error(error).to_string(),
+            "--history-source expects plugin/source or provider_key/source_id"
+        );
+
+        let error = anyhow::Error::new(
+            ctx_history_query::SourceIdentityFilterError::CustomProviderRequired,
+        );
+        assert_eq!(
+            externalize_query_error(error).to_string(),
+            "custom history source filters can only be combined with --provider custom"
+        );
     }
 
     #[test]
@@ -290,10 +308,7 @@ mod tests {
             "build failure OR release's checksum OR BUILD FAILURE"
         );
         assert_eq!(normalized.positional(), Some("build failure"));
-        assert_eq!(
-            normalized.terms(),
-            &["release's checksum", "BUILD FAILURE"]
-        );
+        assert_eq!(normalized.terms(), &["release's checksum", "BUILD FAILURE"]);
 
         source_request.query.clear();
         source_request.terms = vec!["  term-only  ".to_owned()];
@@ -978,13 +993,18 @@ mod tests {
     #[test]
     fn missing_root_does_not_reclassify_an_unrelated_refresh_io_error() {
         let temp = tempdir().unwrap();
-        let error = match refresh_for_search_with(&request(RefreshArg::Off), RefreshArg::Off, temp.path(), |_, _| {
-            Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "injected refresh authority read failure",
-            )
-            .into())
-        }) {
+        let error = match refresh_for_search_with(
+            &request(RefreshArg::Off),
+            RefreshArg::Off,
+            temp.path(),
+            |_, _| {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "injected refresh authority read failure",
+                )
+                .into())
+            },
+        ) {
             Ok(_) => panic!("an unrelated refresh I/O failure must remain an application failure"),
             Err(error) => error.into_anyhow(),
         };
@@ -1003,7 +1023,8 @@ mod tests {
         let temp = tempdir().unwrap();
         write_test_generation(temp.path());
 
-        let outcome = refresh_for_search(&request(RefreshArg::Off), RefreshArg::Off, temp.path()).unwrap();
+        let outcome =
+            refresh_for_search(&request(RefreshArg::Off), RefreshArg::Off, temp.path()).unwrap();
 
         assert_eq!(outcome.status, "existing_generation");
         assert_eq!(
@@ -1017,8 +1038,11 @@ mod tests {
         let temp = tempdir().unwrap();
         write_test_generation(temp.path());
         let requested_mode = Cell::new(None);
-        let outcome =
-            refresh_for_search_with(&request(RefreshArg::Off), RefreshArg::Off, temp.path(), |data_root, mode| {
+        let outcome = refresh_for_search_with(
+            &request(RefreshArg::Off),
+            RefreshArg::Off,
+            temp.path(),
+            |data_root, mode| {
                 requested_mode.set(Some(mode));
                 Ok(SourceBackedRefreshObservation {
                     mode,
@@ -1032,8 +1056,9 @@ mod tests {
                     receipt: None,
                     pin: PinnedSourceBackedGeneration::from_index(open_index(data_root)?),
                 })
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         assert_eq!(requested_mode.get(), Some(SourceBackedRefreshMode::Off));
         let generation = outcome.pin.generation_id().to_owned();
 
@@ -1759,8 +1784,7 @@ mod tests {
                 window: None,
                 budget: ctx_history_query::EventWindowBudget {
                     maximum_events: crate::MAX_EVENT_WINDOW,
-                    maximum_encoded_core_bytes:
-                        ctx_history_core::MAX_ENCODED_CORE_RECORD_BYTES,
+                    maximum_encoded_core_bytes: ctx_history_core::MAX_ENCODED_CORE_RECORD_BYTES,
                     maximum_content_bytes: 2 * 1024,
                 },
             })
