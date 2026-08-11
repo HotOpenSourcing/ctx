@@ -1,5 +1,6 @@
 use std::{collections::HashSet, path::Path};
 
+use ctx_history_capture_model::OutputOutcome;
 use ctx_history_core::{
     GitObjectFormat, GitObjectId, RepositoryAbstentionReason, RepositoryAlias,
     RepositoryCommitMapping, RepositoryCommitOperationEvent, RepositoryCommitOperationKind,
@@ -7,7 +8,6 @@ use ctx_history_core::{
     RepositoryOutcomeObservation, CORE_REPOSITORY_OUTCOME_CAPTURE_REVISION,
     MAX_REPOSITORY_COMMIT_OPERATION_MAPPINGS,
 };
-use ctx_history_capture_model::OutputOutcome;
 use serde_json::{Map, Value};
 
 #[path = "outcome/pull_request.rs"]

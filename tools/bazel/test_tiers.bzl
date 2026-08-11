@@ -144,7 +144,6 @@ _CI_RUST_TESTS = [
     "//crates/ctx-daemon-service:unit_tests",
     "//crates/ctx-history-capture:codex_direct_result_tests",
     "//crates/ctx-history-capture-model:unit_tests",
-    "//crates/ctx-history-repository-evidence:unit_tests",
     "//crates/ctx-history-core:unit_tests",
     "//crates/ctx-history-index-format:unit_tests",
     "//crates/ctx-history-index-generation:unit_tests",

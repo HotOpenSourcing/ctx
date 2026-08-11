@@ -72,12 +72,12 @@ pub(crate) const PROVIDER_MAX_PREVIEW_CHARS: usize = 4_000;
 
 pub(crate) mod native_source;
 pub(crate) mod record_evidence;
-pub(crate) use ctx_history_repository_evidence as repository_attribution;
 pub use ctx_history_capture_model::{
     stable_capture_uuid, CatalogSummary, OutputObservationKind, OutputOutcome,
     OutputOutcomeMetadata, ProviderImportFailure, ProviderImportSummary, ProviderImportWorkResult,
     ProviderSourceFailureKind,
 };
+pub(crate) use ctx_history_repository_evidence as repository_attribution;
 
 mod error;
 pub use error::{CaptureError, ProviderJsonlInventoryLimit, Result};
