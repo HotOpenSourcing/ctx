@@ -409,7 +409,7 @@ fn install_candidate_retained_locked(
     {
         bail!("invalid_response: Pro artifact digest does not match signed manifest");
     }
-    let marker = ProInstallMarker::new(&manifest_bytes, &signature)?;
+    let marker = ProInstallMarker::new(manifest_bytes, signature)?;
     let marker_bytes = serde_json::to_vec(&marker)
         .context("invalid_response: encode signed Pro install marker")?;
     let new_identity = PairIdentity::new(artifact, &marker_bytes, &manifest);

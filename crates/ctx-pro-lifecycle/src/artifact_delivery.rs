@@ -102,6 +102,12 @@ struct ManifestEnvelope {
     signature_base64: String,
 }
 
+struct VerifiedManifestPayload<'a> {
+    manifest: &'a ProManifest,
+    manifest_bytes: &'a [u8],
+    signature_bytes: &'a [u8],
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApiSuccess<T> {
@@ -165,9 +171,11 @@ pub fn fetch_latest(
         &agent,
         &stage_dir,
         &artifact_url,
-        &manifest,
-        &manifest_bytes,
-        &signature_bytes,
+        VerifiedManifestPayload {
+            manifest: &manifest,
+            manifest_bytes: &manifest_bytes,
+            signature_bytes: &signature_bytes,
+        },
         config.release_api,
     ) {
         Ok(bundle) => Ok(bundle),
@@ -383,11 +391,14 @@ fn download_and_stage(
     agent: &ureq::Agent,
     stage_dir: &Path,
     artifact_url: &Url,
-    manifest: &ProManifest,
-    manifest_bytes: &[u8],
-    signature_bytes: &[u8],
+    payload: VerifiedManifestPayload<'_>,
     api: &CommercialApiConfig,
 ) -> Result<VerifiedArtifactBundle> {
+    let VerifiedManifestPayload {
+        manifest,
+        manifest_bytes,
+        signature_bytes,
+    } = payload;
     let request =
         api.apply_transport_credentials(agent.get(artifact_url.as_str()), artifact_url)?;
     let response = request
@@ -818,9 +829,11 @@ mod tests {
             &agent,
             &stage,
             &artifact_url,
-            &manifest,
-            b"{}",
-            b"signature",
+            VerifiedManifestPayload {
+                manifest: &manifest,
+                manifest_bytes: b"{}",
+                signature_bytes: b"signature",
+            },
             &api,
         )
         .unwrap();
