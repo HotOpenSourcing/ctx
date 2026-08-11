@@ -50,10 +50,12 @@ check_direct_internal_deps test_support_lib test_support_lib test_support_lib
 check_direct_internal_deps qualification_lib qualification_lib qualification_lib
 check_direct_internal_deps qualification_test_support_lib qualification_lib qualification_test_support_lib
 
-if [[ -z "$(query 'somepath(//crates/ctx-cli:ctx, //crates/ctx-pro-host:lib)')" ]]; then
-  echo 'ctx-cli has no production dependency path to ctx-pro-host' >&2
-  exit 1
-fi
+for consumer in '//crates/ctx-cli:ctx' '//crates/ctx-pro-application:lib'; do
+  if [[ -z "$(query "somepath(${consumer}, //crates/ctx-pro-host:lib)")" ]]; then
+    echo "${consumer} has no production dependency path to ctx-pro-host" >&2
+    exit 1
+  fi
+done
 
 python3 - "${repo_root}" <<'PY'
 import importlib.util
@@ -118,9 +120,13 @@ for candidate in sorted((root / "crates").glob("*/Cargo.toml")):
         candidate_dependencies.update(target.get("build-dependencies", {}))
     if candidate != manifest_path and "ctx-pro-host" in candidate_dependencies:
         reverse.append(candidate.relative_to(root).as_posix())
-if reverse != ["crates/ctx-cli/Cargo.toml"]:
+if reverse != ["crates/ctx-cli/Cargo.toml", "crates/ctx-pro-application/Cargo.toml"]:
     raise SystemExit(f"unexpected reverse Cargo consumer of ctx-pro-host: {reverse}")
 
+try:
+    import tomli
+except ModuleNotFoundError:
+    sys.modules["tomli"] = tomllib
 spec = importlib.util.spec_from_file_location(
     "check_rust_crate_size", root / "scripts/check-rust-crate-size.py"
 )
