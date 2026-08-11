@@ -45,7 +45,7 @@ source_paths=(
   crates/ctx-upgrade-engine/src
   crates/ctx-history-capture/src
   crates/ctx-history-jsonl/src
-  crates/ctx-history-query/src
+  crates/ctx-history-read-application/src
   crates/ctx-history-capture-model/src
   crates/ctx-history-repository-evidence/src
   crates/ctx-history-source-discovery/src

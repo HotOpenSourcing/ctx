@@ -83,10 +83,24 @@ mod tests {
         assert_eq!(authority.error_code(), expected_code);
     }
 
+    fn generation_with_retained_peer(
+        data_root: &std::path::Path,
+        index: ctx_history_index::VerifiedIndex,
+    ) -> anyhow::Result<ctx_history_read_application::GenerationRead> {
+        super::compact_presentation::generation_read(
+            index,
+            &index_root(data_root),
+            &ctx_history_read_application::GenerationReadRequest {
+                target: ctx_history_read_application::GenerationReadTarget::Active,
+                retained_peer: ctx_history_read_application::RetainedPeerRead::IfAvailable,
+            },
+        )
+    }
+
     #[test]
     fn source_identity_error_restores_exact_cli_flag_spelling() {
         let error =
-            anyhow::Error::new(ctx_history_query::SourceIdentityFilterError::InvalidHistorySource);
+            anyhow::Error::new(ctx_history_read_application::SourceIdentityFilterError::InvalidHistorySource);
 
         assert_eq!(
             externalize_query_error(error).to_string(),
@@ -94,7 +108,7 @@ mod tests {
         );
 
         let error = anyhow::Error::new(
-            ctx_history_query::SourceIdentityFilterError::CustomProviderRequired,
+            ctx_history_read_application::SourceIdentityFilterError::CustomProviderRequired,
         );
         assert_eq!(
             externalize_query_error(error).to_string(),
@@ -185,11 +199,17 @@ mod tests {
         append_fixture_session(legacy_nonempty.path(), &[successor], 94);
         let current = open_index(legacy_nonempty.path()).unwrap();
         assert_ne!(current.generation_id(), peer_generation);
-        super::compact_presentation::CompactPresentation::open(
-            &current,
-            &index_root(legacy_nonempty.path()),
-        )
-        .unwrap();
+        let compact = generation_with_retained_peer(legacy_nonempty.path(), current).unwrap();
+        assert!(compact.retained_peer().is_some());
+        assert_eq!(
+            ctx_history_read_application::CompactPresentationProjection::new(
+                compact.index(),
+                compact.retained_peer(),
+            )
+            .project(&json!({"kind": "probe"}))
+            .unwrap()["kind"],
+            "probe"
+        );
 
         let authoritative_empty = tempdir().unwrap();
         let peer_generation = publish_empty_generation(
@@ -199,11 +219,7 @@ mod tests {
         write_test_generation(authoritative_empty.path());
         let current = open_index(authoritative_empty.path()).unwrap();
         assert_ne!(current.generation_id(), peer_generation);
-        super::compact_presentation::CompactPresentation::open(
-            &current,
-            &index_root(authoritative_empty.path()),
-        )
-        .unwrap();
+        generation_with_retained_peer(authoritative_empty.path(), current).unwrap();
 
         for (authority, error_code) in [
             (EmptyPublicationAuthority::Missing, "source_unavailable"),
@@ -221,10 +237,7 @@ mod tests {
             publish_empty_generation(temp.path(), authority);
             write_test_generation(temp.path());
             let current = open_index(temp.path()).unwrap();
-            let error = super::compact_presentation::CompactPresentation::open(
-                &current,
-                &index_root(temp.path()),
-            )
+            let error = generation_with_retained_peer(temp.path(), current)
             .err()
             .expect("invalid retained peer must fail before compact resolution");
             assert_query_authority_error(&error, error_code);
@@ -1139,11 +1152,7 @@ mod tests {
         .expect("expired compact input must request a concurrent-generation retry");
         assert!(super::shared::is_active_generation_race(&compact_error));
 
-        let human_error = super::compact_presentation::CompactPresentation::open_if_needed(
-            &human_pin,
-            &index_root(temp.path()),
-            true,
-        )
+        let human_error = generation_with_retained_peer(temp.path(), human_pin)
         .err()
         .expect("expired human presentation must request a concurrent-generation retry");
         assert!(super::shared::is_active_generation_race(&human_error));
@@ -1637,12 +1646,12 @@ mod tests {
             assert_eq!(resolved, SearchBackendArg::Hybrid);
             source_request.backend = Some(resolved);
             let filters = index_search_filters(&source_request, &index).unwrap();
-            let collection = ctx_history_query::collect_search_hits_using(
+            let collection = ctx_history_read_application::collect_search_hits_using(
                 &source_request,
                 &index,
                 &filters,
-                ctx_history_query::SemanticAvailability::Unavailable(
-                    ctx_history_query::SemanticReason::ExecutionUnavailable,
+                ctx_history_read_application::SemanticAvailability::Unavailable(
+                    ctx_history_read_application::SemanticReason::ExecutionUnavailable,
                 ),
                 |_query, _filters, _candidate_limit| {
                     panic!("daemon-disabled hybrid must fall back before semantic work")
@@ -1776,13 +1785,13 @@ mod tests {
         );
         assert_eq!(session_value["pagination"]["has_more"], true);
 
-        let shown = ctx_history_query::PinnedHistoryQuery::new(&index, None)
-            .show_event(&ctx_history_query::ShowEventRequest {
+        let shown = ctx_history_read_application::PinnedHistoryQuery::new(&index, None)
+            .show_event(&ctx_history_read_application::ShowEventRequest {
                 selector: first.event_id.to_string(),
                 before: 0,
                 after: 0,
                 window: None,
-                budget: ctx_history_query::EventWindowBudget {
+                budget: ctx_history_read_application::EventWindowBudget {
                     maximum_events: crate::MAX_EVENT_WINDOW,
                     maximum_encoded_core_bytes: ctx_history_core::MAX_ENCODED_CORE_RECORD_BYTES,
                     maximum_content_bytes: 2 * 1024,
@@ -1872,13 +1881,13 @@ mod tests {
         let cumulative_encoded_bytes = encoded_bytes.iter().sum::<usize>();
         let encoded_limit = cumulative_encoded_bytes - 1;
 
-        let error = ctx_history_query::PinnedHistoryQuery::new(&index, None)
-            .show_event(&ctx_history_query::ShowEventRequest {
+        let error = ctx_history_read_application::PinnedHistoryQuery::new(&index, None)
+            .show_event(&ctx_history_read_application::ShowEventRequest {
                 selector: first.event_id.to_string(),
                 before: 0,
                 after: 1,
                 window: None,
-                budget: ctx_history_query::EventWindowBudget {
+                budget: ctx_history_read_application::EventWindowBudget {
                     maximum_events: 2,
                     maximum_encoded_core_bytes: encoded_limit,
                     maximum_content_bytes: 64 * 1024,
@@ -1886,7 +1895,7 @@ mod tests {
             })
             .unwrap_err();
         let typed = error
-            .downcast_ref::<ctx_history_query::EncodedCoreQueryLimitError>()
+            .downcast_ref::<ctx_history_read_application::EncodedCoreQueryLimitError>()
             .expect("cumulative encoded Core overflow should preserve its typed bound");
         assert_eq!(typed.event_id, second.event_id.as_uuid());
         assert_eq!(typed.actual_bytes, cumulative_encoded_bytes);
@@ -1905,16 +1914,16 @@ mod tests {
             })
             .collect::<Vec<_>>();
         append_fixture_session(temp.path(), &events, 74);
-        let index = open_index(temp.path()).unwrap();
         let session = SessionRecord::from(&events[0].event);
         let (mut ui, stdout) = test_ui();
 
         let result = stream_cli_session(
-            &index,
-            &session,
+            temp.path(),
+            Some(session.session_id.to_string()),
+            None,
+            None,
             TranscriptMode::Log,
             OutputFormat::Json,
-            None,
             None,
             None,
             &mut ui,
@@ -1948,17 +1957,17 @@ mod tests {
             })
             .collect::<Vec<_>>();
         append_fixture_session(temp.path(), &events, 75);
-        let index = open_index(temp.path()).unwrap();
         let session = SessionRecord::from(&events[0].event);
         let (mut ui, stdout) = test_ui();
 
         let result = stream_cli_session(
-            &index,
-            &session,
+            temp.path(),
+            Some(session.session_id.to_string()),
+            None,
+            None,
             TranscriptMode::Full,
             OutputFormat::Json,
             Some(1),
-            None,
             None,
             &mut ui,
         )
@@ -1988,16 +1997,16 @@ mod tests {
             })
             .collect::<Vec<_>>();
         append_fixture_session(temp.path(), &events, 76);
-        let index = open_index(temp.path()).unwrap();
         let session = SessionRecord::from(&events[0].event);
         let (mut ui, stdout) = test_ui();
 
         stream_cli_session(
-            &index,
-            &session,
+            temp.path(),
+            Some(session.session_id.to_string()),
+            None,
+            None,
             TranscriptMode::Lite,
             OutputFormat::Jsonl,
-            None,
             None,
             None,
             &mut ui,

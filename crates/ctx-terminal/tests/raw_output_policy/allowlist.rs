@@ -402,24 +402,8 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
         LIST_EVENTS_STREAM
     ),
     allow!(
-        LIST_EVENTS,
-        "write_jsonl_pages#1@3e567be51ce81a14",
-        DirectWrite,
-        MachineProtocol,
-        JSON_PROTOCOL,
-        LIST_EVENTS_STREAM
-    ),
-    allow!(
-        LIST_EVENTS,
-        "write_jsonl_pages#2@a58701092e0a06cc",
-        DirectWrite,
-        MachineProtocol,
-        JSON_PROTOCOL,
-        LIST_EVENTS_STREAM
-    ),
-    allow!(
         SOURCE_INDEX_SHOW,
-        "stream_cli_session#1@1b29ac2997edb0f6",
+        "stream_cli_session#1@726192492b47f797",
         UiRawWriter,
         Infrastructure,
         SPECIALIZED_STREAM,
