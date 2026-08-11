@@ -103,6 +103,11 @@
       "targets": {"lib:ctx_history_core": "//crates/ctx-history-core:lib"},
       "native_unit": "//crates/ctx-history-core:unit_tests"
     },
+    "ctx-history-ingest-application": {
+      "manifest": "crates/ctx-history-ingest-application/Cargo.toml",
+      "targets": {"lib:ctx_history_ingest_application": "//crates/ctx-history-ingest-application:lib"},
+      "native_unit": "//crates/ctx-history-ingest-application:unit_tests"
+    },
     "ctx-history-source-discovery": {
       "manifest": "crates/ctx-history-source-discovery/Cargo.toml",
       "targets": {"lib:ctx_history_source_discovery": "//crates/ctx-history-source-discovery:lib"},

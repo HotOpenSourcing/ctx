@@ -11,6 +11,7 @@ members = [
     "crates/ctx-upgrade-engine",
     "crates/ctx-history-capture",
     "crates/ctx-history-capture-model",
+    "crates/ctx-history-ingest-application",
     "crates/ctx-history-core",
     "crates/ctx-history-index",
     "crates/ctx-history-index-format",

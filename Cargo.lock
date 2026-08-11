@@ -746,6 +746,7 @@ dependencies = [
  "ctx-history-capture",
  "ctx-history-core",
  "ctx-history-index",
+ "ctx-history-ingest-application",
  "ctx-history-read-application",
  "ctx-history-refresh",
  "ctx-pro-access",
@@ -1052,6 +1053,21 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "uuid",
+]
+
+[[package]]
+name = "ctx-history-ingest-application"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "ctx-history-capture-model",
+ "ctx-history-core",
+ "ctx-history-source-discovery",
+ "ctx-history-source-io",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]
