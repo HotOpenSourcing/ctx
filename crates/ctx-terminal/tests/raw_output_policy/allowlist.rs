@@ -744,14 +744,6 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         OUTPUT,
-        "print_json#1@75eb9112501374a4",
-        PrintMacro,
-        MachineProtocol,
-        JSON_PROTOCOL,
-        UNIT
-    ),
-    allow!(
-        OUTPUT,
         "stderr_writer#1@53302d94fe4bac6c",
         StderrConstructor,
         Infrastructure,

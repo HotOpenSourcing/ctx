@@ -1442,9 +1442,25 @@ fn scan_package() -> Vec<Site> {
     sites
 }
 
+fn assert_terminal_print_macros_are_absent(sites: &[Site]) {
+    let bypasses = sites
+        .iter()
+        .filter(|site| {
+            site.key.path.starts_with("crates/ctx-terminal/src/")
+                && site.key.primitive == Primitive::PrintMacro
+        })
+        .map(format_site)
+        .collect::<String>();
+    assert!(
+        bypasses.is_empty(),
+        "ctx-terminal production print macros bypass OutputMeasurement; use the explicit measured output API:\n{bypasses}"
+    );
+}
+
 #[test]
 fn production_raw_output_inventory_is_closed() {
     let sites = scan_package();
+    assert_terminal_print_macros_are_absent(&sites);
     let build_script_counts = sites.iter().fold(BTreeMap::new(), |mut counts, site| {
         if matches!(
             site.key.path.as_str(),
