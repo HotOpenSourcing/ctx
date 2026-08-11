@@ -5,23 +5,23 @@ use ctx_history_refresh::ExplicitSourceCatalogAuthority;
 
 use super::daemon_service_ports::AVAILABILITY;
 
-pub(crate) use ctx_daemon_service::{
+pub use ctx_daemon_service::{
     pin_active_verified_generation, published_explicit_source_relocation_authority,
     PinnedSourceBackedGeneration, RefreshStatus, SourceBackedRefreshDaemonUnavailable,
     SourceBackedRefreshMode, SourceBackedRefreshObservation, SourceBackedRefreshPendingPublication,
 };
 #[cfg(test)]
-pub(crate) use ctx_history_refresh::{count_verified_index_opens, source_backed_index_root};
-pub(crate) use ctx_history_refresh::{open_verified_index, verified_generation_is_query_ready};
+pub use ctx_history_refresh::{count_verified_index_opens, source_backed_index_root};
+pub use ctx_history_refresh::{open_verified_index, verified_generation_is_query_ready};
 
-pub(crate) fn coordinate_source_backed_refresh(
+pub fn coordinate_source_backed_refresh(
     data_root: &Path,
     mode: SourceBackedRefreshMode,
 ) -> Result<SourceBackedRefreshObservation> {
     ctx_daemon_service::coordinate_source_backed_refresh(&AVAILABILITY, data_root, mode)
 }
 
-pub(crate) fn coordinate_source_backed_refresh_with_progress(
+pub fn coordinate_source_backed_refresh_with_progress(
     data_root: &Path,
     mode: SourceBackedRefreshMode,
     report_progress: &mut dyn FnMut(&RefreshStatus) -> Result<()>,
@@ -34,7 +34,7 @@ pub(crate) fn coordinate_source_backed_refresh_with_progress(
     )
 }
 
-pub(crate) fn coordinate_import_source_backed_refresh_with_progress(
+pub fn coordinate_import_source_backed_refresh_with_progress(
     data_root: &Path,
     mode: SourceBackedRefreshMode,
     explicit_source_catalog: Option<&ExplicitSourceCatalogAuthority>,

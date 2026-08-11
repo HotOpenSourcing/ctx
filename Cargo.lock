@@ -740,8 +740,7 @@ dependencies = [
  "ctx-agent-application",
  "ctx-agent-integrations",
  "ctx-client-observability",
- "ctx-daemon-application",
- "ctx-daemon-runtime",
+ "ctx-daemon-cli",
  "ctx-daemon-service",
  "ctx-history-capture",
  "ctx-history-core",
@@ -868,6 +867,35 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "ctx-daemon-cli"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "ctx-client-observability",
+ "ctx-daemon-application",
+ "ctx-daemon-runtime",
+ "ctx-daemon-service",
+ "ctx-history-capture",
+ "ctx-history-core",
+ "ctx-history-index",
+ "ctx-history-read-application",
+ "ctx-history-refresh",
+ "ctx-pro-application",
+ "ctx-pro-host-protocol",
+ "ctx-semantic-index",
+ "ctx-semantic-model",
+ "ctx-terminal",
+ "ctx-upgrade-engine",
+ "fs2",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "toml_edit 0.22.27",
+ "unicode-width",
+ "uuid",
 ]
 
 [[package]]

@@ -477,7 +477,6 @@ fn prompt_uninstall_data_disposition(
 }
 
 pub(crate) fn lifecycle_status_json(data_root: &Path) -> serde_json::Value {
-    observe_lifecycle_status_query();
     lifecycle_status_value(status(data_root), preserved_data_marker_is_set(data_root))
 }
 
@@ -485,41 +484,10 @@ pub(crate) fn lifecycle_status_json_for_core(
     data_root: &Path,
     active_core: Option<&ctx_history_index::VerifiedIndex>,
 ) -> serde_json::Value {
-    observe_lifecycle_status_query();
     lifecycle_status_value(
         status_for_core(data_root, active_core),
         preserved_data_marker_is_set(data_root),
     )
-}
-
-#[cfg(test)]
-thread_local! {
-    static LIFECYCLE_STATUS_QUERY_COUNT: std::cell::Cell<Option<usize>> = const {
-        std::cell::Cell::new(None)
-    };
-}
-
-fn observe_lifecycle_status_query() {
-    #[cfg(test)]
-    LIFECYCLE_STATUS_QUERY_COUNT.with(|count| {
-        if let Some(current) = count.get() {
-            count.set(Some(current.saturating_add(1)));
-        }
-    });
-}
-
-#[cfg(test)]
-pub(crate) fn count_lifecycle_status_queries<T>(operation: impl FnOnce() -> T) -> (T, usize) {
-    LIFECYCLE_STATUS_QUERY_COUNT.with(|count| {
-        let previous = count.replace(Some(0));
-        assert!(
-            previous.is_none(),
-            "Pro lifecycle-status query counters must not be nested"
-        );
-        let output = operation();
-        let observed = count.replace(None).unwrap_or(0);
-        (output, observed)
-    })
 }
 
 pub(super) fn lifecycle_status_value(helper: ProStatus, preserved_data: bool) -> serde_json::Value {

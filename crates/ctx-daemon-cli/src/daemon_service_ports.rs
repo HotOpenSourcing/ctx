@@ -39,7 +39,7 @@ pub(super) static PORTS: DaemonServicePorts<
     artifact_fetcher: &ARTIFACT_FETCHER,
 };
 
-pub(crate) fn config_snapshot(config: &AppConfig) -> DaemonConfigSnapshot {
+pub fn config_snapshot(config: &AppConfig) -> DaemonConfigSnapshot {
     DaemonConfigSnapshot {
         daemon: DaemonProductConfig {
             enabled: config.daemon.enabled,
@@ -53,6 +53,54 @@ pub(crate) fn config_snapshot(config: &AppConfig) -> DaemonConfigSnapshot {
         automatic_upgrade_interval: config.upgrade.interval,
         upgrade_channel: config.upgrade.channel.clone(),
     }
+}
+
+pub fn run_daemon_service<D, AP, UO>(
+    request: ctx_daemon_application::DaemonHostRunRequest,
+    data_root: &Path,
+    config: &AppConfig,
+    upgrade: &ctx_daemon_service::DaemonUpgradePorts<'_, D, AP, UO>,
+) -> Result<()>
+where
+    D: ctx_upgrade_engine::DaemonUpgradePort + ?Sized,
+    AP: ctx_upgrade_engine::AutomaticUpgradePolicyProvider<Snapshot = DaemonConfigSnapshot>,
+    UO: ctx_upgrade_engine::UpgradeObserver<DaemonConfigSnapshot>,
+{
+    use ctx_daemon_service::{DaemonRunArgs, DaemonStartMode, DaemonSupervisor, DaemonTrigger};
+
+    let service_args = DaemonRunArgs {
+        idle_exit_seconds: request.idle_exit_seconds,
+        loop_interval_seconds: request.loop_interval_seconds,
+        max_chunks: request.max_chunks,
+        max_seconds: None,
+        force: request.force,
+        start_mode: request.start_mode.map(|mode| match mode {
+            ctx_daemon_application::DaemonHostStartMode::Manual => DaemonStartMode::Manual,
+            ctx_daemon_application::DaemonHostStartMode::Auto => DaemonStartMode::Auto,
+        }),
+        trigger_command: request.trigger.map(|trigger| match trigger {
+            ctx_daemon_application::DaemonTrigger::Setup => DaemonTrigger::Setup,
+            ctx_daemon_application::DaemonTrigger::Import => DaemonTrigger::Import,
+            ctx_daemon_application::DaemonTrigger::Search => DaemonTrigger::Search,
+        }),
+        supervisor: if matches!(
+            request.start_mode,
+            Some(ctx_daemon_application::DaemonHostStartMode::Auto)
+        ) && super::health_search::semantic_env_flag(
+            super::runtime_limits::DAEMON_BACKGROUND_CHILD_ENV,
+        ) {
+            DaemonSupervisor::CliAutostart
+        } else {
+            DaemonSupervisor::User
+        },
+    };
+    ctx_daemon_service::run_daemon(
+        service_args,
+        data_root,
+        config_snapshot(config),
+        &PORTS,
+        upgrade,
+    )
 }
 
 pub(super) struct CliDaemonConfigPort;
@@ -246,6 +294,10 @@ impl DaemonObservationPort for CliDaemonObservationPort {
         };
         crate::analytics::send_batch(data_root, &config, events);
     }
+}
+
+pub fn deliver_daemon_events(data_root: &Path, events: &[PublicEventV1]) {
+    OBSERVATION.deliver(data_root, events);
 }
 
 fn load_daemon_observation_config(data_root: &Path) -> Option<AppConfig> {
