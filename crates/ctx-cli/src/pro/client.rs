@@ -7,18 +7,24 @@ use ctx_pro_host::{
     InstalledProHost,
 };
 use ctx_pro_host_protocol::{AuthorizationRequest, BlameTarget, AUTHORIZATION_CHALLENGE_BYTES};
+use ctx_pro_lifecycle::installed_artifact::ValidatedArtifactIdentity;
 
 use crate::analytics::{
     pro_helper_connection_outcome, ProHelperConnectionOutcomeV1, ProMaterializationModeV1,
     ProMaterializationTelemetryV1,
 };
 
-use super::{authorization::StoredAuthorizationProvider, commercial_lifecycle, lifecycle};
+use super::{
+    authorization::StoredAuthorizationProvider, commercial_config::CommercialConfig,
+    commercial_lifecycle,
+};
 
+#[cfg(test)]
+pub(crate) use ctx_pro_host::default_helper_path;
 pub(super) use ctx_pro_host::typed_blame_diagnostic;
 pub(crate) use ctx_pro_host::{
     blame_boundary_error, blame_diagnostic, core_finalization_generation_lease,
-    default_helper_path, invalid_blame_request, reconstruct_core_finalization_generation_lease,
+    invalid_blame_request, reconstruct_core_finalization_generation_lease,
     release_core_finalization_generation_lease, stable_error_code,
     validate_core_finalization_generation_lease, BlameResultFreshness,
     CoreMaterializationSyncOutcome, HelperSmoke, HostedBlameResult, ProSetupRepairability,
@@ -30,6 +36,21 @@ pub(crate) type MaterializeReport = ctx_pro_host::MaterializationFinalizationRec
 struct CtxInstalledProHost;
 
 const HOST: CtxInstalledProHost = CtxInstalledProHost;
+
+pub(crate) fn activation_material(
+    data_root: &Path,
+    identity: ValidatedArtifactIdentity,
+    challenge_base64url: &str,
+    installation_public_key_base64url: &str,
+) -> Result<serde_json::Value> {
+    ctx_pro_host::activation_material(
+        &HOST,
+        data_root,
+        identity,
+        challenge_base64url,
+        installation_public_key_base64url,
+    )
+}
 
 impl InstalledProHost for CtxInstalledProHost {
     fn host_version(&self) -> &str {
@@ -57,8 +78,16 @@ impl InstalledProHost for CtxInstalledProHost {
     fn validated_installed_helper(
         &self,
         data_root: &Path,
-    ) -> Result<ctx_pro_host::VerifiedHelperExecutable> {
-        lifecycle::validated_installed_helper(data_root)
+        operation: Option<&ctx_pro_lifecycle::operation::LifecycleOperation>,
+    ) -> Result<ValidatedArtifactIdentity> {
+        let trust = CommercialConfig::production()?.release_trust;
+        match operation {
+            Some(operation) => {
+                operation.require_data_root(data_root)?;
+                ctx_pro_lifecycle::installation::discover_installed_artifact_in(operation, trust)
+            }
+            None => ctx_pro_lifecycle::installation::discover_installed_artifact(data_root, trust),
+        }
     }
 
     fn authorization_for_challenge(
@@ -118,8 +147,16 @@ pub(crate) fn sync_core_materialization(
     ctx_pro_host::sync_core_materialization(&HOST, data_root, index)
 }
 
+#[cfg(ctx_pro_test_helper)]
 pub(crate) fn smoke_helper_at_path(data_root: &Path, path: &Path) -> Result<HelperSmoke> {
     ctx_pro_host::smoke_helper_at_path(&HOST, data_root, path)
+}
+
+pub(crate) fn smoke_validated_helper(
+    data_root: &Path,
+    identity: ValidatedArtifactIdentity,
+) -> Result<HelperSmoke> {
+    ctx_pro_host::smoke_validated_helper(&HOST, data_root, identity)
 }
 
 pub(crate) fn status(data_root: &Path) -> ProStatus {
@@ -145,8 +182,25 @@ pub(crate) fn materialize(
     data_root: &Path,
     telemetry: &mut ProMaterializationTelemetryV1,
 ) -> Result<MaterializeReport> {
-    let result = materialize_once(data_root, telemetry)
-        .and_then(|report| super::pending_materialization::clear_after(data_root, report));
+    materialize_with_operation(data_root, None, telemetry)
+}
+
+pub(crate) fn materialize_in(
+    data_root: &Path,
+    operation: &ctx_pro_lifecycle::operation::LifecycleOperation,
+    telemetry: &mut ProMaterializationTelemetryV1,
+) -> Result<MaterializeReport> {
+    materialize_with_operation(data_root, Some(operation), telemetry)
+}
+
+fn materialize_with_operation(
+    data_root: &Path,
+    operation: Option<&ctx_pro_lifecycle::operation::LifecycleOperation>,
+    telemetry: &mut ProMaterializationTelemetryV1,
+) -> Result<MaterializeReport> {
+    let result = materialize_once(data_root, operation, telemetry).and_then(|report| {
+        super::pending_materialization::clear_after(data_root, operation, report)
+    });
     if let Err(error) = &result {
         telemetry.fail(stable_error_code(error));
     }
@@ -155,9 +209,14 @@ pub(crate) fn materialize(
 
 fn materialize_once(
     data_root: &Path,
+    operation: Option<&ctx_pro_lifecycle::operation::LifecycleOperation>,
     telemetry: &mut ProMaterializationTelemetryV1,
 ) -> Result<MaterializeReport> {
-    let start = match ctx_pro_host::start_materialization(&HOST, data_root) {
+    let start_result = match operation {
+        Some(operation) => ctx_pro_host::start_materialization_in(&HOST, data_root, operation),
+        None => ctx_pro_host::start_materialization(&HOST, data_root),
+    };
+    let start = match start_result {
         Ok(start) => {
             telemetry.helper_connection = ProHelperConnectionOutcomeV1::Connected;
             start
@@ -190,18 +249,26 @@ fn materialize_once(
 
     let was_unmaterialized = start.prior_core_generation_id.is_none();
     let no_op = start.prior_core_generation_id.as_deref() == Some(core_generation_id.as_str());
-    let report =
-        match ctx_pro_host::finish_materialization(&HOST, data_root, start, core_generation_id) {
-            Ok(report) => {
-                telemetry.helper_connection = ProHelperConnectionOutcomeV1::Connected;
-                report
-            }
-            Err(error) => {
-                telemetry.helper_connection =
-                    pro_helper_connection_outcome(stable_error_code(&error));
-                return Err(error);
-            }
-        };
+    let finish_result = match operation {
+        Some(operation) => ctx_pro_host::finish_materialization_in(
+            &HOST,
+            data_root,
+            operation,
+            start,
+            core_generation_id,
+        ),
+        None => ctx_pro_host::finish_materialization(&HOST, data_root, start, core_generation_id),
+    };
+    let report = match finish_result {
+        Ok(report) => {
+            telemetry.helper_connection = ProHelperConnectionOutcomeV1::Connected;
+            report
+        }
+        Err(error) => {
+            telemetry.helper_connection = pro_helper_connection_outcome(stable_error_code(&error));
+            return Err(error);
+        }
+    };
 
     telemetry.mode = Some(if no_op {
         ProMaterializationModeV1::NoOp

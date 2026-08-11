@@ -12,7 +12,7 @@ use security_framework_sys::base::{
     errSecAuthFailed as ERR_SEC_AUTH_FAILED, errSecItemNotFound as ERR_SEC_ITEM_NOT_FOUND,
 };
 
-use crate::pro::credential_vault::CredentialVaultError;
+use ctx_pro_access::credential_vault::CredentialVaultError;
 
 const SERVICE: &str = "com.ctx.pro.work-graph-key.v1";
 const LOCK_FILE: &str = ".ctx-pro-graph-key-v1.lock";

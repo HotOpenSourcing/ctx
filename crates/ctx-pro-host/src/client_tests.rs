@@ -40,7 +40,11 @@ impl InstalledProHost for MissingPinHost {
         Ok(Some("00000000-0000-4000-8000-000000000000".to_owned()))
     }
 
-    fn validated_installed_helper(&self, _data_root: &Path) -> Result<VerifiedHelperExecutable> {
+    fn validated_installed_helper(
+        &self,
+        _data_root: &Path,
+        _operation: Option<&ctx_pro_lifecycle::operation::LifecycleOperation>,
+    ) -> Result<ctx_pro_lifecycle::installed_artifact::ValidatedArtifactIdentity> {
         bail!("pro_not_installed: helper fixture is absent")
     }
 
@@ -106,7 +110,11 @@ impl InstalledProHost for PinLifetimeHost {
         Ok(Some(self.helper_path.clone()))
     }
 
-    fn validated_installed_helper(&self, _data_root: &Path) -> Result<VerifiedHelperExecutable> {
+    fn validated_installed_helper(
+        &self,
+        _data_root: &Path,
+        _operation: Option<&ctx_pro_lifecycle::operation::LifecycleOperation>,
+    ) -> Result<ctx_pro_lifecycle::installed_artifact::ValidatedArtifactIdentity> {
         unreachable!("the test host always selects its developer helper")
     }
 

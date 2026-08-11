@@ -10,12 +10,11 @@ use ctx_pro_host_protocol::{
     MaterializedCoverage, ProOperation, ProStorageEvidence, RepositoryCoverage, StatusRequest,
     StatusResult, PROTOCOL_FINGERPRINT, PROTOCOL_VERSION,
 };
+use ctx_pro_lifecycle::installed_artifact::is_setup_repair_required_error;
+use ctx_pro_lifecycle::installed_artifact::ValidatedArtifactIdentity;
 use serde::Serialize;
 
-use crate::{
-    installed_helper::is_setup_repair_required_error, CoreGenerationHost, CoreGenerationPin,
-    InstalledProHost,
-};
+use crate::{CoreGenerationHost, CoreGenerationPin, InstalledProHost};
 
 use super::{
     default_helper_path, helper_status, protocol_error, support, AuthorizationProvider, ProClient,
@@ -71,6 +70,25 @@ pub fn smoke_helper_at_path(
     path: &Path,
 ) -> Result<HelperSmoke> {
     smoke_helper_at_path_with_authorization(host, data_root, path, None)
+}
+
+/// Smokes the exact staged artifact previously validated by lifecycle.
+pub fn smoke_validated_helper(
+    host: &(impl InstalledProHost + ?Sized),
+    data_root: &Path,
+    identity: ValidatedArtifactIdentity,
+) -> Result<HelperSmoke> {
+    identity.operation().require_data_root(data_root)?;
+    let path = identity.path().to_path_buf();
+    let execution = VerifiedHelperExecutable::from_validated(identity)?;
+    smoke_helper_at_path_with_authorization_observing_status(
+        host,
+        data_root,
+        &path,
+        Some(execution),
+        None,
+        drop,
+    )
 }
 
 pub(super) fn smoke_helper_at_path_with_authorization(

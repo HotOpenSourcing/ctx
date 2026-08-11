@@ -31,7 +31,7 @@ use crate::{CoreGenerationHost, InstalledProHost, VerifiedHelperExecutable};
 mod support;
 use crate::helper_command;
 pub use support::{default_helper_path, git_executable};
-use support::{helper_executable, helper_path};
+use support::{helper_executable, helper_executable_in, helper_path};
 
 #[path = "client_errors.rs"]
 mod errors;
@@ -74,7 +74,8 @@ mod client_status;
 #[cfg(any(test, feature = "test-support"))]
 pub use client_status::status_with_helper_resolver;
 pub use client_status::{
-    smoke_helper_at_path, status, status_for_core, HelperSmoke, ProSetupRepairability, ProStatus,
+    smoke_helper_at_path, smoke_validated_helper, status, status_for_core, HelperSmoke,
+    ProSetupRepairability, ProStatus,
 };
 
 #[cfg(unix)]
@@ -128,8 +129,8 @@ mod transport;
 
 use materialization::*;
 pub use materialization::{
-    finish_materialization, prepare_blame_freshness_with, start_materialization,
-    BlameFreshnessPolicy,
+    finish_materialization, finish_materialization_in, prepare_blame_freshness_with,
+    start_materialization, start_materialization_in, BlameFreshnessPolicy,
 };
 pub use operations::blame;
 #[cfg(test)]

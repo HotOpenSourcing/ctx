@@ -20,6 +20,7 @@ RUST_SRCS = glob(["src/**/*.rs"])
 PROD_SRCS = glob(["src/**/*.rs"], exclude = RUST_PROD_SRC_EXCLUDES)
 LIFECYCLE_DEPS = [
     "//crates/ctx-history-core:lib",
+    "//crates/ctx-pro-access:lib",
     "//crates/ctx-pro-host-protocol:lib",
 ]
 LIFECYCLE_RUSTC_FLAGS = ["--check-cfg=cfg(test)"]

@@ -199,6 +199,33 @@ fn wait_until(mut condition: impl FnMut() -> bool, detail: &str) {
 }
 
 #[test]
+fn helper_recheck_wake_without_daemon_preserves_intent_and_never_starts_one() {
+    let temp = daemon_test_root();
+    let data_root = data_root(&temp);
+    let daemon_root = data_root.join("daemon");
+    fs::create_dir_all(&daemon_root).unwrap();
+    for directory in [&data_root, &daemon_root] {
+        ctx_history_core::platform_security::restrict_private_directory(directory).unwrap();
+    }
+    let target_helper_sha256 = "b".repeat(64);
+    let endpoint = ctx_daemon_service::daemon_service_endpoint_path(
+        &data_root,
+        ctx_daemon_service::DaemonIpcService::SourceRefresh,
+    );
+    assert!(daemon_pid(&temp).is_none());
+    assert!(!endpoint.exists());
+
+    ctx_daemon_service::publish_helper_recheck_intent(&data_root, &target_helper_sha256).unwrap();
+    assert!(ctx_daemon_service::helper_recheck_targets(&data_root, &target_helper_sha256).unwrap());
+
+    ctx_daemon_service::wake_helper_recheck(&data_root);
+
+    assert!(daemon_pid(&temp).is_none());
+    assert!(!endpoint.exists());
+    assert!(ctx_daemon_service::helper_recheck_targets(&data_root, &target_helper_sha256).unwrap());
+}
+
+#[test]
 fn live_daemon_rebuilds_replaced_helper_without_a_new_core_generation() {
     let temp = daemon_test_root();
     let data_root = data_root(&temp);

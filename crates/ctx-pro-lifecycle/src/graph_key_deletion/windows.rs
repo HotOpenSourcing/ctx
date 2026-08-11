@@ -10,7 +10,7 @@ use windows_sys::Win32::Foundation::{
 use windows_sys::Win32::Security::Credentials::{CredDeleteW, CRED_TYPE_GENERIC};
 use windows_sys::Win32::System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject};
 
-use crate::pro::credential_vault::CredentialVaultError;
+use ctx_pro_access::credential_vault::CredentialVaultError;
 
 const TARGET_PREFIX: &str = "ctx-pro/work-graph-key/v1/";
 const MUTEX_PREFIX: &str = "Local\\ctx-pro-work-graph-key-v1-";

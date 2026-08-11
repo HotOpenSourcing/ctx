@@ -1,4 +1,8 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use ctx_history_core::platform_security::{
@@ -8,12 +12,29 @@ use ctx_history_core::platform_security::{
 use ctx_pro_host_protocol::ProFilesystemLayout;
 use fs2::FileExt as _;
 
-pub(super) struct LifecycleLock {
+/// A single exclusive lifecycle epoch for one ctx data root.
+///
+/// Clones retain the same OS lock. Starting a separate operation still opens
+/// and exclusively locks the durable lifecycle lock file, so setup and
+/// uninstall cannot overlap even within one process.
+#[derive(Clone)]
+pub struct LifecycleOperation {
+    inner: Arc<OperationInner>,
+}
+
+struct OperationInner {
+    data_root: PathBuf,
     file: fs::File,
 }
 
-impl LifecycleLock {
-    pub(super) fn acquire(target: &Path, create_pro_root: bool) -> Result<Option<Self>> {
+impl LifecycleOperation {
+    pub fn begin(data_root: &Path, create_pro_root: bool) -> Result<Option<Self>> {
+        let layout = ProFilesystemLayout::new(data_root);
+        Self::acquire(&layout.helper_path(), create_pro_root)
+    }
+
+    #[doc(hidden)]
+    pub fn acquire(target: &Path, create_pro_root: bool) -> Result<Option<Self>> {
         let layout = layout_for_target(target)?;
         let pro_root = layout.pro_root();
         let mut created_pro_root = false;
@@ -46,7 +67,7 @@ impl LifecycleLock {
                 .with_context(|| format!("invalid_request: verify {label}"))?;
         }
         if created_pro_root {
-            super::sync_parent_directory(&pro_root)
+            sync_parent_directory(&pro_root)
                 .context("invalid_request: persist Pro lifecycle root")?;
         }
 
@@ -79,17 +100,34 @@ impl LifecycleLock {
         restrict_private_file(&path).context("invalid_request: protect Pro lifecycle lock")?;
         verify_private_file(&path).context("invalid_request: verify Pro lifecycle lock")?;
         verify_open_lock(&path, &file)?;
-        Ok(Some(Self { file }))
+        Ok(Some(Self {
+            inner: Arc::new(OperationInner {
+                data_root: layout.data_root().to_path_buf(),
+                file,
+            }),
+        }))
+    }
+
+    #[must_use]
+    pub fn data_root(&self) -> &Path {
+        &self.inner.data_root
+    }
+
+    pub fn require_data_root(&self, data_root: &Path) -> Result<()> {
+        if data_root != self.data_root() {
+            bail!("invalid_request: Pro lifecycle operation belongs to another data root");
+        }
+        Ok(())
     }
 }
 
-impl Drop for LifecycleLock {
+impl Drop for OperationInner {
     fn drop(&mut self) {
         let _ = fs2::FileExt::unlock(&self.file);
     }
 }
 
-pub(super) fn layout_for_target(target: &Path) -> Result<ProFilesystemLayout<'_>> {
+pub fn layout_for_target(target: &Path) -> Result<ProFilesystemLayout<'_>> {
     let bin = target
         .parent()
         .ok_or_else(|| anyhow!("invalid_request: Pro install path has no parent"))?;
@@ -118,7 +156,7 @@ pub(super) fn layout_for_target(target: &Path) -> Result<ProFilesystemLayout<'_>
 
 macro_rules! layout_path {
     ($name:ident, $method:ident) => {
-        pub(super) fn $name(target: &Path) -> Result<std::path::PathBuf> {
+        pub fn $name(target: &Path) -> Result<std::path::PathBuf> {
             Ok(layout_for_target(target)?.$method())
         }
     };
@@ -136,7 +174,7 @@ layout_path!(publish_marker_path, publish_marker_path);
 layout_path!(rollback_helper_stage_path, rollback_helper_path);
 layout_path!(rollback_marker_stage_path, rollback_marker_path);
 
-pub(super) fn validate_private_directory(path: &Path, label: &str) -> Result<()> {
+pub fn validate_private_directory(path: &Path, label: &str) -> Result<()> {
     let metadata =
         fs::symlink_metadata(path).with_context(|| format!("invalid_request: inspect {label}"))?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
@@ -171,5 +209,24 @@ fn verify_open_lock(path: &Path, file: &fs::File) -> Result<()> {
 
 #[cfg(not(unix))]
 fn verify_open_lock(_path: &Path, _file: &fs::File) -> Result<()> {
+    Ok(())
+}
+
+fn sync_parent_directory(path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("invalid_request: lifecycle path has no parent"))?;
+    #[cfg(not(windows))]
+    let directory = fs::File::open(parent)?;
+    #[cfg(windows)]
+    let directory = {
+        use std::os::windows::fs::OpenOptionsExt as _;
+
+        fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+            .open(parent)?
+    };
+    directory.sync_all()?;
     Ok(())
 }

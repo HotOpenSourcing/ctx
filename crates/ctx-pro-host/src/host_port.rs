@@ -4,7 +4,9 @@ use anyhow::Result;
 use ctx_pro_access::authorization::EntitlementSchedule;
 use ctx_pro_host_protocol::{AuthorizationRequest, AUTHORIZATION_CHALLENGE_BYTES};
 
-use crate::VerifiedHelperExecutable;
+use ctx_pro_lifecycle::{
+    installed_artifact::ValidatedArtifactIdentity, operation::LifecycleOperation,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthorizationMode {
@@ -35,7 +37,11 @@ pub trait InstalledProHost {
         Ok(None)
     }
 
-    fn validated_installed_helper(&self, data_root: &Path) -> Result<VerifiedHelperExecutable>;
+    fn validated_installed_helper(
+        &self,
+        data_root: &Path,
+        operation: Option<&LifecycleOperation>,
+    ) -> Result<ValidatedArtifactIdentity>;
 
     fn authorization_for_challenge(
         &self,

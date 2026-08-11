@@ -3,7 +3,6 @@ pub(crate) mod artifact_delivery;
 mod authorization;
 mod client;
 mod commercial_config;
-mod commercial_deletion;
 mod commercial_lifecycle;
 mod commercial_production_record;
 pub(crate) mod diagnostic {
@@ -12,8 +11,6 @@ pub(crate) mod diagnostic {
 pub(crate) mod evidence_preview {
     pub(crate) use ctx_pro_host::evidence_preview::*;
 }
-mod graph_key_deletion;
-mod helper_command;
 mod lifecycle;
 mod local_deletion;
 mod pending_materialization;

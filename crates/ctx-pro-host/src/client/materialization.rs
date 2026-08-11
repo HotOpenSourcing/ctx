@@ -41,6 +41,21 @@ pub fn start_materialization(
     })
 }
 
+pub fn start_materialization_in(
+    host: &(impl InstalledProHost + ?Sized),
+    data_root: &Path,
+    operation: &ctx_pro_lifecycle::operation::LifecycleOperation,
+) -> Result<MaterializationStartReceipt> {
+    let required = BTreeSet::from([Capability::Status]);
+    let mut client = ProClient::connect_for_status_in(host, data_root, operation, &required)?;
+    let prior_core_generation_id = helper_status(&mut client)?
+        .core_receipt
+        .map(|receipt| receipt.core_generation_id);
+    Ok(MaterializationStartReceipt {
+        prior_core_generation_id,
+    })
+}
+
 pub fn finish_materialization(
     host: &(impl InstalledProHost + ?Sized),
     data_root: &Path,
@@ -49,7 +64,15 @@ pub fn finish_materialization(
 ) -> Result<MaterializationFinalizationReceipt> {
     let required = BTreeSet::from([Capability::Status]);
     let mut client = ProClient::connect_for_status(host, data_root, &required)?;
-    let status = helper_status_for(&mut client, Some(core_generation_id.clone()))?;
+    finish_materialization_with_client(&mut client, start, core_generation_id)
+}
+
+fn finish_materialization_with_client(
+    client: &mut ProClient,
+    start: MaterializationStartReceipt,
+    core_generation_id: String,
+) -> Result<MaterializationFinalizationReceipt> {
+    let status = helper_status_for(client, Some(core_generation_id.clone()))?;
     if status.currentness != ctx_pro_host_protocol::CoreProjectionCurrentness::Current {
         bail!("not_materialized: Pro Core projection is not current");
     }
@@ -76,6 +99,18 @@ pub fn finish_materialization(
         observations: source_count,
         replayed_batches: 0,
     })
+}
+
+pub fn finish_materialization_in(
+    host: &(impl InstalledProHost + ?Sized),
+    data_root: &Path,
+    operation: &ctx_pro_lifecycle::operation::LifecycleOperation,
+    start: MaterializationStartReceipt,
+    core_generation_id: String,
+) -> Result<MaterializationFinalizationReceipt> {
+    let required = BTreeSet::from([Capability::Status]);
+    let mut client = ProClient::connect_for_status_in(host, data_root, operation, &required)?;
+    finish_materialization_with_client(&mut client, start, core_generation_id)
 }
 
 pub(super) fn required_blame_capabilities(target: &BlameTarget) -> BTreeSet<Capability> {

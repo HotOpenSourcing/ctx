@@ -340,7 +340,7 @@ fn sync_path_directory(
     persistence.boundary(boundary)
 }
 
-pub(in crate::pro) fn sync_parent_directory(path: &Path) -> Result<()> {
+pub fn sync_parent_directory(path: &Path) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("invalid_request: Pro install path has no parent"))?;
@@ -363,12 +363,12 @@ pub(in crate::pro) fn sync_parent_directory(path: &Path) -> Result<()> {
 }
 
 #[cfg(not(windows))]
-pub(in crate::pro) fn replace_file(source: &Path, target: &Path) -> std::io::Result<()> {
+pub fn replace_file(source: &Path, target: &Path) -> std::io::Result<()> {
     fs::rename(source, target)
 }
 
 #[cfg(windows)]
-pub(in crate::pro) fn replace_file(source: &Path, target: &Path) -> std::io::Result<()> {
+pub fn replace_file(source: &Path, target: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,

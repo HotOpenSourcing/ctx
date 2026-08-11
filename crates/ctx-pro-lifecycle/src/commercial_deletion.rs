@@ -2,22 +2,17 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 
-use super::{
-    credential_vault::{
-        CredentialRecordKind, CredentialVaultError, CredentialVaultNamespace,
-        PlatformCredentialVault, VaultScope,
-    },
-    graph_key_deletion,
-    local_deletion::vault_error,
+use ctx_pro_access::credential_vault::{
+    CredentialRecordKind, CredentialVaultError, CredentialVaultNamespace, PlatformCredentialVault,
+    VaultScope,
 };
+
+use crate::{deletion::vault_error, graph_key_deletion};
 
 const ANONYMOUS_TRIAL_ANCHOR_ID: &str = "device-evidence-anchor/3d5657e0/v1";
 
-pub(super) fn delete_credentials(data_root: &Path) -> Result<()> {
+pub(super) fn delete_credentials(data_root: &Path, installation_id: &str) -> Result<()> {
     delete_anonymous_trial_anchor(data_root)?;
-    let installation_id = crate::identity::existing_installation_id(data_root)
-        .map_err(|_| vault_error(CredentialVaultError::InvalidDataRoot))?
-        .ok_or_else(|| vault_error(CredentialVaultError::NotFound))?;
     for namespace in [
         CredentialVaultNamespace::Production,
         CredentialVaultNamespace::Staging,
@@ -25,7 +20,7 @@ pub(super) fn delete_credentials(data_root: &Path) -> Result<()> {
         let vault = PlatformCredentialVault::production(
             VaultScope {
                 data_root,
-                installation_id: &installation_id,
+                installation_id,
             },
             namespace,
         )

@@ -26,7 +26,8 @@ impl crate::InstalledProHost for ProcessTestHost {
     fn validated_installed_helper(
         &self,
         _data_root: &Path,
-    ) -> Result<crate::VerifiedHelperExecutable> {
+        _operation: Option<&ctx_pro_lifecycle::operation::LifecycleOperation>,
+    ) -> Result<ctx_pro_lifecycle::installed_artifact::ValidatedArtifactIdentity> {
         bail!("pro_not_installed: process test uses an explicit helper")
     }
 

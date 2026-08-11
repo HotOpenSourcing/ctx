@@ -1,11 +1,9 @@
 use std::{
     fs,
-    io::{Read as _, Seek as _},
+    io::{Read as _, Seek as _, SeekFrom, Write as _},
     path::{Path, PathBuf},
 };
 
-#[cfg(unix)]
-use std::io::Write as _;
 #[cfg(target_os = "linux")]
 use std::os::fd::FromRawFd as _;
 #[cfg(unix)]
@@ -16,15 +14,17 @@ use std::os::{
 
 use anyhow::{bail, Context, Result};
 #[cfg(not(windows))]
-use ctx_history_core::platform_security::{
-    verify_private_directory, verify_private_executable, verify_private_file,
-};
+use ctx_history_core::platform_security::{verify_private_directory, verify_private_executable};
 #[cfg(windows)]
 use ctx_history_core::platform_security::{
     verify_private_directory_handle, verify_private_file_handle,
 };
+#[cfg(test)]
 use ctx_pro_host_protocol::ProFilesystemLayout;
+use ctx_pro_lifecycle::installed_artifact::ValidatedArtifactIdentity;
 use sha2::{Digest as _, Sha256};
+
+const STREAM_BUFFER_BYTES: usize = 64 * 1024;
 
 pub(crate) struct PreparedHelperExecution {
     program: PathBuf,
@@ -63,31 +63,14 @@ impl PreparedHelperExecution {
     }
 }
 
-/// The narrow lifecycle-to-host identity established after signed-pair and
-/// release-trust validation. The host treats these fields as opaque process
-/// binding inputs and does not parse lifecycle manifests.
-pub struct LifecycleValidatedHelper {
-    artifact_sha256: String,
-    protocol_fingerprint: String,
-}
-
-impl LifecycleValidatedHelper {
-    #[must_use]
-    pub fn new(artifact_sha256: String, protocol_fingerprint: String) -> Self {
-        Self {
-            artifact_sha256,
-            protocol_fingerprint,
-        }
-    }
-}
-
-/// Retains the exact lifecycle-validated execution object and lifecycle guard
-/// for the complete helper process lifetime.
+/// Retains the exact lifecycle-validated identity and operation guard for the
+/// complete helper process lifetime. Release interpretation remains entirely
+/// in `ctx-pro-lifecycle`; this type owns only executable/process identity.
 pub struct VerifiedHelperExecutable {
     path: PathBuf,
     artifact_sha256: String,
     protocol_fingerprint: String,
-    _installation_guard: Option<Box<dyn std::any::Any>>,
+    _validated_identity: Option<ValidatedArtifactIdentity>,
     #[cfg(unix)]
     execution: UnixExecutionSnapshot,
     #[cfg(windows)]
@@ -102,12 +85,16 @@ impl VerifiedHelperExecutable {
         #[cfg(windows)]
         {
             let helper = open_locked_file(path)?;
-            let artifact = read_bounded_handle(&helper, u64::MAX, "developer Pro helper")?;
+            let (artifact_size, artifact_sha256) =
+                stream_digest(&helper, u64::MAX, "developer Pro helper")?;
+            if artifact_size == 0 {
+                bail!("pro_not_installed: developer Pro helper is empty");
+            }
             Ok(Self {
                 path: path.to_path_buf(),
-                artifact_sha256: format!("{:x}", Sha256::digest(&artifact)),
+                artifact_sha256,
                 protocol_fingerprint: ctx_pro_host_protocol::PROTOCOL_FINGERPRINT.to_owned(),
-                _installation_guard: None,
+                _validated_identity: None,
                 _directories: Vec::new(),
                 helper,
             })
@@ -115,99 +102,83 @@ impl VerifiedHelperExecutable {
         #[cfg(unix)]
         {
             let source = open_unix_regular_file(path, "developer Pro helper")?;
-            let artifact = read_bounded_handle(&source, u64::MAX, "developer Pro helper")?;
-            let artifact_sha256 = format!("{:x}", Sha256::digest(&artifact));
-            let execution = UnixExecutionSnapshot::from_validated_bytes(
+            let source_size = source
+                .metadata()
+                .context("pro_not_installed: inspect developer Pro helper")?
+                .len();
+            if source_size == 0 {
+                bail!("pro_not_installed: developer Pro helper is empty");
+            }
+            let (execution, artifact_sha256) = UnixExecutionSnapshot::from_source(
                 path.parent().ok_or_else(|| {
                     anyhow::anyhow!("pro_not_installed: developer Pro helper has no parent")
                 })?,
-                &artifact,
-                &artifact_sha256,
+                &source,
+                source_size,
+                None,
             )?;
             Ok(Self {
                 path: path.to_path_buf(),
                 artifact_sha256,
                 protocol_fingerprint: ctx_pro_host_protocol::PROTOCOL_FINGERPRINT.to_owned(),
-                _installation_guard: None,
+                _validated_identity: None,
                 execution,
             })
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn open(
-        data_root: &Path,
-        path: &Path,
-        marker: &Path,
-        artifact: &[u8],
-        identity: LifecycleValidatedHelper,
-        installation_guard: impl std::any::Any,
-    ) -> Result<Self> {
-        let layout = ProFilesystemLayout::new(data_root);
-        let expected_parent = layout.bin_dir();
-        if path.parent() != Some(expected_parent.as_path())
-            || marker.parent() != Some(expected_parent.as_path())
-        {
-            bail!("invalid_response: installed Pro helper path escaped its private root");
-        }
+    /// Consumes one lifecycle-validated artifact identity without reopening
+    /// the release marker or interpreting release bytes. The retained handle
+    /// is streamed into the OS execution object with fixed memory.
+    pub fn from_validated(identity: ValidatedArtifactIdentity) -> Result<Self> {
+        let path = identity.path().to_path_buf();
+        let data_root = identity.operation().data_root();
+        verify_controlled_executable_layout(data_root, &path)?;
+        let artifact_sha256 = identity.artifact_sha256().to_owned();
+        let protocol_fingerprint = identity.manifest().protocol_fingerprint.clone();
 
         #[cfg(windows)]
         {
-            let directories = [data_root.to_path_buf(), layout.pro_root(), expected_parent];
-            let mut locked = Vec::with_capacity(directories.len());
-            for directory in directories {
-                let handle = open_locked_directory(&directory)?;
-                verify_private_directory_handle(&handle)
-                    .context("invalid_response: Pro install directory ACL is unsafe")?;
-                locked.push(handle);
-            }
-            let helper = open_locked_file(path)?;
-            let marker_file = open_locked_file(marker)?;
+            let directories = lock_controlled_directory_chain(data_root, &path)?;
+            let helper = open_locked_file(&path)?;
+            verify_open_identity(identity.artifact_file(), &helper, false)?;
             verify_private_file_handle(&helper)
-                .context("invalid_response: installed Pro helper ACL is unsafe")?;
-            verify_private_file_handle(&marker_file)
-                .context("invalid_response: installed Pro marker ACL is unsafe")?;
-            if read_bounded_handle(
+                .context("invalid_response: validated Pro helper ACL is unsafe")?;
+            verify_stream_digest(
                 &helper,
-                artifact.len() as u64,
-                "installed Pro helper execution handle",
-            )? != artifact
-            {
-                bail!(
-                    "invalid_response: installed Pro helper changed before its execution handle was retained"
-                );
-            }
+                identity.artifact_size(),
+                &artifact_sha256,
+                "validated Pro helper execution handle",
+            )?;
             Ok(Self {
-                path: path.to_path_buf(),
-                artifact_sha256: identity.artifact_sha256,
-                protocol_fingerprint: identity.protocol_fingerprint,
-                _installation_guard: Some(Box::new(installation_guard)),
-                _directories: locked,
+                path,
+                artifact_sha256,
+                protocol_fingerprint,
+                _validated_identity: Some(identity),
+                _directories: directories,
                 helper,
             })
         }
         #[cfg(unix)]
         {
-            verify_private_directory(data_root)
-                .context("invalid_response: ctx data directory permissions are unsafe")?;
-            verify_private_directory(&layout.pro_root())
-                .context("invalid_response: Pro directory permissions are unsafe")?;
-            verify_private_directory(&expected_parent)
-                .context("invalid_response: Pro install directory permissions are unsafe")?;
-            verify_private_executable(path)
-                .context("invalid_response: installed Pro helper permissions are unsafe")?;
-            verify_private_file(marker)
-                .context("invalid_response: installed Pro marker permissions are unsafe")?;
-            let execution = UnixExecutionSnapshot::from_validated_bytes(
-                &expected_parent,
-                artifact,
-                &identity.artifact_sha256,
+            verify_private_executable(&path)
+                .context("invalid_response: validated Pro helper permissions are unsafe")?;
+            verify_unix_open_identity(identity.artifact_file(), &path, identity.artifact_size())?;
+            let parent = path.parent().ok_or_else(|| {
+                anyhow::anyhow!("invalid_response: validated Pro helper has no parent")
+            })?;
+            let (execution, copied_sha256) = UnixExecutionSnapshot::from_source(
+                parent,
+                identity.artifact_file(),
+                identity.artifact_size(),
+                Some(&artifact_sha256),
             )?;
+            debug_assert_eq!(copied_sha256, artifact_sha256);
             Ok(Self {
-                path: path.to_path_buf(),
-                artifact_sha256: identity.artifact_sha256,
-                protocol_fingerprint: identity.protocol_fingerprint,
-                _installation_guard: Some(Box::new(installation_guard)),
+                path,
+                artifact_sha256,
+                protocol_fingerprint,
+                _validated_identity: Some(identity),
                 execution,
             })
         }
@@ -241,20 +212,36 @@ impl VerifiedHelperExecutable {
     }
 
     /// Confirms the final spawn route still resolves to the exact retained
-    /// execution object and, where sealing is unavailable, revalidates bytes.
+    /// execution object and, where sealing is unavailable, streams a bounded
+    /// digest over the retained handle immediately before descriptor-bound exec.
     pub fn verify_execution_identity(&self) -> Result<()> {
         #[cfg(unix)]
         self.execution.verify(&self.artifact_sha256)?;
         #[cfg(windows)]
         {
-            let named = open_file_handle(&self.path)?;
-            verify_open_identity(&self.helper, &named, false)?;
+            if let Some(identity) = &self._validated_identity {
+                verify_open_identity(identity.artifact_file(), &self.helper, false)?;
+            } else {
+                let named = open_file_handle(&self.path)?;
+                verify_open_identity(&self.helper, &named, false)?;
+            }
+            let expected_size = self
+                ._validated_identity
+                .as_ref()
+                .map(ValidatedArtifactIdentity::artifact_size)
+                .unwrap_or(self.helper.metadata()?.len());
+            verify_stream_digest(
+                &self.helper,
+                expected_size,
+                &self.artifact_sha256,
+                "retained Pro execution object",
+            )?;
         }
         Ok(())
     }
 }
 
-fn read_bounded_handle(file: &fs::File, maximum: u64, label: &str) -> Result<Vec<u8>> {
+fn stream_digest(file: &fs::File, maximum: u64, label: &str) -> Result<(u64, String)> {
     let metadata = file
         .metadata()
         .with_context(|| format!("invalid_request: inspect {label} handle"))?;
@@ -265,34 +252,158 @@ fn read_bounded_handle(file: &fs::File, maximum: u64, label: &str) -> Result<Vec
         .try_clone()
         .with_context(|| format!("invalid_request: clone {label} handle"))?;
     reader
-        .seek(std::io::SeekFrom::Start(0))
+        .seek(SeekFrom::Start(0))
         .with_context(|| format!("invalid_request: seek {label} handle"))?;
-    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
-    reader
-        .take(maximum.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .with_context(|| format!("invalid_request: read {label} handle"))?;
-    if bytes.len() as u64 > maximum {
-        bail!("invalid_response: {label} exceeds maximum size");
+    let mut digest = Sha256::new();
+    let mut total = 0_u64;
+    let mut buffer = [0_u8; STREAM_BUFFER_BYTES];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .with_context(|| format!("invalid_request: read {label} handle"))?;
+        if read == 0 {
+            break;
+        }
+        total = total
+            .checked_add(read as u64)
+            .ok_or_else(|| anyhow::anyhow!("invalid_response: {label} exceeds maximum size"))?;
+        if total > maximum {
+            bail!("invalid_response: {label} exceeds maximum size");
+        }
+        digest.update(&buffer[..read]);
     }
-    Ok(bytes)
+    if total != metadata.len() {
+        bail!("invalid_response: {label} changed while reading");
+    }
+    Ok((total, format!("{:x}", digest.finalize())))
+}
+
+fn verify_stream_digest(
+    file: &fs::File,
+    expected_size: u64,
+    expected_sha256: &str,
+    label: &str,
+) -> Result<()> {
+    let (size, digest) = stream_digest(file, expected_size, label)?;
+    if size != expected_size || !digest.eq_ignore_ascii_case(expected_sha256) {
+        bail!("invalid_response: {label} bytes changed before spawn");
+    }
+    Ok(())
+}
+
+fn stream_copy_and_digest(
+    source: &fs::File,
+    destination: &mut fs::File,
+    expected_size: u64,
+    label: &str,
+) -> Result<String> {
+    let metadata = source
+        .metadata()
+        .with_context(|| format!("invalid_request: inspect {label} handle"))?;
+    if !metadata.is_file() || metadata.len() != expected_size {
+        bail!("invalid_response: {label} size changed before execution retention");
+    }
+    let mut reader = source
+        .try_clone()
+        .with_context(|| format!("invalid_request: clone {label} handle"))?;
+    reader
+        .seek(SeekFrom::Start(0))
+        .with_context(|| format!("invalid_request: seek {label} handle"))?;
+    destination
+        .seek(SeekFrom::Start(0))
+        .with_context(|| format!("invalid_response: seek retained {label}"))?;
+    let mut digest = Sha256::new();
+    let mut total = 0_u64;
+    let mut buffer = [0_u8; STREAM_BUFFER_BYTES];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .with_context(|| format!("invalid_request: read {label} handle"))?;
+        if read == 0 {
+            break;
+        }
+        total = total
+            .checked_add(read as u64)
+            .ok_or_else(|| anyhow::anyhow!("invalid_response: {label} exceeds expected size"))?;
+        if total > expected_size {
+            bail!("invalid_response: {label} exceeds expected size");
+        }
+        destination
+            .write_all(&buffer[..read])
+            .with_context(|| format!("invalid_response: populate retained {label}"))?;
+        digest.update(&buffer[..read]);
+    }
+    if total != expected_size || source.metadata()?.len() != expected_size {
+        bail!("invalid_response: {label} changed while retaining execution bytes");
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn verify_controlled_executable_layout(data_root: &Path, path: &Path) -> Result<()> {
+    if !path.is_absolute() || !path.starts_with(data_root) {
+        bail!("invalid_response: validated Pro helper escaped its lifecycle root");
+    }
+    let mut directory = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("invalid_response: validated Pro helper has no parent"))?;
+    loop {
+        #[cfg(not(windows))]
+        verify_private_directory(directory)
+            .context("invalid_response: validated Pro helper directory permissions are unsafe")?;
+        if directory == data_root {
+            break;
+        }
+        directory = directory.parent().ok_or_else(|| {
+            anyhow::anyhow!("invalid_response: validated Pro helper directory escaped its root")
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn lock_controlled_directory_chain(data_root: &Path, path: &Path) -> Result<Vec<fs::File>> {
+    let mut current = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("invalid_response: validated Pro helper has no parent"))?;
+    let mut directories = Vec::new();
+    loop {
+        directories.push(current.to_path_buf());
+        if current == data_root {
+            break;
+        }
+        current = current.parent().ok_or_else(|| {
+            anyhow::anyhow!("invalid_response: validated Pro helper directory escaped its root")
+        })?;
+    }
+    directories.reverse();
+    directories
+        .into_iter()
+        .map(|directory| {
+            let handle = open_locked_directory(&directory)?;
+            verify_private_directory_handle(&handle)
+                .context("invalid_response: validated Pro helper directory ACL is unsafe")?;
+            Ok(handle)
+        })
+        .collect()
 }
 
 #[cfg(unix)]
-fn open_unix_regular_file(path: &Path, label: &str) -> Result<fs::File> {
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-        .open(path)
-        .with_context(|| format!("pro_not_installed: open {label}"))?;
-    if !file
+fn verify_unix_open_identity(file: &fs::File, path: &Path, artifact_size: u64) -> Result<()> {
+    let opened = file
         .metadata()
-        .with_context(|| format!("pro_not_installed: inspect {label}"))?
-        .is_file()
+        .context("invalid_response: inspect validated Pro helper handle")?;
+    let named = fs::symlink_metadata(path)
+        .context("invalid_response: inspect validated Pro helper path")?;
+    if !opened.is_file()
+        || !named.is_file()
+        || named.file_type().is_symlink()
+        || opened.len() != artifact_size
+        || opened.dev() != named.dev()
+        || opened.ino() != named.ino()
     {
-        bail!("pro_not_installed: {label} is not a regular file");
+        bail!("invalid_response: validated Pro helper path identity changed");
     }
-    Ok(file)
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -327,25 +438,41 @@ struct UnixExecutionSnapshot {
 
 #[cfg(unix)]
 impl UnixExecutionSnapshot {
-    fn from_validated_bytes(parent: &Path, artifact: &[u8], artifact_sha256: &str) -> Result<Self> {
+    fn from_source(
+        parent: &Path,
+        source: &fs::File,
+        expected_size: u64,
+        expected_sha256: Option<&str>,
+    ) -> Result<(Self, String)> {
         #[cfg(target_os = "linux")]
-        if let Some(file) = create_sealed_linux_snapshot(artifact)? {
-            return Ok(Self {
+        if let Some((file, artifact_sha256)) = create_sealed_linux_snapshot(source, expected_size)?
+        {
+            if expected_sha256
+                .is_some_and(|expected| !artifact_sha256.eq_ignore_ascii_case(expected))
+            {
+                bail!("invalid_response: validated Pro helper changed before execution retention");
+            }
+            let snapshot = Self {
                 identity: UnixFileIdentity::from_file(&file)?,
                 file,
                 sealed: true,
-            });
+            };
+            snapshot.verify(&artifact_sha256)?;
+            return Ok((snapshot, artifact_sha256));
         }
 
-        let file = create_unlinked_unix_snapshot(parent, artifact)?;
+        let (file, artifact_sha256) = create_unlinked_unix_snapshot(parent, source, expected_size)?;
+        if expected_sha256.is_some_and(|expected| !artifact_sha256.eq_ignore_ascii_case(expected)) {
+            bail!("invalid_response: validated Pro helper changed before execution retention");
+        }
         let snapshot = Self {
             identity: UnixFileIdentity::from_file(&file)?,
             file,
             #[cfg(target_os = "linux")]
             sealed: false,
         };
-        snapshot.verify(artifact_sha256)?;
-        Ok(snapshot)
+        snapshot.verify(&artifact_sha256)?;
+        Ok((snapshot, artifact_sha256))
     }
 
     fn descriptor_path(&self) -> PathBuf {
@@ -359,9 +486,9 @@ impl UnixExecutionSnapshot {
     fn verify(&self, artifact_sha256: &str) -> Result<()> {
         let descriptor_path = self.descriptor_path();
         let retained = UnixFileIdentity::from_file(&self.file)?;
-        // `stat(/dev/fd/N)` reports the synthetic fdesc vnode on macOS rather
-        // than the retained file itself. Opening the kernel-owned route first
-        // gives the duplicated execution object on every supported Unix.
+        // `stat(/dev/fd/N)` reports a synthetic fdesc vnode on macOS. Opening
+        // the kernel-owned route first yields the duplicated execution object
+        // and makes this identity comparison portable across supported Unix.
         let routed_file = fs::OpenOptions::new()
             .read(true)
             .open(&descriptor_path)
@@ -382,22 +509,20 @@ impl UnixExecutionSnapshot {
             return Ok(());
         }
 
-        // Platforms without a sealed anonymous executable revalidate the exact
-        // retained bytes at the smallest boundary before descriptor-bound exec.
-        let bytes = read_bounded_handle(
+        verify_stream_digest(
             &self.file,
             self.identity.size,
+            artifact_sha256,
             "retained Pro execution object",
-        )?;
-        if format!("{:x}", Sha256::digest(bytes)) != artifact_sha256 {
-            bail!("invalid_response: retained Pro execution object bytes changed before spawn");
-        }
-        Ok(())
+        )
     }
 }
 
 #[cfg(target_os = "linux")]
-fn create_sealed_linux_snapshot(artifact: &[u8]) -> Result<Option<fs::File>> {
+fn create_sealed_linux_snapshot(
+    source: &fs::File,
+    expected_size: u64,
+) -> Result<Option<(fs::File, String)>> {
     let name = std::ffi::CString::new("ctx-pro-verified-execution")
         .expect("static memfd name contains no NUL");
     let base_flags = libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING;
@@ -409,8 +534,6 @@ fn create_sealed_linux_snapshot(artifact: &[u8]) -> Result<Option<fs::File>> {
         )
     };
     if descriptor == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINVAL) {
-        // MFD_EXEC is required by hardened current kernels but unknown to
-        // older kernels, where executable memfds were the default.
         descriptor = unsafe { libc::syscall(libc::SYS_memfd_create, name.as_ptr(), base_flags) };
     }
     if descriptor == -1 {
@@ -426,8 +549,8 @@ fn create_sealed_linux_snapshot(artifact: &[u8]) -> Result<Option<fs::File>> {
     let descriptor = i32::try_from(descriptor)
         .context("invalid_response: Pro execution descriptor exceeded i32")?;
     let mut file = unsafe { fs::File::from_raw_fd(descriptor) };
-    file.write_all(artifact)
-        .context("invalid_response: populate sealed Pro execution object")?;
+    let artifact_sha256 =
+        stream_copy_and_digest(source, &mut file, expected_size, "validated Pro helper")?;
     let seals = libc::F_SEAL_SEAL | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_WRITE;
     if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_ADD_SEALS, seals) } == -1 {
         let error = std::io::Error::last_os_error();
@@ -436,11 +559,15 @@ fn create_sealed_linux_snapshot(artifact: &[u8]) -> Result<Option<fs::File>> {
         }
         return Err(error).context("invalid_response: seal Pro execution object");
     }
-    Ok(Some(file))
+    Ok(Some((file, artifact_sha256)))
 }
 
 #[cfg(unix)]
-fn create_unlinked_unix_snapshot(parent: &Path, artifact: &[u8]) -> Result<fs::File> {
+fn create_unlinked_unix_snapshot(
+    parent: &Path,
+    source: &fs::File,
+    expected_size: u64,
+) -> Result<(fs::File, String)> {
     for _ in 0..16 {
         let path = parent.join(format!(".ctx-pro-exec-{}", uuid::Uuid::new_v4()));
         let mut writer = match fs::OpenOptions::new()
@@ -456,9 +583,8 @@ fn create_unlinked_unix_snapshot(parent: &Path, artifact: &[u8]) -> Result<fs::F
                 return Err(error).context("invalid_response: create Pro execution snapshot")
             }
         };
-        writer
-            .write_all(artifact)
-            .context("invalid_response: populate Pro execution snapshot")?;
+        let artifact_sha256 =
+            stream_copy_and_digest(source, &mut writer, expected_size, "validated Pro helper")?;
         writer
             .sync_all()
             .context("invalid_response: persist Pro execution snapshot")?;
@@ -471,9 +597,26 @@ fn create_unlinked_unix_snapshot(parent: &Path, artifact: &[u8]) -> Result<fs::F
         }
         fs::remove_file(&path).context("invalid_response: unlink Pro execution snapshot")?;
         drop(writer);
-        return Ok(reader);
+        return Ok((reader, artifact_sha256));
     }
     bail!("invalid_response: allocate unique Pro execution snapshot")
+}
+
+#[cfg(unix)]
+fn open_unix_regular_file(path: &Path, label: &str) -> Result<fs::File> {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)
+        .with_context(|| format!("pro_not_installed: open {label}"))?;
+    if !file
+        .metadata()
+        .with_context(|| format!("pro_not_installed: inspect {label}"))?
+        .is_file()
+    {
+        bail!("pro_not_installed: {label} is not a regular file");
+    }
+    Ok(file)
 }
 
 #[cfg(windows)]
@@ -571,10 +714,40 @@ fn windows_file_identity(file: &fs::File) -> Result<(u32, u64)> {
     Ok((information.dwVolumeSerialNumber, index))
 }
 
+#[cfg(test)]
+mod streaming_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "streams the maximum supported Pro artifact"]
+    fn maximum_artifact_digest_uses_the_fixed_streaming_buffer() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("maximum-artifact");
+        let file = fs::File::create(&path)?;
+        file.set_len(ctx_pro_lifecycle::release_manifest::MAX_ARTIFACT_BYTES)?;
+        drop(file);
+        let file = fs::File::open(path)?;
+        let (size, digest) = stream_digest(
+            &file,
+            ctx_pro_lifecycle::release_manifest::MAX_ARTIFACT_BYTES,
+            "maximum Pro helper",
+        )?;
+        assert_eq!(
+            size,
+            ctx_pro_lifecycle::release_manifest::MAX_ARTIFACT_BYTES
+        );
+        assert_eq!(digest.len(), 64);
+        Ok(())
+    }
+}
+
 #[cfg(all(test, windows))]
 mod windows_tests {
     use ctx_history_core::platform_security::{
-        restrict_private_directory, restrict_private_executable, restrict_private_file,
+        restrict_private_directory, restrict_private_executable,
+    };
+    use ctx_pro_lifecycle::{
+        installed_artifact::open_test_artifact_identity, operation::LifecycleOperation,
     };
 
     use super::*;
@@ -592,30 +765,15 @@ mod windows_tests {
             restrict_private_directory(directory)?;
         }
         let helper = bin.join("ctx-pro.exe");
-        let marker = bin.join("ctx-pro.exe.install.json");
         fs::write(&helper, b"signed helper bytes")?;
-        fs::write(&marker, b"signed marker bytes")?;
         restrict_private_executable(&helper)?;
-        restrict_private_file(&marker)?;
 
-        let locked = VerifiedHelperExecutable::open(
-            &data_root,
-            &helper,
-            &marker,
-            b"signed helper bytes",
-            LifecycleValidatedHelper::new(
-                format!("{:x}", Sha256::digest(b"signed helper bytes")),
-                ctx_pro_host_protocol::PROTOCOL_FINGERPRINT.to_owned(),
-            ),
-            (),
-        )?;
+        let operation = LifecycleOperation::begin(&data_root, true)?.unwrap();
+        let identity = open_test_artifact_identity(&operation, &helper)?;
+        let locked = VerifiedHelperExecutable::from_validated(identity)?;
         assert!(fs::remove_file(&helper).is_err());
         assert!(fs::rename(&helper, bin.join("replaced.exe")).is_err());
         assert!(fs::write(&helper, b"attacker replacement").is_err());
-        assert_eq!(
-            locked.artifact_sha256(),
-            format!("{:x}", Sha256::digest(b"signed helper bytes"))
-        );
         locked.verify_execution_identity()?;
         drop(locked);
         assert!(fs::write(&helper, b"owner update after spawn").is_ok());
@@ -628,7 +786,10 @@ mod unix_tests {
     use std::{os::unix::fs::PermissionsExt as _, process::Command};
 
     use ctx_history_core::platform_security::{
-        restrict_private_directory, restrict_private_executable, restrict_private_file,
+        restrict_private_directory, restrict_private_executable,
+    };
+    use ctx_pro_lifecycle::{
+        installed_artifact::open_test_artifact_identity, operation::LifecycleOperation,
     };
 
     use super::*;
@@ -689,41 +850,38 @@ mod unix_tests {
     }
 
     #[test]
-    fn installed_path_replacement_cannot_override_lifecycle_validated_bytes() -> Result<()> {
+    fn staged_path_replacement_executes_retained_lifecycle_bytes() -> Result<()> {
         let parent = tempfile::tempdir()?;
         let data_root = parent.path().join("ctx-data");
-        let layout = ProFilesystemLayout::new(&data_root);
-        let pro = layout.pro_root();
-        let bin = layout.bin_dir();
-        fs::create_dir_all(&bin)?;
-        for directory in [&data_root, &pro, &bin] {
-            restrict_private_directory(directory)?;
+        fs::create_dir(&data_root)?;
+        restrict_private_directory(&data_root)?;
+        let operation = LifecycleOperation::begin(&data_root, true)?.unwrap();
+        let stage = ProFilesystemLayout::new(&data_root)
+            .downloads_dir()
+            .join("bundle-test");
+        fs::create_dir_all(&stage)?;
+        for directory in [
+            ProFilesystemLayout::new(&data_root).downloads_dir(),
+            stage.clone(),
+        ] {
+            restrict_private_directory(&directory)?;
         }
-        let helper = layout.helper_path();
-        let marker = layout.helper_marker_path();
-        write_executable(&helper, ATTACKER_HELPER)?;
-        fs::write(&marker, b"lifecycle-validated marker")?;
-        restrict_private_executable(&helper)?;
-        restrict_private_file(&marker)?;
+        let path = stage.join("ctx-pro");
+        write_executable(&path, TRUSTED_HELPER)?;
+        restrict_private_executable(&path)?;
 
-        let executable = VerifiedHelperExecutable::open(
-            &data_root,
-            &helper,
-            &marker,
-            TRUSTED_HELPER,
-            LifecycleValidatedHelper::new(
-                format!("{:x}", Sha256::digest(TRUSTED_HELPER)),
-                ctx_pro_host_protocol::PROTOCOL_FINGERPRINT.to_owned(),
-            ),
-            (),
-        )?;
+        let identity = open_test_artifact_identity(&operation, &path)?;
+        let executable = VerifiedHelperExecutable::from_validated(identity)?;
+        fs::rename(&path, stage.join("original-replaced-path"))?;
+        write_executable(&path, ATTACKER_HELPER)?;
+        restrict_private_executable(&path)?;
 
         assert_eq!(execute(&executable)?, b"trusted-snapshot");
         Ok(())
     }
 
     #[test]
-    fn unsealed_snapshot_revalidates_exact_bytes_before_spawn() -> Result<()> {
+    fn unsealed_snapshot_stream_revalidation_rejects_in_place_mutation() -> Result<()> {
         let root = tempfile::tempdir()?;
         let snapshot_path = root.path().join("retained-snapshot");
         write_executable(&snapshot_path, TRUSTED_HELPER)?;
@@ -742,7 +900,7 @@ mod unix_tests {
         let artifact_sha256 = format!("{:x}", Sha256::digest(TRUSTED_HELPER));
         snapshot.verify(&artifact_sha256)?;
 
-        file.seek(std::io::SeekFrom::Start(0))?;
+        file.seek(SeekFrom::Start(0))?;
         file.write_all(b"?")?;
         file.sync_all()?;
 

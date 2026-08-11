@@ -82,13 +82,20 @@ pub(crate) fn helper_path(
         return regular_helper_path(path);
     }
 
-    host.validated_installed_helper(data_root)
-        .map(|helper| helper.path().to_path_buf())
+    helper_executable(host, data_root).map(|helper| helper.path().to_path_buf())
 }
 
 pub(crate) fn helper_executable(
     host: &(impl InstalledProHost + ?Sized),
     data_root: &Path,
+) -> Result<VerifiedHelperExecutable> {
+    helper_executable_in(host, data_root, None)
+}
+
+pub(crate) fn helper_executable_in(
+    host: &(impl InstalledProHost + ?Sized),
+    data_root: &Path,
+    operation: Option<&ctx_pro_lifecycle::operation::LifecycleOperation>,
 ) -> Result<VerifiedHelperExecutable> {
     #[cfg(any(test, feature = "test-support"))]
     if let Some(path) = host.helper_override()? {
@@ -98,7 +105,8 @@ pub(crate) fn helper_executable(
         return VerifiedHelperExecutable::open_developer(&path);
     }
 
-    host.validated_installed_helper(data_root)
+    let identity = host.validated_installed_helper(data_root, operation)?;
+    VerifiedHelperExecutable::from_validated(identity)
 }
 
 pub fn git_executable() -> Result<PathBuf> {

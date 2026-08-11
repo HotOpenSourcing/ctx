@@ -598,7 +598,6 @@ fn no_native_partial_bootstrap_delete_data_cleans_and_retries_without_helper_ipc
         selector.clone(),
         file_vault.clone(),
         pro.join(".ctx-pro-key-store-v1"),
-        pro.join(".ctx-pro.initialized"),
         pro.join(".ctx-pro.graph-key-cleanup.json"),
         ProFilesystemLayout::new(root.path()).bin_dir(),
     ] {
@@ -608,6 +607,7 @@ fn no_native_partial_bootstrap_delete_data_cleans_and_retries_without_helper_ipc
             path.display()
         );
     }
+    assert!(!local_pro_initialization_indicator_exists(root.path()).unwrap());
 
     let mut entries_before_retry = fs::read_dir(&pro)
         .unwrap()
@@ -695,10 +695,24 @@ fn helper_without_graph_still_triggers_vault_cleanup_but_reports_absent() {
 #[test]
 fn keep_data_marks_only_real_graph_data() {
     let root = tempfile::tempdir().unwrap();
-    let pro_root = ProFilesystemLayout::new(root.path()).pro_root();
+    let layout = ProFilesystemLayout::new(root.path());
+    let pro_root = layout.pro_root();
     fs::create_dir(&pro_root).unwrap();
-    let stale_marker = ProFilesystemLayout::new(root.path()).preserved_data_marker_path();
-    fs::write(&stale_marker, PRESERVED_DATA_MARKER_CONTENT).unwrap();
+    let graph = layout.graph_dir();
+    fs::create_dir(&graph).unwrap();
+    ctx_history_core::platform_security::restrict_private_directory(&graph).unwrap();
+    let manifest = graph.join("graph-manifest.ctxm");
+    fs::write(&manifest, b"encrypted manifest").unwrap();
+    ctx_history_core::platform_security::restrict_private_file(&manifest).unwrap();
+    let operation = LifecycleOperation::begin(root.path(), true)
+        .unwrap()
+        .unwrap();
+    ctx_pro_lifecycle::state_markers::mark_data_preserved(&operation).unwrap();
+    drop(operation);
+    assert!(preserved_data_marker_is_set(root.path()));
+    fs::remove_file(manifest).unwrap();
+    fs::remove_dir(graph).unwrap();
+    let stale_marker = layout.preserved_data_marker_path();
 
     assert!(!preserved_data_marker_is_set(root.path()));
     let value = run_uninstall(root.path(), None, UninstallDataDisposition::Keep, true).unwrap();
@@ -1047,6 +1061,7 @@ fn manage_json_never_invokes_the_browser_opener() {
 
         fn setup(
             &mut self,
+            _operation: &LifecycleOperation,
             _data_root: &Path,
             _installed_version: Option<&str>,
             _trial_only: bool,
@@ -1125,6 +1140,7 @@ fn manage_no_open_routes_the_primary_result_to_ui_stdout_only() {
 
         fn setup(
             &mut self,
+            _operation: &LifecycleOperation,
             _data_root: &Path,
             _installed_version: Option<&str>,
             _trial_only: bool,

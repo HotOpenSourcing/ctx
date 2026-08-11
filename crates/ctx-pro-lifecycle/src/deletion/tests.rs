@@ -7,6 +7,8 @@ use tempfile::tempdir;
 
 use super::*;
 
+const TEST_INSTALLATION_ID: &str = "12345678-1234-4234-8234-123456789abc";
+
 #[derive(Default)]
 struct RecordingBackend {
     targets: BTreeSet<GraphKeyDeletionTarget>,
@@ -28,6 +30,7 @@ impl DeletionBackend for RecordingBackend {
     fn graph_key_deletion_targets(
         &self,
         _data_root: &Path,
+        _installation_id: &str,
     ) -> Result<BTreeSet<GraphKeyDeletionTarget>> {
         self.inventory_reads
             .set(self.inventory_reads.get().saturating_add(1));
@@ -68,7 +71,11 @@ impl DeletionBackend for RecordingBackend {
         Ok(())
     }
 
-    fn delete_partial_bootstrap_credentials(&self, _data_root: &Path) -> Result<()> {
+    fn delete_partial_bootstrap_credentials(
+        &self,
+        _data_root: &Path,
+        _installation_id: &str,
+    ) -> Result<()> {
         self.partial_credentials_deleted.replace(true);
         if self.fail_commercial_credentials_after_delete {
             bail!("key_store_unavailable: simulated partial credential deletion failure");
@@ -76,7 +83,11 @@ impl DeletionBackend for RecordingBackend {
         Ok(())
     }
 
-    fn delete_commercial_credentials(&self, _data_root: &Path) -> Result<()> {
+    fn delete_commercial_credentials(
+        &self,
+        _data_root: &Path,
+        _installation_id: &str,
+    ) -> Result<()> {
         self.credentials_deleted.replace(true);
         if self.fail_commercial_credentials_after_delete {
             bail!("key_store_unavailable: simulated late credential deletion failure");
@@ -113,7 +124,7 @@ impl CredentialRecordReader for ValidKeyCorruptEntitlementReader {
         match kind {
             CredentialRecordKind::InstallationSigningKey => {
                 Ok(CredentialRecord::InstallationSigningKey(
-                    super::super::credential_vault::InstallationSigningKeySeed::from_bytes(
+                    ctx_pro_access::credential_vault::InstallationSigningKeySeed::from_bytes(
                         [10; INSTALLATION_PUBLIC_KEY_BYTES],
                     ),
                 ))
@@ -136,7 +147,7 @@ impl CredentialRecordReader for MismatchedKeyAndEntitlementReader {
         match kind {
             CredentialRecordKind::InstallationSigningKey => {
                 Ok(CredentialRecord::InstallationSigningKey(
-                    super::super::credential_vault::InstallationSigningKeySeed::from_bytes(
+                    ctx_pro_access::credential_vault::InstallationSigningKeySeed::from_bytes(
                         [20; INSTALLATION_PUBLIC_KEY_BYTES],
                     ),
                 ))
@@ -175,7 +186,7 @@ impl CredentialRecordReader for MismatchedKeyAndEntitlementReader {
                     signature_base64url: base64url(&[7; ED25519_SIGNATURE_BYTES]),
                 };
                 Ok(CredentialRecord::SignedEntitlement(
-                    super::super::credential_vault::BoundedSignedEntitlement::new(entitlement)?,
+                    ctx_pro_access::credential_vault::BoundedSignedEntitlement::new(entitlement)?,
                 ))
             }
             CredentialRecordKind::WorkOsSession | CredentialRecordKind::AnonymousTrial => {
@@ -187,7 +198,6 @@ impl CredentialRecordReader for MismatchedKeyAndEntitlementReader {
 
 fn fixture() -> (tempfile::TempDir, PathBuf) {
     let root = tempdir().unwrap();
-    crate::identity::installation_id(root.path()).unwrap();
     let pro = ProFilesystemLayout::new(root.path()).pro_root();
     fs::create_dir(&pro).unwrap();
     restrict_private_directory(&pro).unwrap();
@@ -304,7 +314,6 @@ fn missing_or_empty_roots_are_vault_free_idempotent_noops() {
     assert_eq!(missing_service.backend.inventory_reads.get(), 0);
 
     let empty = tempdir().unwrap();
-    crate::identity::installation_id(empty.path()).unwrap();
     let empty_pro = ProFilesystemLayout::new(empty.path()).pro_root();
     fs::create_dir(&empty_pro).unwrap();
     let mut empty_service =
@@ -318,7 +327,6 @@ fn missing_or_empty_roots_are_vault_free_idempotent_noops() {
 #[test]
 fn helperless_graphless_bootstrap_skips_helper_ipc_and_cleans_credentials() {
     let root = tempdir().unwrap();
-    crate::identity::installation_id(root.path()).unwrap();
     let pro = ProFilesystemLayout::new(root.path()).pro_root();
     fs::create_dir(&pro).unwrap();
     restrict_private_directory(&pro).unwrap();
@@ -344,7 +352,6 @@ fn helperless_graphless_bootstrap_skips_helper_ipc_and_cleans_credentials() {
 #[test]
 fn initialized_empty_graph_directory_is_removed_without_key_inventory() {
     let root = tempdir().unwrap();
-    crate::identity::installation_id(root.path()).unwrap();
     let layout = ProFilesystemLayout::new(root.path());
     fs::create_dir(layout.pro_root()).unwrap();
     restrict_private_directory(&layout.pro_root()).unwrap();
@@ -367,7 +374,6 @@ fn initialized_empty_graph_directory_is_removed_without_key_inventory() {
 #[test]
 fn flat_graph_is_deleted_before_graph_key_and_verified_absent() {
     let root = tempdir().unwrap();
-    crate::identity::installation_id(root.path()).unwrap();
     let pro = ProFilesystemLayout::new(root.path()).pro_root();
     fs::create_dir(&pro).unwrap();
     restrict_private_directory(&pro).unwrap();
@@ -395,14 +401,14 @@ fn flat_graph_is_deleted_before_graph_key_and_verified_absent() {
 #[test]
 fn interrupted_graph_delete_retries_recorded_targets_without_helper_ipc() {
     let root = tempdir().unwrap();
-    let installation_id = crate::identity::installation_id(root.path()).unwrap();
+    let installation_id = TEST_INSTALLATION_ID;
     let pro = ProFilesystemLayout::new(root.path()).pro_root();
     fs::create_dir(&pro).unwrap();
     restrict_private_directory(&pro).unwrap();
     write_local_pro_initialization_indicator(root.path()).unwrap();
     write_graph_key_cleanup_phase(
         root.path(),
-        &installation_id,
+        installation_id,
         &BTreeSet::from([test_target(GraphKeyCredentialNamespace::Production, 22)]),
     )
     .unwrap();
@@ -423,7 +429,6 @@ fn interrupted_graph_delete_retries_recorded_targets_without_helper_ipc() {
 #[test]
 fn helperless_bootstrap_credential_failure_is_typed_and_keeps_retry_journal() {
     let root = tempdir().unwrap();
-    crate::identity::installation_id(root.path()).unwrap();
     let pro = ProFilesystemLayout::new(root.path()).pro_root();
     fs::create_dir(&pro).unwrap();
     restrict_private_directory(&pro).unwrap();
@@ -446,7 +451,7 @@ fn helperless_bootstrap_credential_failure_is_typed_and_keeps_retry_journal() {
 #[test]
 fn helper_present_without_graph_deletes_recorded_graph_keys() {
     let root = tempdir().unwrap();
-    let installation_id = crate::identity::installation_id(root.path()).unwrap();
+    let installation_id = TEST_INSTALLATION_ID;
     let layout = ProFilesystemLayout::new(root.path());
     let pro = layout.pro_root();
     fs::create_dir(&pro).unwrap();
@@ -461,7 +466,7 @@ fn helper_present_without_graph_deletes_recorded_graph_keys() {
     let expected_graph_ids = targets
         .iter()
         .map(|target| {
-            pro_graph_record_id(&installation_id, &target.installation_key_thumbprint).unwrap()
+            pro_graph_record_id(installation_id, &target.installation_key_thumbprint).unwrap()
         })
         .collect::<Vec<_>>();
     let expected_thumbprints = targets
@@ -499,7 +504,6 @@ fn helper_present_without_graph_deletes_recorded_graph_keys() {
 #[test]
 fn signed_helper_marker_without_binary_stays_on_helper_deletion_path() {
     let root = tempdir().unwrap();
-    crate::identity::installation_id(root.path()).unwrap();
     let layout = ProFilesystemLayout::new(root.path());
     fs::create_dir(layout.pro_root()).unwrap();
     restrict_private_directory(&layout.pro_root()).unwrap();
@@ -586,10 +590,7 @@ fn cleanup_phase_cannot_cross_installation_identities() {
 #[test]
 fn empty_cleanup_phase_cannot_delete_graph_artifacts() {
     let (root, pro) = fixture();
-    let installation_id = crate::identity::existing_installation_id(root.path())
-        .unwrap()
-        .unwrap();
-    write_graph_key_cleanup_phase(root.path(), &installation_id, &BTreeSet::new()).unwrap();
+    write_graph_key_cleanup_phase(root.path(), TEST_INSTALLATION_ID, &BTreeSet::new()).unwrap();
     let mut service = LocalDeletionService::with_backend_for_test(RecordingBackend::default());
     let error = service.delete_graph_data(root.path()).unwrap_err();
     assert!(error.to_string().starts_with("key_store_unavailable:"));
@@ -656,7 +657,6 @@ fn symlink_graph_or_graph_root_fails_before_key_deletion() {
 
     let root = tempdir().unwrap();
     let outside = tempdir().unwrap();
-    crate::identity::installation_id(root.path()).unwrap();
     symlink(
         outside.path(),
         ProFilesystemLayout::new(root.path()).pro_root(),
@@ -730,7 +730,10 @@ fn graph_identity_matches_private_protocol_v1_format() {
 #[test]
 fn missing_identity_fails_closed_while_ciphertext_remains() {
     let (root, pro) = fixture();
-    let mut service = LocalDeletionService::with_backend_for_test(RecordingBackend::default());
+    let mut service = LocalDeletionService::with_backend_and_resolver_for_test(
+        RecordingBackend::default(),
+        |_| Ok(None),
+    );
     assert!(service
         .delete_graph_data(root.path())
         .unwrap_err()

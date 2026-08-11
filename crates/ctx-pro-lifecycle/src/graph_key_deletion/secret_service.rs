@@ -8,7 +8,7 @@ use std::{
 use secret_service::blocking::{Collection, Item, SecretService};
 use secret_service::{EncryptionType, Error as SecretServiceError};
 
-use crate::pro::credential_vault::CredentialVaultError;
+use ctx_pro_access::credential_vault::CredentialVaultError;
 
 const SERVICE: &str = "com.ctx.pro.work-graph-key.v1";
 const KIND: &str = "ctx-pro-graph-key-v1";

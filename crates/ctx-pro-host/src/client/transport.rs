@@ -37,6 +37,22 @@ impl ProClient {
         Self::connect_with_authorization_mode(host, data_root, required, None, true)
     }
 
+    pub(super) fn connect_for_status_in(
+        host: &(impl InstalledProHost + ?Sized),
+        data_root: &Path,
+        operation: &ctx_pro_lifecycle::operation::LifecycleOperation,
+        required: &BTreeSet<Capability>,
+    ) -> Result<Self> {
+        Self::connect_with_authorization_mode_in(
+            host,
+            data_root,
+            Some(operation),
+            required,
+            None,
+            true,
+        )
+    }
+
     pub(super) fn connect_with_authorization_mode(
         host: &(impl InstalledProHost + ?Sized),
         data_root: &Path,
@@ -44,7 +60,25 @@ impl ProClient {
         authorization: Option<&dyn AuthorizationProvider>,
         bind_status_identity: bool,
     ) -> Result<Self> {
-        let executable = helper_executable(host, data_root)?;
+        Self::connect_with_authorization_mode_in(
+            host,
+            data_root,
+            None,
+            required,
+            authorization,
+            bind_status_identity,
+        )
+    }
+
+    fn connect_with_authorization_mode_in(
+        host: &(impl InstalledProHost + ?Sized),
+        data_root: &Path,
+        operation: Option<&ctx_pro_lifecycle::operation::LifecycleOperation>,
+        required: &BTreeSet<Capability>,
+        authorization: Option<&dyn AuthorizationProvider>,
+        bind_status_identity: bool,
+    ) -> Result<Self> {
+        let executable = helper_executable_in(host, data_root, operation)?;
         let path = executable.path().to_path_buf();
         Self::connect_to_path_with_authorization_mode(
             host,

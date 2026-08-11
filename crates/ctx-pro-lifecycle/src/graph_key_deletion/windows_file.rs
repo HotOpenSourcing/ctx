@@ -36,7 +36,7 @@ use windows_sys::Win32::{
     System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
 
-use crate::pro::credential_vault::CredentialVaultError;
+use ctx_pro_access::credential_vault::CredentialVaultError;
 
 const STORE_DIRECTORY: &str = ".ctx-pro-key-store-v1";
 const RECORDS_DIRECTORY: &str = "records";

@@ -40,4 +40,5 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage
 
 [dev-dependencies]
 ctx-history-index = { path = "../ctx-history-index", features = ["test-support"] }
+ctx-pro-lifecycle = { path = "../ctx-pro-lifecycle", features = ["test-support"] }
 tempfile.workspace = true

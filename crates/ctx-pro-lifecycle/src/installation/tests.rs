@@ -1,7 +1,11 @@
 use std::{
+    cell::{Cell, RefCell},
     fs,
     path::PathBuf,
     process::{Command, Stdio},
+    sync::mpsc,
+    thread,
+    time::Duration,
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -16,6 +20,13 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 use super::*;
+
+type LifecycleLock = LifecycleOperation;
+
+fn write_initialization_marker(data_root: &std::path::Path) {
+    let operation = LifecycleOperation::begin(data_root, true).unwrap().unwrap();
+    crate::state_markers::mark_initialized(&operation).unwrap();
+}
 
 const CORE_GENERATION_SENTINEL: &[u8] = b"generation-bound Core snapshot authority";
 const SEMANTIC_INDEX_SENTINEL: &[u8] = b"v0.26 disposable semantic index";
@@ -195,11 +206,22 @@ fn install_bundle_with_persistence(
     update: bool,
     persistence: &mut Persistence,
 ) -> Result<serde_json::Value> {
+    install_bundle_with_recheck(bundle, data_root, update, &NoopInstallRecheck, persistence)
+}
+
+fn install_bundle_with_recheck(
+    bundle: &SignedBundle,
+    data_root: &Path,
+    update: bool,
+    recheck: &dyn InstallRecheckPort,
+    persistence: &mut Persistence,
+) -> Result<serde_json::Value> {
     install_with_key(
         &bundle.args,
         data_root,
         update,
         TEST_PUBLIC_KEY_PEM,
+        recheck,
         persistence,
     )
 }
@@ -242,23 +264,17 @@ fn repair_bundle(bundle: &SignedBundle, data_root: &Path) -> Result<serde_json::
 }
 
 fn assert_automated_repair_status(data_root: &Path) {
-    let value = lifecycle_status_json_with_key(data_root, TEST_PUBLIC_KEY_PEM);
-    assert_eq!(value["schema_version"], 2);
-    assert_eq!(value["state"], "repair_required");
-    assert_eq!(value["installed"], false);
-    assert_eq!(value["error_code"], "invalid_response");
-    assert_eq!(value["next_action"]["command"], "ctx pro");
-    assert_eq!(value["next_action"]["reason"], "helper_artifacts_invalid");
+    let error = reconcile(data_root).unwrap_err();
+    assert!(crate::installed_artifact::is_setup_repair_required_error(
+        &error
+    ));
 }
 
 fn assert_manual_diagnosis_status(data_root: &Path) {
-    let value = lifecycle_status_json_with_key(data_root, TEST_PUBLIC_KEY_PEM);
-    assert_eq!(value["schema_version"], 2);
-    assert_eq!(value["state"], "unavailable");
-    assert_eq!(value["installed"], false);
-    assert_eq!(value["error_code"], "invalid_response");
-    assert_eq!(value["next_action"]["command"], Value::Null);
-    assert_eq!(value["next_action"]["reason"], "manual_diagnosis_required");
+    let error = reconcile(data_root).unwrap_err();
+    assert!(!crate::installed_artifact::is_setup_repair_required_error(
+        &error
+    ));
 }
 
 fn installed_pair(data_root: &Path) -> ValidatedPair {
@@ -283,10 +299,42 @@ fn assert_no_transaction_files(data_root: &Path) {
     }
 }
 
-fn pending_recheck_target(data_root: &Path) -> Option<String> {
-    let path = data_root.join("daemon/jobs/pro-catch-up-recheck.json");
-    let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
-    value["target_helper_sha256"].as_str().map(str::to_owned)
+#[derive(Default)]
+struct RecheckProbe {
+    fail_publish: bool,
+    wake_count: Cell<usize>,
+    targets_checked: RefCell<Vec<String>>,
+}
+
+impl RecheckProbe {
+    fn target_path(data_root: &Path) -> PathBuf {
+        data_root.join("test-recheck-target")
+    }
+
+    fn target(data_root: &Path) -> Option<String> {
+        fs::read_to_string(Self::target_path(data_root)).ok()
+    }
+}
+
+impl InstallRecheckPort for RecheckProbe {
+    fn publish_recheck_intent(&self, data_root: &Path, artifact_sha256: &str) -> Result<()> {
+        if self.fail_publish {
+            bail!("test_recheck_unavailable: simulated intent publication failure");
+        }
+        fs::write(Self::target_path(data_root), artifact_sha256)?;
+        Ok(())
+    }
+
+    fn recheck_targets(&self, data_root: &Path, artifact_sha256: &str) -> Result<bool> {
+        self.targets_checked
+            .borrow_mut()
+            .push(artifact_sha256.to_owned());
+        Ok(Self::target(data_root).as_deref() == Some(artifact_sha256))
+    }
+
+    fn wake_recheck(&self, _data_root: &Path) {
+        self.wake_count.set(self.wake_count.get().saturating_add(1));
+    }
 }
 
 fn boundary_position(boundaries: &[&str], name: &str) -> usize {
@@ -328,7 +376,7 @@ fn assert_secure_permissions(_data_root: &Path) {
 fn run_crashing_process(bundle: &SignedBundle, data_root: &Path, update: bool, crash_after: usize) {
     let status = Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("pro::lifecycle::tests::crash_worker_process")
+        .arg("installation::tests::crash_worker_process")
         .env("CTX_PRO_CRASH_WORKER", "1")
         .env("CTX_PRO_CRASH_ARTIFACT", &bundle.args.artifact)
         .env("CTX_PRO_CRASH_MANIFEST", &bundle.args.manifest)
@@ -346,7 +394,7 @@ fn run_crashing_process(bundle: &SignedBundle, data_root: &Path, update: bool, c
 fn run_lock_probe(data_root: &Path, expect_blocked: bool) {
     let status = Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("pro::lifecycle::tests::lifecycle_lock_probe_worker")
+        .arg("installation::tests::lifecycle_lock_probe_worker")
         .env("CTX_PRO_LOCK_PROBE", "1")
         .env("CTX_PRO_LOCK_DATA_ROOT", data_root)
         .env(
@@ -396,6 +444,66 @@ fn lifecycle_lock_serializes_other_processes_and_remains_persistent() {
 }
 
 #[test]
+fn queued_uninstall_cannot_interleave_with_setup_or_leave_resurrected_state() {
+    let root = TempDir::new().unwrap();
+    let data_root = root.path().to_path_buf();
+    let bundle = write_bundle(
+        &data_root,
+        "concurrent-setup",
+        b"serialized helper",
+        manifest(b"serialized helper", "1.0.0"),
+    );
+    let (setup_holds_tx, setup_holds_rx) = mpsc::channel();
+    let (finish_setup_tx, finish_setup_rx) = mpsc::channel();
+    let setup = thread::spawn({
+        let data_root = data_root.clone();
+        move || {
+            let operation = LifecycleOperation::begin(&data_root, true)
+                .unwrap()
+                .unwrap();
+            crate::state_markers::mark_initialized(&operation).unwrap();
+            setup_holds_tx.send(()).unwrap();
+            finish_setup_rx.recv().unwrap();
+            install_with_key_locked(
+                &bundle.args,
+                &data_root,
+                false,
+                TEST_PUBLIC_KEY_PEM,
+                &NoopInstallRecheck,
+                &mut Persistence::default(),
+            )
+            .unwrap();
+        }
+    });
+    setup_holds_rx.recv().unwrap();
+
+    let (uninstall_acquired_tx, uninstall_acquired_rx) = mpsc::channel();
+    let uninstall = thread::spawn({
+        let data_root = data_root.clone();
+        move || {
+            let operation = LifecycleOperation::begin(&data_root, false)
+                .unwrap()
+                .unwrap();
+            uninstall_acquired_tx.send(()).unwrap();
+            remove_installation_artifacts(&operation).unwrap();
+            crate::state_markers::clear_initialization_marker(&operation).unwrap();
+        }
+    });
+    assert!(uninstall_acquired_rx
+        .recv_timeout(Duration::from_millis(150))
+        .is_err());
+    finish_setup_tx.send(()).unwrap();
+    setup.join().unwrap();
+    uninstall_acquired_rx
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+    uninstall.join().unwrap();
+
+    assert!(!installation_artifacts_present(&data_root));
+    assert!(!crate::state_markers::initialization_marker_exists(&data_root).unwrap());
+}
+
+#[test]
 fn layout_rejects_alias_and_non_authoritative_helper_paths() {
     let root = TempDir::new().unwrap();
     let aliased = root.path().join("child").join("..").join("pro/bin/ctx-pro");
@@ -431,6 +539,7 @@ fn crash_worker_process() {
         &data_root,
         update,
         TEST_PUBLIC_KEY_PEM,
+        &NoopInstallRecheck,
         &mut persistence,
     );
     panic!("crash boundary was not reached: {result:?}");
@@ -635,6 +744,7 @@ fn oversized_and_truncated_inputs_are_rejected() {
         temp.path(),
         false,
         TEST_PUBLIC_KEY_PEM,
+        &NoopInstallRecheck,
         &mut Persistence::default(),
     )
     .unwrap_err()
@@ -665,6 +775,7 @@ fn oversized_and_truncated_inputs_are_rejected() {
         temp.path(),
         false,
         TEST_PUBLIC_KEY_PEM,
+        &NoopInstallRecheck,
         &mut Persistence::default(),
     )
     .unwrap_err()
@@ -746,7 +857,15 @@ fn target_intent_precedes_visibility_and_survives_interrupted_update() {
     );
     install_bundle(&first, discovery.path(), false).unwrap();
     let mut recording = Persistence::default();
-    install_bundle_with_persistence(&second, discovery.path(), true, &mut recording).unwrap();
+    let discovery_recheck = RecheckProbe::default();
+    install_bundle_with_recheck(
+        &second,
+        discovery.path(),
+        true,
+        &discovery_recheck,
+        &mut recording,
+    )
+    .unwrap();
     let crash_after = boundary_position(&recording.boundaries, "after_publish_pro_recheck_intent");
 
     let temp = TempDir::new().unwrap();
@@ -767,19 +886,34 @@ fn target_intent_precedes_visibility_and_survives_interrupted_update() {
         crash_after: Some(crash_after),
         ..Persistence::default()
     };
-    let error =
-        install_bundle_with_persistence(&second, temp.path(), true, &mut interrupted).unwrap_err();
+    let interrupted_recheck = RecheckProbe::default();
+    let error = install_bundle_with_recheck(
+        &second,
+        temp.path(),
+        true,
+        &interrupted_recheck,
+        &mut interrupted,
+    )
+    .unwrap_err();
     assert!(error.to_string().contains("simulated_termination"));
     assert_eq!(target_bytes(temp.path()), b"first helper");
     assert_eq!(
-        pending_recheck_target(temp.path()).unwrap(),
+        RecheckProbe::target(temp.path()).unwrap(),
         format!("{:x}", Sha256::digest(b"second helper"))
     );
 
-    install_bundle(&second, temp.path(), true).unwrap();
+    let retry_recheck = RecheckProbe::default();
+    install_bundle_with_recheck(
+        &second,
+        temp.path(),
+        true,
+        &retry_recheck,
+        &mut Persistence::default(),
+    )
+    .unwrap();
     assert_eq!(target_bytes(temp.path()), b"second helper");
     assert_eq!(
-        pending_recheck_target(temp.path()).unwrap(),
+        RecheckProbe::target(temp.path()).unwrap(),
         format!("{:x}", Sha256::digest(b"second helper"))
     );
 }
@@ -801,7 +935,15 @@ fn installed_target_with_unwoken_intent_is_recoverable_on_setup_retry() {
     );
     install_bundle(&first, discovery.path(), false).unwrap();
     let mut recording = Persistence::default();
-    install_bundle_with_persistence(&second, discovery.path(), true, &mut recording).unwrap();
+    let discovery_recheck = RecheckProbe::default();
+    install_bundle_with_recheck(
+        &second,
+        discovery.path(),
+        true,
+        &discovery_recheck,
+        &mut recording,
+    )
+    .unwrap();
     let crash_after = boundary_position(
         &recording.boundaries,
         "after_install_before_pro_recheck_wake",
@@ -825,21 +967,36 @@ fn installed_target_with_unwoken_intent_is_recoverable_on_setup_retry() {
         crash_after: Some(crash_after),
         ..Persistence::default()
     };
-    install_bundle_with_persistence(&second, retry.path(), true, &mut interrupted).unwrap_err();
+    let interrupted_recheck = RecheckProbe::default();
+    install_bundle_with_recheck(
+        &second,
+        retry.path(),
+        true,
+        &interrupted_recheck,
+        &mut interrupted,
+    )
+    .unwrap_err();
     assert_eq!(target_bytes(retry.path()), b"second helper");
     assert_eq!(
-        pending_recheck_target(retry.path()).unwrap(),
+        RecheckProbe::target(retry.path()).unwrap(),
         format!("{:x}", Sha256::digest(b"second helper"))
     );
 
-    install_bundle(&second, retry.path(), true).unwrap();
+    let retry_recheck = RecheckProbe::default();
+    install_bundle_with_recheck(
+        &second,
+        retry.path(),
+        true,
+        &retry_recheck,
+        &mut Persistence::default(),
+    )
+    .unwrap();
     assert_eq!(target_bytes(retry.path()), b"second helper");
 }
 
 #[test]
 fn recheck_intent_write_failure_leaves_visibility_unchanged_and_setup_retryable() {
     let temp = TempDir::new().unwrap();
-    fs::write(temp.path().join("daemon"), b"blocks daemon jobs directory").unwrap();
     let bundle = write_bundle(
         temp.path(),
         "initial",
@@ -847,16 +1004,37 @@ fn recheck_intent_write_failure_leaves_visibility_unchanged_and_setup_retryable(
         manifest(b"initial helper", "1.0.0"),
     );
 
-    let error = install_bundle(&bundle, temp.path(), false).unwrap_err();
-    assert!(error.to_string().contains("daemon"), "{error:#}");
+    let unavailable_recheck = RecheckProbe {
+        fail_publish: true,
+        ..RecheckProbe::default()
+    };
+    let error = install_bundle_with_recheck(
+        &bundle,
+        temp.path(),
+        false,
+        &unavailable_recheck,
+        &mut Persistence::default(),
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("test_recheck_unavailable"),
+        "{error:#}"
+    );
     assert!(!default_helper_path(temp.path()).exists());
-    assert!(pending_recheck_target(temp.path()).is_none());
+    assert!(RecheckProbe::target(temp.path()).is_none());
 
-    fs::remove_file(temp.path().join("daemon")).unwrap();
-    install_bundle(&bundle, temp.path(), false).unwrap();
+    let recheck = RecheckProbe::default();
+    install_bundle_with_recheck(
+        &bundle,
+        temp.path(),
+        false,
+        &recheck,
+        &mut Persistence::default(),
+    )
+    .unwrap();
     assert_eq!(target_bytes(temp.path()), b"initial helper");
     assert_eq!(
-        pending_recheck_target(temp.path()).unwrap(),
+        RecheckProbe::target(temp.path()).unwrap(),
         format!("{:x}", Sha256::digest(b"initial helper"))
     );
 }
@@ -1043,11 +1221,9 @@ fn committed_stage_tamper_falls_back_to_known_good_and_journal_is_bounded() {
     file.set_len(MAX_TRANSACTION_JOURNAL_BYTES + 1).unwrap();
     let error = reconcile(temp.path()).unwrap_err().to_string();
     assert!(error.contains("transaction journal exceeds maximum size"));
-    let status = lifecycle_status_json_with_key(temp.path(), TEST_PUBLIC_KEY_PEM);
-    assert_eq!(status["state"], "unavailable");
-    assert_eq!(status["error_code"], "invalid_request");
-    assert_eq!(status["next_action"]["command"], Value::Null);
-    assert_eq!(status["next_action"]["reason"], "manual_diagnosis_required");
+    assert!(!crate::installed_artifact::is_setup_repair_required_error(
+        &reconcile(temp.path()).unwrap_err()
+    ));
     assert_eq!(target_bytes(temp.path()), b"first helper");
     fs::remove_file(journal_path).unwrap();
     assert_eq!(installed_pair(temp.path()).manifest.version, "1.0.0");
@@ -1113,7 +1289,7 @@ fn assert_explicit_setup_repairs_invalid_current_pair(case: InvalidCurrentPair) 
 
     let graph = write_current_graph(layout);
     let epoch = EpochStorageFixture::write(temp.path());
-    crate::pro::local_deletion::write_local_pro_initialization_indicator(temp.path()).unwrap();
+    write_initialization_marker(temp.path());
 
     match case {
         InvalidCurrentPair::MissingHelper => fs::remove_file(&target).unwrap(),
@@ -1153,9 +1329,7 @@ fn assert_explicit_setup_repairs_invalid_current_pair(case: InvalidCurrentPair) 
     );
     assert_eq!(fs::read(&graph).unwrap(), b"encrypted graph data");
     epoch.assert_preserved();
-    assert!(
-        crate::pro::local_deletion::local_pro_initialization_indicator_exists(temp.path()).unwrap()
-    );
+    assert!(crate::state_markers::initialization_marker_exists(temp.path()).unwrap());
 
     let replacement = write_bundle(
         temp.path(),
@@ -1176,9 +1350,7 @@ fn assert_explicit_setup_repairs_invalid_current_pair(case: InvalidCurrentPair) 
         fs::read(&bad_replacement.args.artifact).unwrap(),
         bad_artifact
     );
-    assert!(
-        crate::pro::local_deletion::local_pro_initialization_indicator_exists(temp.path()).unwrap()
-    );
+    assert!(crate::state_markers::initialization_marker_exists(temp.path()).unwrap());
     assert_no_transaction_files(temp.path());
 }
 
@@ -1247,7 +1419,7 @@ fn assert_explicit_setup_repairs_invalid_rollback_pair(case: InvalidRollbackPair
 
     let graph = write_current_graph(layout);
     let epoch = EpochStorageFixture::write(temp.path());
-    crate::pro::local_deletion::write_local_pro_initialization_indicator(temp.path()).unwrap();
+    write_initialization_marker(temp.path());
 
     let invalid_helper = fs::read(&target).ok();
     let invalid_marker = fs::read(&marker).ok();
@@ -1287,9 +1459,7 @@ fn assert_explicit_setup_repairs_invalid_rollback_pair(case: InvalidRollbackPair
     );
     assert_eq!(fs::read(&graph).unwrap(), b"encrypted graph data");
     epoch.assert_preserved();
-    assert!(
-        crate::pro::local_deletion::local_pro_initialization_indicator_exists(temp.path()).unwrap()
-    );
+    assert!(crate::state_markers::initialization_marker_exists(temp.path()).unwrap());
 
     let replacement = write_bundle(
         temp.path(),
@@ -1308,9 +1478,7 @@ fn assert_explicit_setup_repairs_invalid_rollback_pair(case: InvalidRollbackPair
         fs::read(&bad_replacement.args.artifact).unwrap(),
         bad_artifact
     );
-    assert!(
-        crate::pro::local_deletion::local_pro_initialization_indicator_exists(temp.path()).unwrap()
-    );
+    assert!(crate::state_markers::initialization_marker_exists(temp.path()).unwrap());
     assert_no_transaction_files(temp.path());
 }
 
@@ -1367,7 +1535,7 @@ fn explicit_setup_repairs_an_unrecoverable_committed_journal() {
 
     let graph = write_current_graph(layout);
     let epoch = EpochStorageFixture::write(temp.path());
-    crate::pro::local_deletion::write_local_pro_initialization_indicator(temp.path()).unwrap();
+    write_initialization_marker(temp.path());
 
     let invalid_helper = fs::read(&target).unwrap();
     let invalid_marker = fs::read(&marker).unwrap();
@@ -1403,9 +1571,7 @@ fn explicit_setup_repairs_an_unrecoverable_committed_journal() {
     );
     assert_eq!(fs::read(&graph).unwrap(), b"encrypted graph data");
     epoch.assert_preserved();
-    assert!(
-        crate::pro::local_deletion::local_pro_initialization_indicator_exists(temp.path()).unwrap()
-    );
+    assert!(crate::state_markers::initialization_marker_exists(temp.path()).unwrap());
 
     let replacement = write_bundle(
         temp.path(),
@@ -1424,9 +1590,7 @@ fn explicit_setup_repairs_an_unrecoverable_committed_journal() {
         fs::read(&bad_replacement.args.artifact).unwrap(),
         bad_artifact
     );
-    assert!(
-        crate::pro::local_deletion::local_pro_initialization_indicator_exists(temp.path()).unwrap()
-    );
+    assert!(crate::state_markers::initialization_marker_exists(temp.path()).unwrap());
     assert_no_transaction_files(temp.path());
 }
 

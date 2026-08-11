@@ -15,7 +15,7 @@ use ctx_pro_host_protocol::ProFilesystemLayout;
 ))]
 use sha2::{Digest as _, Sha256};
 
-use super::credential_vault::CredentialVaultError;
+use ctx_pro_access::credential_vault::CredentialVaultError;
 
 #[cfg(target_os = "macos")]
 #[path = "graph_key_deletion/macos.rs"]
