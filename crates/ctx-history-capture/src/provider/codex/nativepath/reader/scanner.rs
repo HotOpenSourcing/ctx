@@ -196,6 +196,9 @@ struct CodexSemanticPreflight {
 fn replay_semantic_prefix_record(
     scanner: &mut CodexNativeScanner,
     class: Option<CodexRecordClass>,
+    authority: &mut CodexMcpTerminalAuthority,
+    repository_candidate_authority: &CodexRepositoryCandidateAuthority,
+    repository_occurrences: &CodexRepositoryOccurrenceCache,
     bytes: &[u8],
     raw_ordinal: u64,
     start_byte: u64,
@@ -213,14 +216,32 @@ fn replay_semantic_prefix_record(
     ) {
         return Ok(());
     }
-    let counters = scanner.counters;
-    let mut projection =
-        scanner.process_record(bytes, raw_ordinal, start_byte, end_byte, record_digest)?;
-    if let Some(mutation) = projection.context_mutation.take() {
-        scanner.apply_replayed_context_mutation(mutation)?;
+    let replays_output = matches!(class, Some(CodexRecordClass::ExcludedResult(_)));
+    if replays_output {
+        // Output replay only reads MCP authority, so lend it to the scanner
+        // instead of cloning both bounded terminal maps for every result.
+        std::mem::swap(&mut scanner.mcp_terminal_authority, authority);
+        scanner
+            .repository_candidate_authority
+            .clone_from(repository_candidate_authority);
+        repository_occurrences.apply_suffix_to(&mut scanner.repository_candidate_authority);
     }
-    scanner.counters = counters;
-    Ok(())
+    let counters = scanner.counters;
+    let replay = (|| {
+        let mut projection =
+            scanner.process_record(bytes, raw_ordinal, start_byte, end_byte, record_digest)?;
+        if let Some(mutation) = projection.context_mutation.take() {
+            scanner.apply_replayed_context_mutation(mutation)?;
+        }
+        Ok(())
+    })();
+    if replay.is_ok() {
+        scanner.counters = counters;
+    }
+    if replays_output {
+        std::mem::swap(&mut scanner.mcp_terminal_authority, authority);
+    }
+    replay
 }
 
 fn certified_prefix_authority(
@@ -292,16 +313,12 @@ fn preflight_semantic_authority(
         );
         if certified_prefix_end.is_some_and(|prefix_end| record.byte_end_exclusive() <= prefix_end)
         {
-            scanner.mcp_terminal_authority = authority.clone();
-            scanner.repository_candidate_authority = certified_prefix_authority(
-                &authority,
-                &repository_candidate_authority,
-                &repository_occurrences,
-            )
-            .1;
             replay_semantic_prefix_record(
                 scanner,
                 class,
+                &mut authority,
+                &repository_candidate_authority,
+                &repository_occurrences,
                 record_bytes,
                 record.physical_ordinal(),
                 record.byte_start(),
