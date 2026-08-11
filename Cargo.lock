@@ -737,6 +737,7 @@ dependencies = [
  "chrono",
  "clap",
  "clap_mangen",
+ "ctx-agent-application",
  "ctx-agent-integrations",
  "ctx-client-observability",
  "ctx-daemon-runtime",
@@ -790,6 +791,18 @@ dependencies = [
  "zbus",
  "zeroize",
  "zstd",
+]
+
+[[package]]
+name = "ctx-agent-application"
+version = "0.26.0"
+dependencies = [
+ "anyhow",
+ "ctx-agent-integrations",
+ "ctx-client-observability",
+ "ctx-history-core",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

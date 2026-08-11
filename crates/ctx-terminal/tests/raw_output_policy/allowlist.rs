@@ -119,9 +119,12 @@ const MCP: TestOwner = TestOwner::behavioral(
     ],
 );
 const MCP_SERVER: TestOwner = TestOwner::behavioral(
-    "src/mcp/tests.rs::post_flush_observations_follow_one_local_commit_and_skip_it_on_output_failure",
-    &["src/mcp.rs"],
-    &["run_one_status_response", "OutputFailure", "recorded"],
+    "crates/ctx-agent-application/src/mcp/tests.rs::response_flush_precedes_the_one_usage_commit_and_post_flush_telemetry",
+    &[
+        "src/mcp.rs",
+        "crates/ctx-agent-application/src/mcp/mod.rs",
+    ],
+        &["run_one_response", "flushed_at", "recorded_at"],
 );
 const PRO: TestOwner = TestOwner::behavioral(
     "src/pro/referral.rs::success_json_preserves_the_exact_machine_contract",
@@ -700,14 +703,6 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
         StdoutConstructor,
         MachineProtocol,
         "MCP JSON-RPC transport owns stdout",
-        MCP_SERVER
-    ),
-    allow!(
-        MCP_MODULE,
-        "serve_stdio_loop_with_backend#1@e5eaf5c92efc4e29",
-        DirectWrite,
-        MachineProtocol,
-        "MCP JSON-RPC response framing",
         MCP_SERVER
     ),
     allow!(

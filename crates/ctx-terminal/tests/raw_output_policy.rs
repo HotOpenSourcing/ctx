@@ -1365,6 +1365,7 @@ fn production_source_paths(root: &Path) -> Vec<PathBuf> {
         .parent()
         .and_then(Path::parent)
         .expect("ctx-cli package belongs to the workspace crates directory");
+    let application_root = workspace_root.join("crates/ctx-agent-application");
     let integrations_root = workspace_root.join("crates/ctx-agent-integrations");
     let daemon_runtime_root = workspace_root.join("crates/ctx-daemon-runtime");
     let pro_host_root = workspace_root.join("crates/ctx-pro-host");
@@ -1375,6 +1376,7 @@ fn production_source_paths(root: &Path) -> Vec<PathBuf> {
         workspace_root.join("crates/ctx-semantic-model/build.rs"),
         engine_root.join("build.rs"),
     ];
+    visit_production_source_files(&application_root.join("src"), &mut paths);
     visit_production_source_files(&integrations_root.join("src"), &mut paths);
     visit_production_source_files(&root.join("src"), &mut paths);
     visit_production_source_files(&terminal_root.join("src"), &mut paths);
@@ -1408,6 +1410,7 @@ fn scan_package() -> Vec<Site> {
         .and_then(Path::parent)
         .expect("ctx-cli package belongs to the workspace crates directory");
     let model_build = workspace_root.join("crates/ctx-semantic-model/build.rs");
+    let application_root = workspace_root.join("crates/ctx-agent-application");
     let integrations_root = workspace_root.join("crates/ctx-agent-integrations");
     let daemon_runtime_root = workspace_root.join("crates/ctx-daemon-runtime");
     let pro_host_root = workspace_root.join("crates/ctx-pro-host");
@@ -1417,6 +1420,11 @@ fn scan_package() -> Vec<Site> {
     for path in production_source_paths(&root) {
         let relative = if path == model_build {
             "crates/ctx-semantic-model/build.rs".to_owned()
+        } else if let Ok(relative) = path.strip_prefix(&application_root) {
+            format!(
+                "crates/ctx-agent-application/{}",
+                relative.to_string_lossy().replace('\\', "/")
+            )
         } else if let Ok(relative) = path.strip_prefix(&integrations_root) {
             format!(
                 "crates/ctx-agent-integrations/{}",

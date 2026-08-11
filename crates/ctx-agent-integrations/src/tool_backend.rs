@@ -312,9 +312,6 @@ pub trait ToolBackend: Send + Sync {
     /// Returns the product's stable invalid-blame error representation.
     fn invalid_blame_request(&self) -> ToolBackendError;
 
-    /// Renders the compact MCP text projection owned by the application.
-    fn render_text(&self, value: &Value) -> String;
-
     /// Resolves an MCP provider spelling through the application's provider registry.
     fn parse_provider(&self, value: &str) -> Option<CaptureProvider>;
 

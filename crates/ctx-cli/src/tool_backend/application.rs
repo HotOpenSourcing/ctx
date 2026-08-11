@@ -419,10 +419,6 @@ impl ToolBackend for LocalToolBackend {
         classify_application_error(crate::pro::invalid_blame_request())
     }
 
-    fn render_text(&self, value: &Value) -> String {
-        crate::mcp::text::render_tool_text(value)
-    }
-
     fn parse_provider(&self, value: &str) -> Option<ctx_history_core::CaptureProvider> {
         ProviderArg::parse_name(value)
             .map(ProviderArg::capture_provider)

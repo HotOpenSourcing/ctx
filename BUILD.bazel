@@ -31,6 +31,7 @@ filegroup(
     name = "cloud_removed_build_inputs",
     srcs = [
         "Cargo.toml",
+        "//crates/ctx-agent-application:Cargo.toml",
         "//crates/ctx-agent-integrations:Cargo.toml",
         "//crates/ctx-cli:Cargo.toml",
         "//crates/ctx-daemon-runtime:Cargo.toml",
@@ -117,6 +118,7 @@ NON_RUST_GATE_DATA = glob([
 ]
 
 CARGO_WORKSPACE_PACKAGE_DATA = [
+    "//crates/ctx-agent-application:cargo_package_data",
     "//crates/ctx-agent-integrations:cargo_package_data",
     "//crates/ctx-cli:cargo_package_data",
     "//crates/ctx-client-observability:cargo_package_data",
@@ -151,6 +153,7 @@ CARGO_WORKSPACE_PACKAGE_DATA = [
 LOC_CHECK_SOURCE_DATA = [
     ":loc_check_inputs",
     "Cargo.toml",
+    "//crates/ctx-agent-application:loc_check_inputs",
     "//crates/ctx-agent-integrations:loc_check_inputs",
     "//crates/ctx-cli:loc_check_inputs",
     "//crates/ctx-client-observability:loc_check_inputs",
@@ -204,6 +207,7 @@ LOC_CHECK_DATA = LOC_CHECK_SOURCE_DATA + [
 # surface. The checker owns the path list; these filegroups make those paths
 # available in the sandboxed runfiles tree.
 RELEASE_PACKAGE_AUDIT_DATA = NON_RUST_GATE_DATA + [
+    "//crates/ctx-agent-application:cargo_package_data",
     "//crates/ctx-agent-integrations:cargo_package_data",
     "//crates/ctx-cli:cargo_package_data",
     "//crates/ctx-client-observability:cargo_package_data",
@@ -355,6 +359,22 @@ py_binary(
     srcs = ["scripts/check-rust-crate-size.py"],
     deps = ["@ctx_tomli//:lib"],
     main = "scripts/check-rust-crate-size.py",
+)
+
+py_test(
+    name = "agent_application_dependency_boundary_check",
+    srcs = ["//tools/bazel:check_agent_application_boundary.py"],
+    main = "//tools/bazel:check_agent_application_boundary.py",
+    args = [
+        "$(rootpath Cargo.toml)",
+        "$(rootpath //crates/ctx-agent-application:Cargo.toml)",
+        "$(rootpath //crates/ctx-agent-application:BUILD.bazel)",
+    ],
+    data = [
+        "Cargo.toml",
+        "//crates/ctx-agent-application:BUILD.bazel",
+        "//crates/ctx-agent-application:Cargo.toml",
+    ] + CARGO_WORKSPACE_PACKAGE_DATA,
 )
 
 py_test(
@@ -767,6 +787,7 @@ configured_license_materials(
     workspace_materials = [
         "Cargo.toml",
         "LICENSE",
+        "//crates/ctx-agent-application:Cargo.toml",
         "//crates/ctx-agent-integrations:Cargo.toml",
         "//crates/ctx-cli:Cargo.toml",
         "//crates/ctx-client-observability:Cargo.toml",
@@ -1427,6 +1448,7 @@ non_rust_gate(
     name = "public_control_surface_check",
     mode = "public_control_surface_check",
     data = NON_RUST_GATE_DATA + [
+        "//crates/ctx-agent-application:cargo_package_data",
         "//crates/ctx-agent-integrations:cargo_package_data",
         "//crates/ctx-cli:cargo_package_data",
         "//crates/ctx-client-observability:cargo_package_data",
