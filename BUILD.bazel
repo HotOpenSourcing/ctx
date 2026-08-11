@@ -1471,7 +1471,6 @@ sh_test(
 
 non_rust_gate(
     name = "docs_check",
-    mode = "docs_check",
     data = NON_RUST_GATE_DATA + [
         "//crates/ctx-history-capture:BUILD.bazel",
         "//crates/ctx-history-capture:Cargo.toml",
@@ -1485,7 +1484,6 @@ non_rust_gate(name = "buildkite_pipeline_check", mode = "buildkite_pipeline_chec
 non_rust_gate(name = "release_binary_compat_tests", mode = "release_binary_compat_tests", data = NON_RUST_GATE_DATA)
 non_rust_gate(
     name = "native_candidate_smoke_tests",
-    mode = "native_candidate_smoke_tests",
     data = NON_RUST_GATE_DATA + [
         "//crates/ctx-pro-host-protocol:src/lib.rs",
     ],
@@ -1494,7 +1492,6 @@ non_rust_gate(name = "linux_release_construction_tests", mode = "linux_release_c
 non_rust_gate(name = "macos_release_signing_tests", mode = "macos_release_signing_tests", data = NON_RUST_GATE_DATA)
 non_rust_gate(
     name = "loc_check",
-    mode = "loc_check",
     args = [
         "$(rootpath @ctx_scc_linux_x86_64//:scc)",
         "$(rootpath :loc_check_source_manifest)",
@@ -1503,7 +1500,6 @@ non_rust_gate(
 )
 non_rust_gate(
     name = "public_control_surface_check",
-    mode = "public_control_surface_check",
     data = NON_RUST_GATE_DATA + [
         "//crates/ctx-agent-application:cargo_package_data",
         "//crates/ctx-agent-integrations:cargo_package_data",
@@ -1521,13 +1517,11 @@ non_rust_gate(
 non_rust_gate(name = "source_diff_check", mode = "source_diff_check", data = NON_RUST_GATE_DATA)
 non_rust_gate(
     name = "package_audit_fast",
-    mode = "package_audit_fast",
     args = ["$(rootpath //crates/ctx-cli:ctx)"],
     data = RELEASE_PACKAGE_AUDIT_DATA + ["//crates/ctx-cli:ctx"],
 )
 non_rust_gate(
     name = "sdk_contract_checks",
-    mode = "sdk_contract_checks",
     data = NON_RUST_GATE_DATA + [
         "//crates/ctx-protocol:cargo_package_data",
         "//crates/ctx-sdk:cargo_package_data",
@@ -1540,7 +1534,6 @@ sh_test(
 )
 non_rust_gate(
     name = "sdk_package_dry_run",
-    mode = "sdk_package_dry_run",
     args = [
         "$(rootpath //tools/bazel:pinned_cargo)",
         "$(rootpath //tools/bazel:pinned_rustc)",
@@ -1555,7 +1548,6 @@ non_rust_gate(
 )
 non_rust_gate(
     name = "package_audit_release",
-    mode = "package_audit_release",
     args = ["$(rootpath //crates/ctx-cli:ctx)"],
     data = RELEASE_PACKAGE_AUDIT_DATA + ["//crates/ctx-cli:ctx"],
     tags = ["release-gate"],
