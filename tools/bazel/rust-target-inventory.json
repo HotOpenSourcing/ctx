@@ -60,6 +60,12 @@
       "native_unit": "//crates/ctx-client-observability:unit_tests",
       "feature_variants": ["//crates/ctx-client-observability:test_support_lib"]
     },
+    "ctx-daemon-application": {
+      "manifest": "crates/ctx-daemon-application/Cargo.toml",
+      "targets": {"lib:ctx_daemon_application": "//crates/ctx-daemon-application:lib"},
+      "native_unit": "//crates/ctx-daemon-application:unit_tests",
+      "feature_variants": ["//crates/ctx-daemon-application:qualification_lib", "//crates/ctx-daemon-application:test_support_lib"]
+    },
     "ctx-daemon-runtime": {
       "manifest": "crates/ctx-daemon-runtime/Cargo.toml",
       "targets": {"lib:ctx_daemon_runtime": "//crates/ctx-daemon-runtime:lib"},
