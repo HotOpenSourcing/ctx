@@ -57,7 +57,7 @@ ctx-history-capture = { path = "../ctx-history-capture" }
 ctx-client-observability = { path = "../ctx-client-observability" }
 ctx-history-core = { path = "../ctx-history-core" }
 ctx-history-index = { path = "../ctx-history-index" }
-ctx-history-query = { path = "../ctx-history-query" }
+ctx-history-read-application = { path = "../ctx-history-read-application" }
 ctx-history-refresh = { path = "../ctx-history-refresh" }
 ctx-pro-access = { path = "../ctx-pro-access" }
 ctx-pro-host = { path = "../ctx-pro-host" }

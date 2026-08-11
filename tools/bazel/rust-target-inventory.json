@@ -150,10 +150,10 @@
       "targets": {"lib:ctx_history_jsonl": "//crates/ctx-history-jsonl:lib"},
       "native_unit": "//crates/ctx-history-jsonl:unit_tests"
     },
-    "ctx-history-query": {
-      "manifest": "crates/ctx-history-query/Cargo.toml",
-      "targets": {"lib:ctx_history_query": "//crates/ctx-history-query:lib"},
-      "native_unit": "//crates/ctx-history-query:unit_tests"
+    "ctx-history-read-application": {
+      "manifest": "crates/ctx-history-read-application/Cargo.toml",
+      "targets": {"lib:ctx_history_read_application": "//crates/ctx-history-read-application:lib"},
+      "native_unit": "//crates/ctx-history-read-application:unit_tests"
     },
     "ctx-history-refresh": {
       "manifest": "crates/ctx-history-refresh/Cargo.toml",

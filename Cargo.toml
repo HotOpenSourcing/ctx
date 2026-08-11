@@ -17,7 +17,7 @@ members = [
     "crates/ctx-history-index-generation",
     "crates/ctx-history-index-query",
     "crates/ctx-history-jsonl",
-    "crates/ctx-history-query",
+    "crates/ctx-history-read-application",
     "crates/ctx-history-refresh",
     "crates/ctx-history-refresh-execution",
     "crates/ctx-history-repository-evidence",

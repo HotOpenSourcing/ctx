@@ -746,7 +746,7 @@ dependencies = [
  "ctx-history-capture",
  "ctx-history-core",
  "ctx-history-index",
- "ctx-history-query",
+ "ctx-history-read-application",
  "ctx-history-refresh",
  "ctx-pro-access",
  "ctx-pro-host",
@@ -1066,7 +1066,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctx-history-query"
+name = "ctx-history-read-application"
 version = "0.26.0"
 dependencies = [
  "anyhow",
@@ -1076,6 +1076,7 @@ dependencies = [
  "ctx-history-index",
  "ctx-history-index-format",
  "ctx-history-index-query",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",

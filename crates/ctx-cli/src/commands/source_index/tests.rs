@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn source_identity_error_restores_exact_cli_flag_spelling() {
         let error =
-            anyhow::Error::new(ctx_history_query::SourceIdentityFilterError::InvalidHistorySource);
+            anyhow::Error::new(ctx_history_read_application::SourceIdentityFilterError::InvalidHistorySource);
 
         assert_eq!(
             externalize_query_error(error).to_string(),
@@ -94,7 +94,7 @@ mod tests {
         );
 
         let error = anyhow::Error::new(
-            ctx_history_query::SourceIdentityFilterError::CustomProviderRequired,
+            ctx_history_read_application::SourceIdentityFilterError::CustomProviderRequired,
         );
         assert_eq!(
             externalize_query_error(error).to_string(),
@@ -1637,12 +1637,12 @@ mod tests {
             assert_eq!(resolved, SearchBackendArg::Hybrid);
             source_request.backend = Some(resolved);
             let filters = index_search_filters(&source_request, &index).unwrap();
-            let collection = ctx_history_query::collect_search_hits_using(
+            let collection = ctx_history_read_application::collect_search_hits_using(
                 &source_request,
                 &index,
                 &filters,
-                ctx_history_query::SemanticAvailability::Unavailable(
-                    ctx_history_query::SemanticReason::ExecutionUnavailable,
+                ctx_history_read_application::SemanticAvailability::Unavailable(
+                    ctx_history_read_application::SemanticReason::ExecutionUnavailable,
                 ),
                 |_query, _filters, _candidate_limit| {
                     panic!("daemon-disabled hybrid must fall back before semantic work")
@@ -1776,13 +1776,13 @@ mod tests {
         );
         assert_eq!(session_value["pagination"]["has_more"], true);
 
-        let shown = ctx_history_query::PinnedHistoryQuery::new(&index, None)
-            .show_event(&ctx_history_query::ShowEventRequest {
+        let shown = ctx_history_read_application::PinnedHistoryQuery::new(&index, None)
+            .show_event(&ctx_history_read_application::ShowEventRequest {
                 selector: first.event_id.to_string(),
                 before: 0,
                 after: 0,
                 window: None,
-                budget: ctx_history_query::EventWindowBudget {
+                budget: ctx_history_read_application::EventWindowBudget {
                     maximum_events: crate::MAX_EVENT_WINDOW,
                     maximum_encoded_core_bytes: ctx_history_core::MAX_ENCODED_CORE_RECORD_BYTES,
                     maximum_content_bytes: 2 * 1024,
@@ -1872,13 +1872,13 @@ mod tests {
         let cumulative_encoded_bytes = encoded_bytes.iter().sum::<usize>();
         let encoded_limit = cumulative_encoded_bytes - 1;
 
-        let error = ctx_history_query::PinnedHistoryQuery::new(&index, None)
-            .show_event(&ctx_history_query::ShowEventRequest {
+        let error = ctx_history_read_application::PinnedHistoryQuery::new(&index, None)
+            .show_event(&ctx_history_read_application::ShowEventRequest {
                 selector: first.event_id.to_string(),
                 before: 0,
                 after: 1,
                 window: None,
-                budget: ctx_history_query::EventWindowBudget {
+                budget: ctx_history_read_application::EventWindowBudget {
                     maximum_events: 2,
                     maximum_encoded_core_bytes: encoded_limit,
                     maximum_content_bytes: 64 * 1024,
@@ -1886,7 +1886,7 @@ mod tests {
             })
             .unwrap_err();
         let typed = error
-            .downcast_ref::<ctx_history_query::EncodedCoreQueryLimitError>()
+            .downcast_ref::<ctx_history_read_application::EncodedCoreQueryLimitError>()
             .expect("cumulative encoded Core overflow should preserve its typed bound");
         assert_eq!(typed.event_id, second.event_id.as_uuid());
         assert_eq!(typed.actual_bytes, cumulative_encoded_bytes);

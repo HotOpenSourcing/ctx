@@ -45,7 +45,7 @@ WORKSPACE_PACKAGES = (
     ("ctx-history-index-query", "crates/ctx-history-index-query"),
     ("ctx-history-jsonl", "crates/ctx-history-jsonl"),
     ("ctx-history-refresh-execution", "crates/ctx-history-refresh-execution"),
-    ("ctx-history-query", "crates/ctx-history-query"),
+    ("ctx-history-read-application", "crates/ctx-history-read-application"),
     (
         "ctx-history-repository-evidence",
         "crates/ctx-history-repository-evidence",
@@ -168,7 +168,7 @@ members = [
   "crates/ctx-history-index-query",
   "crates/ctx-history-jsonl",
   "crates/ctx-history-refresh-execution",
-  "crates/ctx-history-query",
+  "crates/ctx-history-read-application",
   "crates/ctx-history-repository-evidence",
   "crates/ctx-semantic-index",
   "crates/ctx-semantic-model",
@@ -203,7 +203,7 @@ tantivy = { version = "0.26.1", default-features = false, features = ["mmap", "l
                     "ctx-history-capture-model = { path = \"../ctx-history-capture-model\" }\n"
                     "ctx-history-jsonl = { path = \"../ctx-history-jsonl\" }\n"
                     "ctx-history-refresh-execution = { path = \"../ctx-history-refresh-execution\" }\n"
-                    "ctx-history-query = { path = \"../ctx-history-query\" }\n"
+                    "ctx-history-read-application = { path = \"../ctx-history-read-application\" }\n"
                     "ctx-pro-host = { path = \"../ctx-pro-host\" }\n"
                     "ctx-pro-lifecycle = { path = \"../ctx-pro-lifecycle\" }\n"
                     "ctx-history-repository-evidence = { path = \"../ctx-history-repository-evidence\" }\n"
@@ -271,7 +271,7 @@ tantivy = { version = "0.26.1", default-features = false, features = ["mmap", "l
                     "ctx-semantic-model = { path = \"../ctx-semantic-model\" }\n"
                     "ctx-upgrade-engine = { path = \"../ctx-upgrade-engine\" }"
                 ),
-                "ctx-history-query": (
+                "ctx-history-read-application": (
                     "ctx-history-core = { path = \"../ctx-history-core\" }\n"
                     "ctx-history-index-format = { path = \"../ctx-history-index-format\" }\n"
                     "ctx-history-index-query = { path = \"../ctx-history-index-query\" }"
@@ -351,7 +351,7 @@ repository = "https://example.invalid/{name}"
             "@@//crates/ctx-history-index-query:ctx_history_index_query",
             "@@//crates/ctx-history-jsonl:ctx_history_jsonl",
             "@@//crates/ctx-history-refresh-execution:ctx_history_refresh_execution",
-            "@@//crates/ctx-history-query:ctx_history_query",
+            "@@//crates/ctx-history-read-application:ctx_history_read_application",
             "@@//crates/ctx-history-repository-evidence:ctx_history_repository_evidence",
             "@@//crates/ctx-semantic-index:ctx_semantic_index",
             "@@//crates/ctx-semantic-model:ctx_semantic_model",
@@ -450,7 +450,7 @@ repository = "https://example.invalid/{name}"
                     "ctx-history-index",
                     "ctx-history-jsonl",
                     "ctx-history-refresh-execution",
-                    "ctx-history-query",
+                    "ctx-history-read-application",
                     "ctx-history-repository-evidence",
                     "ctx-semantic-index",
                     "ctx-semantic-model",
@@ -553,7 +553,7 @@ repository = "https://example.invalid/{name}"
             ),
             self.package("ctx-history-refresh-execution", "0.26.0"),
             self.package(
-                "ctx-history-query",
+                "ctx-history-read-application",
                 "0.26.0",
                 (
                     "ctx-history-core",
