@@ -14,38 +14,25 @@ use clap::{Args, Subcommand};
 use ctx_pro_host_protocol::ProFilesystemLayout;
 #[cfg(test)]
 use ctx_pro_host_protocol::{
-    Capability, CoreProjectionCurrentness, MaterializedCoverage, ProOperation, ProStorageEvidence,
-    RepositoryCoverage, PROTOCOL_FINGERPRINT, PROTOCOL_VERSION,
+    CoreProjectionCurrentness, MaterializedCoverage, ProOperation, ProStorageEvidence,
+    RepositoryCoverage, PROTOCOL_VERSION,
 };
 use serde_json::json;
 
 #[path = "lifecycle_commands/render.rs"]
 mod render;
-#[path = "lifecycle_commands/setup_replay.rs"]
-mod setup_replay;
+#[path = "lifecycle_commands/setup_output.rs"]
+mod setup_output;
 #[path = "lifecycle_commands/uninstall.rs"]
 mod uninstall;
-#[path = "lifecycle_commands/validation.rs"]
-mod validation;
 
-use super::{install_verified_bundle, SetupInstallation};
 use crate::pro::artifact_delivery::SetupArtifactBundle;
-#[cfg(ctx_pro_test_helper)]
-use crate::pro::client::smoke_helper_at_path;
-#[cfg(test)]
-use crate::pro::client::HelperSmoke;
-use crate::pro::client::{
-    materialize, materialize_in, smoke_validated_helper, status, status_for_core,
-    ProSetupRepairability, ProStatus,
-};
+use crate::pro::client::{self, status, status_for_core, ProStatus};
 use crate::pro::commercial_lifecycle::CommercialLifecycleService;
 use crate::pro::lifecycle::lifecycle_manifest::ReleaseTrust;
-use crate::pro::local_deletion::{local_pro_graph_key_cleanup_phase_exists, LocalDeletionService};
+use crate::pro::local_deletion::LocalDeletionService;
 use crate::pro::pending_materialization;
 use crate::pro::referral::{parse_referral_codename_unchecked, ReferralCodename};
-use crate::pro::setup_validation::{
-    setup_artifact, validate_account_state, validate_staged_helper,
-};
 #[cfg(test)]
 use crate::pro::{
     client::default_helper_path,
@@ -57,26 +44,31 @@ use crate::{
     analytics::{
         send_pro_operation, Outcome, ProAccessStateV1, ProHelperConnectionOutcomeV1,
         ProHostOperationV1, ProLifecycleOperationV1, ProLifecycleTelemetryV1,
-        ProMaterializationTelemetryV1, ProReconcileOutcomeV1, ProUninstallDataDispositionV1,
+        ProMaterializationModeV1, ProMaterializationTelemetryV1, ProReconcileOutcomeV1,
+        ProUninstallDataDispositionV1,
     },
     output::JsonOutputFormat,
     pro::stable_error_code,
     ui::Ui,
+};
+#[cfg(test)]
+use ctx_pro_application::{validate_access_status, ProSetupRepairability};
+use ctx_pro_application::{
+    HelperConnectionFact, LifecycleCommandFacts, ManageAccess, MaterializationFact,
+    MaterializationMode, ReconcileFact, SetupAccess, SetupAccessRequest, SetupAdmission,
+    SetupCompletion, SetupStart,
 };
 use ctx_pro_lifecycle::operation::LifecycleOperation;
 use render::{
     browser_notice as render_browser_notice, manage as render_manage_human,
     setup as render_setup_human,
 };
-#[cfg(test)]
-use setup_replay::reusable_setup_access_state;
-use setup_replay::{record_helper_smoke, replay_completed_setup, write_setup_result};
+use setup_output::write_setup_result;
 #[cfg(test)]
 use std::fs;
 #[cfg(test)]
 use uninstall::uninstall_payload;
 use uninstall::{preserved_data_marker_is_set, run_uninstall};
-use validation::{validate_access_status, validate_portal_url};
 
 #[derive(Debug, Args)]
 pub(crate) struct ProArgs {
@@ -217,20 +209,8 @@ impl ProArgs {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct ProSetupPlan {
-    pub(crate) artifact: Option<SetupArtifactBundle>,
-    pub(crate) account_state: String,
-}
-
-#[derive(Debug)]
-pub(crate) struct ProManagePlan {
-    pub(crate) portal_url: String,
-    pub(crate) access_state: String,
-    pub(crate) refresh_after_unix: Option<i64>,
-    pub(crate) access_deadline_unix: Option<i64>,
-    pub(crate) grace_deadline_unix: Option<i64>,
-}
+pub(crate) type ProSetupPlan = ctx_pro_application::SetupPlan<SetupArtifactBundle>;
+pub(crate) type ProManagePlan = ctx_pro_application::ManagePlan;
 
 /// Narrow orchestration seam for the hosted commercial client. WorkOS/Stripe,
 /// entitlement proof, and R2 delivery own their formats in separate modules.
@@ -257,13 +237,45 @@ pub(crate) trait ProLifecycleService {
     ) -> Result<ProManagePlan>;
 }
 
+struct CliLifecycleAccess<'a> {
+    service: &'a mut dyn ProLifecycleService,
+    ui: &'a mut Ui,
+    human_output: bool,
+    browser_enabled: bool,
+}
+
+impl SetupAccess<SetupArtifactBundle> for CliLifecycleAccess<'_> {
+    fn release_trust(&self) -> Result<ReleaseTrust> {
+        self.service.release_trust()
+    }
+
+    fn setup(
+        &mut self,
+        request: SetupAccessRequest<'_>,
+    ) -> Result<ctx_pro_application::SetupPlan<SetupArtifactBundle>> {
+        self.service.setup(
+            request.operation,
+            request.data_root,
+            request.installed_version,
+            request.trial_only,
+            request.referral_codename,
+            self.ui,
+            self.human_output,
+            self.browser_enabled,
+        )
+    }
+}
+
+impl ManageAccess for CliLifecycleAccess<'_> {
+    fn manage(&mut self, data_root: &Path) -> Result<ctx_pro_application::ManagePlan> {
+        self.service
+            .manage(data_root, self.ui, self.human_output, self.browser_enabled)
+    }
+}
+
 /// Local-only destruction seam. Implementations may locate and delete native
 /// vault records, but do not need commercial configuration or network access.
-pub(crate) trait ProDeletionService {
-    fn delete_graph_data(&mut self, data_root: &Path) -> Result<()>;
-    fn delete_commercial_credentials(&mut self, data_root: &Path) -> Result<()>;
-    fn finish_deletion(&mut self, data_root: &Path) -> Result<()>;
-}
+pub(crate) use ctx_pro_application::ProDeletionService;
 
 pub(crate) fn run_lifecycle(
     args: ProArgs,
@@ -351,22 +363,23 @@ fn run_lifecycle_inner(
             Ok(())
         }
         None | Some(ProCommand::Setup(_)) => {
-            crate::identity::installation_id(data_root)
-                .context("key_store_unavailable: initialize local Pro installation identity")?;
-            if replay_completed_setup(
+            let execution = client::application().admit_setup::<SetupArtifactBundle>(
                 data_root,
-                json_output,
                 trial_only,
                 referral.as_ref().map(ReferralCodename::as_str),
-                telemetry,
-                ui,
-            )? {
-                return Ok(());
-            }
+            );
+            let admission = lifecycle_execution_result(execution, telemetry)?;
+            let admission = match admission {
+                SetupAdmission::Replayed(outcome) => {
+                    return write_setup_outcome(data_root, &outcome, json_output, ui);
+                }
+                SetupAdmission::Start(admission) => admission,
+            };
             #[cfg(ctx_pro_test_helper)]
             if let Some(mut service) = crate::pro::test_control::lifecycle_service()? {
                 return run_setup(
                     data_root,
+                    admission,
                     &mut service,
                     json_output,
                     defer_materialization,
@@ -379,6 +392,7 @@ fn run_lifecycle_inner(
             let mut service = CommercialLifecycleService::production(data_root)?;
             run_setup(
                 data_root,
+                admission,
                 &mut service,
                 json_output,
                 defer_materialization,
@@ -509,82 +523,13 @@ pub(crate) fn count_lifecycle_status_queries<T>(operation: impl FnOnce() -> T) -
 }
 
 pub(super) fn lifecycle_status_value(helper: ProStatus, preserved_data: bool) -> serde_json::Value {
-    let helper_response_valid = !matches!(
-        helper.error_code.as_deref(),
-        Some("invalid_response" | "protocol_mismatch")
-    );
-    let ready = helper_response_valid && helper.ready;
-    let materialized = helper_response_valid && helper.materialized;
-    let (state, next_command, next_reason) = if !helper.installed {
-        match helper.setup_repairability {
-            ProSetupRepairability::Automated => (
-                "repair_required",
-                Some("ctx pro"),
-                "helper_artifacts_invalid",
-            ),
-            ProSetupRepairability::ManualDiagnosis => {
-                ("unavailable", None, "manual_diagnosis_required")
-            }
-            ProSetupRepairability::NotNeeded if preserved_data => (
-                "uninstalled_data_preserved",
-                Some("ctx pro"),
-                "restore_preserved_pro_data",
-            ),
-            ProSetupRepairability::NotNeeded => ("not_setup", Some("ctx pro"), "helper_missing"),
-        }
-    } else {
-        match helper.error_code.as_deref() {
-            None if ready => ("ready", Some("ctx pro manage"), "billing_and_account"),
-            Some("entitlement_expired") => (
-                "locked",
-                Some("ctx pro manage"),
-                "subscription_or_trial_ended",
-            ),
-            Some(
-                "not_materialized" | "needs_rebuild" | "partial" | "finalizing" | "needs_resume",
-            ) => ("catch_up_required", Some("ctx pro"), "graph_not_current"),
-            Some("helper_upgrade_required" | "protocol_mismatch") => {
-                ("repair_required", Some("ctx pro"), "helper_incompatible")
-            }
-            Some("key_store_unavailable" | "key_store_locked" | "corrupt_graph") => {
-                ("repair_required", Some("ctx pro"), "local_pro_unavailable")
-            }
-            None if materialized => ("not_blame_ready", None, "no_available_blame_operations"),
-            Some(_) | None => ("unavailable", Some("ctx pro"), "helper_unavailable"),
-        }
-    };
-    json!({
-        "schema_version": 2,
-        "payload_type": "pro_status",
-        "state": state,
-        "installed": helper.installed,
-        "ready": ready,
-        "materialized": materialized,
-        "helper_version": helper.helper_version,
-        "protocol_version": helper.protocol_version,
-        "capabilities": helper.capabilities,
-        "error_code": helper.error_code,
-        "projection_currentness": helper.projection_currentness,
-        "materialized_coverage": helper.materialized_coverage,
-        "repository_coverage": helper.repository_coverage,
-        "core_preparation_peak_workers": helper.core_preparation_peak_workers,
-        "storage_evidence": helper.storage_evidence,
-        "supported_operations": helper.supported_operations,
-        "available_operations": helper.available_operations,
-        "access_state": helper.access_state,
-        "refresh_after_unix": helper.refresh_after_unix,
-        "access_deadline_unix": helper.access_deadline_unix,
-        "grace_deadline_unix": helper.grace_deadline_unix,
-        "next_action": {
-            "command": next_command,
-            "reason": next_reason,
-        },
-    })
+    ctx_pro_application::lifecycle_status_value(helper, preserved_data)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn run_setup(
     data_root: &Path,
+    admission: SetupStart<'_>,
     service: &mut dyn ProLifecycleService,
     json_output: bool,
     defer_materialization: bool,
@@ -593,87 +538,46 @@ fn run_setup(
     telemetry: &mut ProLifecycleTelemetryV1,
     ui: &mut Ui,
 ) -> Result<()> {
-    let trust = service.release_trust()?;
-    telemetry.reconcile = ProReconcileOutcomeV1::Failed;
-    let operation = begin_pro_operation(data_root)?;
-    let installation =
-        ctx_pro_lifecycle::installation::reconcile_setup_installation(&operation, trust)?;
-    let plan = service.setup(
-        &operation,
-        data_root,
-        installation.installed_version(),
+    let mut access = CliLifecycleAccess {
+        service,
+        ui,
+        human_output: !json_output,
+        browser_enabled: !json_output,
+    };
+    let execution = client::application().setup(
+        admission,
+        &mut access,
+        defer_materialization,
         trial_only,
         referral_codename,
-        ui,
-        !json_output,
-        !json_output,
-    )?;
-    let replacing_existing = matches!(
-        &installation,
-        SetupInstallation::Current(_) | SetupInstallation::RepairRequired
     );
-    telemetry.reconcile = match &installation {
-        SetupInstallation::Current(_) => ProReconcileOutcomeV1::Current,
-        SetupInstallation::Missing => ProReconcileOutcomeV1::Missing,
-        SetupInstallation::RepairRequired => ProReconcileOutcomeV1::Failed,
-    };
-    validate_account_state(&plan.account_state)?;
-    telemetry.access_state = ProAccessStateV1::from_safe_name(&plan.account_state);
-    let artifact = setup_artifact(&installation, plan.artifact)?;
-    let helper_updated = if let Some(bundle) = artifact {
-        match bundle {
-            SetupArtifactBundle::Release(bundle) => {
-                let smoke = record_helper_smoke(
-                    smoke_validated_helper(data_root, bundle.identity().clone()),
-                    telemetry,
-                )?;
-                validate_staged_helper(&smoke)?;
-                install_verified_bundle(&bundle, &operation, trust)?;
-                telemetry.reconcile = if replacing_existing {
-                    ProReconcileOutcomeV1::Updated
-                } else {
-                    ProReconcileOutcomeV1::Installed
-                };
-                true
-            }
-            #[cfg(ctx_pro_test_helper)]
-            SetupArtifactBundle::TestControl(bundle) => {
-                let helper = bundle.verified_path()?;
-                let smoke =
-                    record_helper_smoke(smoke_helper_at_path(data_root, &helper), telemetry)?;
-                validate_staged_helper(&smoke)?;
-                false
-            }
-        }
-    } else {
-        false
-    };
-    if defer_materialization {
-        return pending_materialization::defer_setup(
-            &operation,
+    let outcome = lifecycle_execution_result(execution, telemetry)?;
+    write_setup_outcome(data_root, &outcome, json_output, access.ui)
+}
+
+fn write_setup_outcome(
+    data_root: &Path,
+    outcome: &ctx_pro_application::SetupCommandOutcome,
+    json_output: bool,
+    ui: &mut Ui,
+) -> Result<()> {
+    match &outcome.completion {
+        SetupCompletion::Materialized(materialized) => write_setup_result(
             data_root,
-            &plan.account_state,
-            helper_updated,
+            &outcome.account_state,
+            outcome.helper_updated,
+            &materialized.report,
             json_output,
             ui,
-        );
+        ),
+        SetupCompletion::Deferred => pending_materialization::write_deferred_setup_result(
+            data_root,
+            &outcome.account_state,
+            outcome.helper_updated,
+            json_output,
+            ui,
+        ),
     }
-    // An empty repository-root set still materializes canonical transcript evidence.
-    let mut materialization = ProMaterializationTelemetryV1::started();
-    let report = materialize_in(data_root, &operation, &mut materialization);
-    if materialization.helper_connection != ProHelperConnectionOutcomeV1::NotAttempted {
-        telemetry.helper_connection = materialization.helper_connection;
-    }
-    telemetry.materialization = Some(materialization);
-    let report = report.map_err(crate::pro::actionable_error)?;
-    write_setup_result(
-        data_root,
-        &plan.account_state,
-        helper_updated,
-        report,
-        json_output,
-        ui,
-    )
 }
 
 struct ManageContext<'a> {
@@ -700,24 +604,19 @@ fn run_manage_with_opener(
     ui: &mut Ui,
     opener: &dyn Fn(&str) -> Result<()>,
 ) -> Result<()> {
-    let _operation = begin_pro_operation(context.data_root)?;
-    let plan = service.manage(
-        context.data_root,
+    let mut access = CliLifecycleAccess {
+        service,
         ui,
-        !context.json_output,
-        !context.json_output && !context.no_open,
-    )?;
-    validate_portal_url(&plan.portal_url)?;
-    validate_access_status(
-        &plan.access_state,
-        plan.refresh_after_unix,
-        plan.access_deadline_unix,
-        plan.grace_deadline_unix,
-    )?;
-    telemetry.access_state = ProAccessStateV1::from_safe_name(&plan.access_state);
+        human_output: !context.json_output,
+        browser_enabled: !context.json_output && !context.no_open,
+    };
+    let execution = client::application().manage(context.data_root, &mut access);
+    apply_lifecycle_facts(telemetry, &execution.facts);
+    let outcome = execution.result?;
+    let plan = &outcome.plan;
     let browser_opened =
         !context.json_output && !context.no_open && opener(&plan.portal_url).is_ok();
-    let mut value = manage_payload(&plan, browser_opened);
+    let mut value = manage_payload(plan, browser_opened);
     let usage_report = crate::local_usage::read_report_authorized(
         context.usage_storage,
         context.usage_control,
@@ -739,40 +638,102 @@ fn run_manage_with_opener(
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         let document = render_manage_human(
-            ui.stdout_context(),
-            &plan,
+            access.ui.stdout_context(),
+            plan,
             &usage_report,
             conversion_action.as_ref(),
             browser_opened,
         );
-        ui.write_stdout(&document)?;
+        access.ui.write_stdout(&document)?;
         if !context.no_open {
             let notice = render_browser_notice(
-                ui.stderr_context(),
+                access.ui.stderr_context(),
                 browser_opened,
                 "ctx Pro account management",
             );
-            ui.write_stderr(&notice)?;
+            access.ui.write_stderr(&notice)?;
         }
     }
     Ok(())
 }
 
-fn begin_pro_operation(data_root: &Path) -> Result<LifecycleOperation> {
-    let lifecycle_operation = LifecycleOperation::begin(data_root, true)?
-        .ok_or_else(|| anyhow::anyhow!("invalid_request: failed to create Pro lifecycle lock"))?;
-    if local_pro_graph_key_cleanup_phase_exists(data_root)? {
-        bail!(
-            "key_store_unavailable: interrupted Pro deletion must be completed with `ctx pro uninstall --delete-data`"
-        );
+fn lifecycle_execution_result<T>(
+    execution: ctx_pro_application::LifecycleExecution<T>,
+    telemetry: &mut ProLifecycleTelemetryV1,
+) -> Result<T> {
+    let materialization_attempted = execution.facts.materialization.is_some();
+    apply_lifecycle_facts(telemetry, &execution.facts);
+    execution.result.map_err(|error| {
+        if materialization_attempted {
+            crate::pro::actionable_error(error)
+        } else {
+            error
+        }
+    })
+}
+
+fn apply_lifecycle_facts(telemetry: &mut ProLifecycleTelemetryV1, facts: &LifecycleCommandFacts) {
+    telemetry.reconcile = match facts.reconcile {
+        ReconcileFact::NotAttempted => telemetry.reconcile,
+        ReconcileFact::Missing => ProReconcileOutcomeV1::Missing,
+        ReconcileFact::Current => ProReconcileOutcomeV1::Current,
+        ReconcileFact::Installed => ProReconcileOutcomeV1::Installed,
+        ReconcileFact::Updated => ProReconcileOutcomeV1::Updated,
+        ReconcileFact::Failed => ProReconcileOutcomeV1::Failed,
+    };
+    if let Some(access_state) = &facts.access_state {
+        telemetry.access_state = ProAccessStateV1::from_safe_name(access_state);
     }
-    ctx_pro_lifecycle::state_markers::mark_initialized(&lifecycle_operation)?;
-    Ok(lifecycle_operation)
+    match &facts.helper_connection {
+        HelperConnectionFact::NotAttempted => {}
+        HelperConnectionFact::Connected => {
+            telemetry.helper_connection = ProHelperConnectionOutcomeV1::Connected;
+        }
+        HelperConnectionFact::Failed { error_code } => {
+            telemetry.helper_connection =
+                crate::analytics::pro_helper_connection_outcome(error_code.as_deref());
+        }
+    }
+    if let Some(fact) = &facts.materialization {
+        let mut materialization = ProMaterializationTelemetryV1::started();
+        match fact {
+            MaterializationFact::Completed {
+                mode,
+                batches,
+                source_count,
+                replayed_batches,
+            } => {
+                materialization.helper_connection = ProHelperConnectionOutcomeV1::Connected;
+                materialization.mode = Some(match mode {
+                    MaterializationMode::NoOp => ProMaterializationModeV1::NoOp,
+                    MaterializationMode::Full => ProMaterializationModeV1::Full,
+                    MaterializationMode::Incremental => ProMaterializationModeV1::Incremental,
+                });
+                let records = if *mode == MaterializationMode::NoOp {
+                    0
+                } else {
+                    *source_count
+                };
+                materialization.complete(*batches, records, records, *replayed_batches, records);
+            }
+            MaterializationFact::Failed { error_code } => {
+                materialization.fail(error_code.as_deref());
+            }
+        }
+        telemetry.materialization = Some(materialization);
+    }
 }
 
 #[cfg(test)]
 fn with_pro_initialization<T>(data_root: &Path, body: impl FnOnce() -> Result<T>) -> Result<T> {
-    let _operation = begin_pro_operation(data_root)?;
+    let operation = LifecycleOperation::begin(data_root, true)?
+        .ok_or_else(|| anyhow::anyhow!("invalid_request: failed to create Pro lifecycle lock"))?;
+    if ctx_pro_lifecycle::deletion::local_pro_graph_key_cleanup_phase_exists(data_root)? {
+        bail!(
+            "key_store_unavailable: interrupted Pro deletion must be completed with `ctx pro uninstall --delete-data`"
+        );
+    }
+    ctx_pro_lifecycle::state_markers::mark_initialized(&operation)?;
     body()
 }
 

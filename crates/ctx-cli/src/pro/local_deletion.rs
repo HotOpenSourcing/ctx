@@ -1,14 +1,10 @@
 use std::path::Path;
 
-use anyhow::Result;
-use ctx_pro_lifecycle::operation::LifecycleOperation;
-
 use super::lifecycle::ProDeletionService;
+use anyhow::Result;
 
-pub(super) use ctx_pro_lifecycle::deletion::{
-    local_pro_graph_data_exists, local_pro_graph_key_cleanup_phase_exists,
-    local_pro_initialization_indicator_exists,
-};
+#[cfg(test)]
+pub(super) use ctx_pro_lifecycle::deletion::local_pro_initialization_indicator_exists;
 
 pub(super) struct LocalDeletionService {
     inner: ctx_pro_lifecycle::deletion::LocalDeletionService,
@@ -36,12 +32,6 @@ impl ProDeletionService for LocalDeletionService {
     fn finish_deletion(&mut self, data_root: &Path) -> Result<()> {
         self.inner.finish_deletion(data_root)
     }
-}
-
-pub(super) fn clear_local_pro_initialization_indicator(
-    operation: &LifecycleOperation,
-) -> Result<()> {
-    ctx_pro_lifecycle::deletion::clear_local_pro_initialization_indicator(operation)
 }
 
 #[cfg(test)]

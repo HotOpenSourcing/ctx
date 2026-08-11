@@ -46,6 +46,7 @@ WORKSPACE_RELEASE_PACKAGES = {
     "ctx-daemon-application",
     "ctx-daemon-runtime",
     "ctx-daemon-service",
+    "ctx-pro-application",
     "ctx-pro-host",
     "ctx-pro-lifecycle",
     "ctx-history-capture-model",

@@ -62,7 +62,7 @@ struct FakeReferralService {
     payout_results: RefCell<VecDeque<Result<ReferralPayoutResult>>>,
 }
 
-impl ReferralService for FakeReferralService {
+impl UiReferralService for FakeReferralService {
     fn create(
         &mut self,
         _codename: &str,
@@ -91,23 +91,24 @@ impl ReferralService for FakeReferralService {
         country: Option<&str>,
         auth_mode: ReferralAuthMode,
         _ui: &mut Ui,
-    ) -> Result<ReferralPayoutResult> {
+    ) -> Result<ReferralPayoutResponse> {
         self.auth_modes.borrow_mut().push(auth_mode);
         self.payout_countries
             .borrow_mut()
             .push(country.map(str::to_owned));
         if let Some(result) = self.payout_results.borrow_mut().pop_front() {
-            return result;
+            return result.map(ReferralPayoutResponse::Unvalidated);
         }
         self.payout
             .take()
             .ok_or_else(|| anyhow::anyhow!("missing payout fixture"))
+            .map(ReferralPayoutResponse::Unvalidated)
     }
 }
 
 struct FailingReferralService(&'static str);
 
-impl ReferralService for FailingReferralService {
+impl UiReferralService for FailingReferralService {
     fn create(
         &mut self,
         _codename: &str,
@@ -130,7 +131,7 @@ impl ReferralService for FailingReferralService {
         _country: Option<&str>,
         _auth_mode: ReferralAuthMode,
         _ui: &mut Ui,
-    ) -> Result<ReferralPayoutResult> {
+    ) -> Result<ReferralPayoutResponse> {
         Err(anyhow::anyhow!(self.0))
     }
 }

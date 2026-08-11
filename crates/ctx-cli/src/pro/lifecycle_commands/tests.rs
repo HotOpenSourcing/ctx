@@ -198,48 +198,6 @@ fn fixture() -> LifecycleFixture {
 }
 
 #[test]
-fn repair_required_setup_rejects_a_missing_artifact() {
-    let error = setup_artifact(&SetupInstallation::RepairRequired, None)
-        .err()
-        .unwrap()
-        .to_string();
-    assert_eq!(
-        error,
-        "invalid_response: Pro setup returned no helper artifact for an install or repair"
-    );
-}
-
-#[test]
-fn staged_activation_requires_exact_protocol_authorization_and_status() {
-    let mut smoke = HelperSmoke {
-        protocol_version: PROTOCOL_VERSION,
-        protocol_fingerprint: PROTOCOL_FINGERPRINT.to_owned(),
-        helper_version: "0.1.0".to_owned(),
-        capabilities: [Capability::EntitlementAuthorization, Capability::Status]
-            .into_iter()
-            .collect(),
-    };
-    validate_staged_helper(&smoke).unwrap();
-
-    smoke
-        .capabilities
-        .remove(&Capability::EntitlementAuthorization);
-    assert_eq!(
-        validate_staged_helper(&smoke).unwrap_err().to_string(),
-        "protocol_mismatch: staged Pro helper failed the activation smoke contract"
-    );
-
-    smoke
-        .capabilities
-        .insert(Capability::EntitlementAuthorization);
-    smoke.protocol_fingerprint = "0".repeat(64);
-    assert_eq!(
-        validate_staged_helper(&smoke).unwrap_err().to_string(),
-        "protocol_mismatch: staged Pro helper failed the activation smoke contract"
-    );
-}
-
-#[test]
 fn ordinary_uninstall_preserves_local_pro_data_and_fresh_epoch_authority() {
     let LifecycleFixture {
         root,
@@ -957,29 +915,6 @@ fn lifecycle_status_renders_repository_readiness_axes_independently() {
         lifecycle_status_value(without_evidence, false)["storage_evidence"],
         serde_json::Value::Null
     );
-}
-
-#[test]
-fn ready_materialized_setup_replay_skips_commercial_mutation_only_for_current_access() {
-    for access_state in ["trial", "active", "canceling_paid"] {
-        assert_eq!(
-            reusable_setup_access_state(&pro_status(access_state), false, None).as_deref(),
-            Some(access_state)
-        );
-    }
-
-    assert!(reusable_setup_access_state(&pro_status("active"), true, None).is_none());
-    assert!(
-        reusable_setup_access_state(&pro_status("active"), false, Some("agent-smith")).is_none()
-    );
-    assert!(reusable_setup_access_state(&pro_status("offline_grace"), false, None).is_none());
-
-    let mut stale = pro_status("active");
-    stale.materialized = false;
-    assert!(reusable_setup_access_state(&stale, false, None).is_none());
-    stale.materialized = true;
-    stale.ready = false;
-    assert!(reusable_setup_access_state(&stale, false, None).is_none());
 }
 
 #[test]

@@ -12,16 +12,13 @@ use crate::{
     },
 };
 
-pub(super) fn defer_setup(
-    operation: &ctx_pro_lifecycle::operation::LifecycleOperation,
+pub(super) fn write_deferred_setup_result(
     data_root: &Path,
     account_state: &str,
     helper_updated: bool,
     json_output: bool,
     ui: &mut Ui,
 ) -> Result<()> {
-    operation.require_data_root(data_root)?;
-    ctx_pro_lifecycle::state_markers::request_materialization(operation)?;
     if json_output {
         println!(
             "{}",
@@ -95,29 +92,6 @@ fn render_deferred_setup_human(context: &RenderContext, account_state: &str) -> 
         None,
     ));
     document
-}
-
-pub(super) fn pending(data_root: &Path) -> Result<bool> {
-    ctx_pro_lifecycle::state_markers::materialization_pending(data_root)
-}
-
-pub(super) fn clear(operation: &ctx_pro_lifecycle::operation::LifecycleOperation) -> Result<()> {
-    ctx_pro_lifecycle::state_markers::clear_materialization(operation)
-}
-
-pub(super) fn clear_after<T>(
-    data_root: &Path,
-    operation: Option<&ctx_pro_lifecycle::operation::LifecycleOperation>,
-    value: T,
-) -> Result<T> {
-    match operation {
-        Some(operation) => {
-            operation.require_data_root(data_root)?;
-            clear(operation)?;
-        }
-        None => ctx_pro_lifecycle::state_markers::clear_materialization_at(data_root)?,
-    }
-    Ok(value)
 }
 
 #[cfg(test)]

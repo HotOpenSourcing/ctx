@@ -93,22 +93,18 @@ impl CommercialApiClient {
         codename: &str,
     ) -> Result<ReferralCreateResult> {
         validate_codename(codename)?;
-        let result: ReferralCreateResult = self.post(
+        self.post(
             REFERRALS_PATH,
             access_token,
             &ReferralCreateRequest { codename },
-        )?;
-        result.validate(codename)?;
-        Ok(result)
+        )
     }
 
     pub fn referral_status(
         &self,
         access_token: &WorkOsAccessToken,
     ) -> Result<ReferralStatusResult> {
-        let result: ReferralStatusResult = self.get(REFERRALS_PATH, access_token)?;
-        result.validate()?;
-        Ok(result)
+        self.get(REFERRALS_PATH, access_token)
     }
 
     pub fn referral_payout(
@@ -117,13 +113,11 @@ impl CommercialApiClient {
         country: Option<&str>,
     ) -> Result<ReferralPayoutResult> {
         validate_payout_country(country)?;
-        let result: ReferralPayoutResult = self.post(
+        self.post(
             REFERRAL_PAYOUT_PATH,
             access_token,
             &ReferralPayoutRequest { country },
-        )?;
-        result.validate_at(self.unix_time()?)?;
-        Ok(result)
+        )
     }
 }
 
@@ -199,7 +193,7 @@ impl ReferralPayoutResult {
         self.validate_at(super::system_unix_time()?)
     }
 
-    fn validate_at(&self, now: i64) -> Result<()> {
+    pub fn validate_at(&self, now: i64) -> Result<()> {
         if self.kind != "payout_onboarding_created" || self.payout_state != "onboarding_pending" {
             bail!("invalid_response: referral payout result is invalid");
         }

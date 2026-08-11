@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use ctx_history_core::platform_security::{verify_private_directory, verify_private_file};
+use ctx_pro_application::{ReferralAuthMode, ReferralPayoutResponse};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -15,7 +16,7 @@ use super::{
     commercial_api::{ReferralCreateResult, ReferralPayoutResult, ReferralStatusResult},
     commercial_config::{self, test_control_release_trust, TEST_CONTROL_MANIFEST_ENV},
     lifecycle::{ProLifecycleService, ProManagePlan, ProSetupPlan},
-    referral::{ReferralAuthMode, ReferralService},
+    referral::UiReferralService,
 };
 use crate::ui::Ui;
 
@@ -639,10 +640,10 @@ impl ProLifecycleService for TestControlService {
     }
 }
 
-impl ReferralService for TestControlService {
+impl UiReferralService for TestControlService {
     fn create(
         &mut self,
-        codename: &str,
+        _codename: &str,
         auth_mode: ReferralAuthMode,
         ui: &mut Ui,
     ) -> Result<ReferralCreateResult> {
@@ -658,12 +659,10 @@ impl ReferralService for TestControlService {
         let (human_output, browser_enabled) = auth_output(auth_mode);
         self.emit_events(&script.events, ui, human_output, browser_enabled)?;
         let value = scripted_value(&script.outcome)?;
-        let result = ReferralCreateResult {
+        Ok(ReferralCreateResult {
             codename: value.codename,
             disposition: value.disposition,
-        };
-        result.validate(codename)?;
-        Ok(result)
+        })
     }
 
     fn status(&mut self, auth_mode: ReferralAuthMode, ui: &mut Ui) -> Result<ReferralStatusResult> {
@@ -679,7 +678,7 @@ impl ReferralService for TestControlService {
         let (human_output, browser_enabled) = auth_output(auth_mode);
         self.emit_events(&script.events, ui, human_output, browser_enabled)?;
         let value = scripted_value(&script.outcome)?;
-        let result = ReferralStatusResult {
+        Ok(ReferralStatusResult {
             codename: value.codename,
             attributed: value.attributed,
             subscribed: value.subscribed,
@@ -692,9 +691,7 @@ impl ReferralService for TestControlService {
             debt_cents: value.debt_cents,
             currency: value.currency,
             payout_state: value.payout_state,
-        };
-        result.validate()?;
-        Ok(result)
+        })
     }
 
     fn payout(
@@ -702,7 +699,7 @@ impl ReferralService for TestControlService {
         _country: Option<&str>,
         auth_mode: ReferralAuthMode,
         ui: &mut Ui,
-    ) -> Result<ReferralPayoutResult> {
+    ) -> Result<ReferralPayoutResponse> {
         self.session.begin_operation("referral.payout")?;
         let script = self
             .session
@@ -722,7 +719,7 @@ impl ReferralService for TestControlService {
             expires_at_unix: value.expires_at_unix,
         };
         validate_test_payout(&result, self.session.unix_time()?)?;
-        Ok(result)
+        Ok(ReferralPayoutResponse::Prevalidated(result))
     }
 }
 

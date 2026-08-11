@@ -1,10 +1,8 @@
 mod anonymous_trial;
 pub(crate) mod artifact_delivery;
-mod authorization;
 mod client;
 mod commercial_config;
 mod commercial_lifecycle;
-mod commercial_production_record;
 pub(crate) mod diagnostic {
     pub(crate) use ctx_pro_host::diagnostic::*;
 }
@@ -17,7 +15,6 @@ mod pending_materialization;
 mod pricing;
 mod referral;
 mod render;
-mod setup_validation;
 #[cfg(ctx_pro_test_helper)]
 mod test_control;
 pub(crate) mod commercial_api {

@@ -750,6 +750,7 @@ dependencies = [
  "ctx-history-read-application",
  "ctx-history-refresh",
  "ctx-pro-access",
+ "ctx-pro-application",
  "ctx-pro-host",
  "ctx-pro-host-protocol",
  "ctx-pro-lifecycle",
@@ -1216,6 +1217,25 @@ dependencies = [
  "windows-sys 0.61.2",
  "zbus",
  "zeroize",
+]
+
+[[package]]
+name = "ctx-pro-application"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "ctx-history-core",
+ "ctx-history-index",
+ "ctx-pro-access",
+ "ctx-pro-host",
+ "ctx-pro-host-protocol",
+ "ctx-pro-lifecycle",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "url",
+ "uuid",
 ]
 
 [[package]]
