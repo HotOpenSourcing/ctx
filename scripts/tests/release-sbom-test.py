@@ -35,6 +35,7 @@ WORKSPACE_PACKAGES = (
     ("ctx-daemon-runtime", "crates/ctx-daemon-runtime"),
     ("ctx-daemon-service", "crates/ctx-daemon-service"),
     ("ctx-pro-host", "crates/ctx-pro-host"),
+    ("ctx-pro-lifecycle", "crates/ctx-pro-lifecycle"),
     ("ctx-history-core", "crates/ctx-history-core"),
     ("ctx-history-index-format", "crates/ctx-history-index-format"),
     ("ctx-history-index", "crates/ctx-history-index"),
@@ -154,6 +155,7 @@ members = [
   "crates/ctx-daemon-runtime",
   "crates/ctx-daemon-service",
   "crates/ctx-pro-host",
+  "crates/ctx-pro-lifecycle",
   "crates/ctx-history-core",
   "crates/ctx-history-index-format",
   "crates/ctx-history-index",
@@ -192,6 +194,7 @@ tantivy = { version = "0.26.1", default-features = false, features = ["mmap", "l
                     "ctx-history-refresh-execution = { path = \"../ctx-history-refresh-execution\" }\n"
                     "ctx-history-query = { path = \"../ctx-history-query\" }\n"
                     "ctx-pro-host = { path = \"../ctx-pro-host\" }\n"
+                    "ctx-pro-lifecycle = { path = \"../ctx-pro-lifecycle\" }\n"
                     "ctx-semantic-model = { path = \"../ctx-semantic-model\" }\n"
                     "ctx-upgrade-engine = { path = \"../ctx-upgrade-engine\" }"
                 ),
@@ -207,7 +210,11 @@ tantivy = { version = "0.26.1", default-features = false, features = ["mmap", "l
                 "ctx-pro-host": (
                     "ctx-history-core = { path = \"../ctx-history-core\" }\n"
                     "ctx-history-index-format = { path = \"../ctx-history-index-format\" }\n"
-                    "ctx-history-index-query = { path = \"../ctx-history-index-query\" }"
+                    "ctx-history-index-query = { path = \"../ctx-history-index-query\" }\n"
+                    "ctx-pro-lifecycle = { path = \"../ctx-pro-lifecycle\" }"
+                ),
+                "ctx-pro-lifecycle": (
+                    "ctx-history-core = { path = \"../ctx-history-core\" }"
                 ),
                 "ctx-history-index": (
                     "ctx-history-index-format = { path = \"../ctx-history-index-format\" }\n"
@@ -298,6 +305,7 @@ repository = "https://example.invalid/{name}"
             "@@//crates/ctx-daemon-runtime:ctx_daemon_runtime",
             "@@//crates/ctx-daemon-service:ctx_daemon_service",
             "@@//crates/ctx-pro-host:ctx_pro_host",
+            "@@//crates/ctx-pro-lifecycle:ctx_pro_lifecycle",
             "@@//crates/ctx-history-core:ctx_history_core",
             "@@//crates/ctx-history-index-format:ctx_history_index_format",
             "@@//crates/ctx-history-index:ctx_history_index",
@@ -394,6 +402,7 @@ repository = "https://example.invalid/{name}"
                     "ctx-daemon-runtime 1.0.0",
                     "ctx-daemon-service 1.0.0",
                     "ctx-pro-host",
+                    "ctx-pro-lifecycle",
                     "ctx-history-index",
                     "ctx-history-jsonl",
                     "ctx-history-refresh-execution",
@@ -439,7 +448,13 @@ repository = "https://example.invalid/{name}"
                     "ctx-history-core",
                     "ctx-history-index-format",
                     "ctx-history-index-query",
+                    "ctx-pro-lifecycle",
                 ),
+            ),
+            self.package(
+                "ctx-pro-lifecycle",
+                "0.26.0",
+                ("ctx-history-core",),
             ),
             self.package(
                 "ctx-history-index",

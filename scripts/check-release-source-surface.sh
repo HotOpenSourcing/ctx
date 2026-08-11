@@ -38,6 +38,7 @@ source_paths=(
   crates/ctx-daemon-service/src
   crates/ctx-pro-access/src
   crates/ctx-pro-host/src
+  crates/ctx-pro-lifecycle/src
   crates/ctx-upgrade-engine/src
   crates/ctx-history-capture/src
   crates/ctx-history-query/src

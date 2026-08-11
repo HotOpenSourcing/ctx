@@ -45,7 +45,7 @@ HOST_TEST_DEPS = [
     "//crates/ctx-history-refresh:lib",
     "//crates/ctx-pro-access:test_support_lib",
     "//crates/ctx-pro-host-protocol:lib",
-    "//crates/ctx-pro-lifecycle:lib",
+    "//crates/ctx-pro-lifecycle:test_support_lib",
 ]
 
 HOST_TEST_SUPPORT_DEPS = [

@@ -196,6 +196,12 @@
         "//crates/ctx-pro-host:test_support_lib"
       ]
     },
+    "ctx-pro-lifecycle": {
+      "manifest": "crates/ctx-pro-lifecycle/Cargo.toml",
+      "targets": {"lib:ctx_pro_lifecycle": "//crates/ctx-pro-lifecycle:lib"},
+      "native_unit": "//crates/ctx-pro-lifecycle:unit_tests",
+      "feature_variants": ["//crates/ctx-pro-lifecycle:test_support_lib"]
+    },
     "ctx-pro-host-protocol": {
       "manifest": "crates/ctx-pro-host-protocol/Cargo.toml",
       "targets": {

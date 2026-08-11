@@ -24,6 +24,7 @@ query() {
 check_direct_internal_deps() {
   local target="$1"
   local access_target="$2"
+  local lifecycle_target="$3"
   local expected="${scratch}/${target}-expected.txt"
   printf '%s\n' \
     '//crates/ctx-history-core:lib' \
@@ -34,6 +35,7 @@ check_direct_internal_deps() {
     "//crates/ctx-pro-access:${access_target}" \
     "//crates/ctx-pro-host:${target}" \
     '//crates/ctx-pro-host-protocol:lib' \
+    "//crates/ctx-pro-lifecycle:${lifecycle_target}" \
     | LC_ALL=C sort -u >"${expected}"
   query "kind(\"rust_library rule\", deps(//crates/ctx-pro-host:${target}, 1)) intersect //crates/..." \
     | LC_ALL=C sort -u >"${scratch}/${target}-actual.txt"
@@ -43,10 +45,10 @@ check_direct_internal_deps() {
   fi
 }
 
-check_direct_internal_deps lib lib
-check_direct_internal_deps test_support_lib test_support_lib
-check_direct_internal_deps qualification_lib qualification_lib
-check_direct_internal_deps qualification_test_support_lib qualification_lib
+check_direct_internal_deps lib lib lib
+check_direct_internal_deps test_support_lib test_support_lib lib
+check_direct_internal_deps qualification_lib qualification_lib lib
+check_direct_internal_deps qualification_test_support_lib qualification_lib lib
 
 if [[ -z "$(query 'somepath(//crates/ctx-cli:ctx, //crates/ctx-pro-host:lib)')" ]]; then
   echo 'ctx-cli has no production dependency path to ctx-pro-host' >&2
@@ -76,6 +78,7 @@ expected = {
     "ctx-history-refresh",
     "ctx-pro-access",
     "ctx-pro-host-protocol",
+    "ctx-pro-lifecycle",
     "libc",
     "ring",
     "serde",
@@ -90,7 +93,11 @@ if dependencies != expected:
         "ctx-pro-host dependency inventory differs: "
         f"missing={sorted(expected - dependencies)} extra={sorted(dependencies - expected)}"
     )
-if set(manifest.get("dev-dependencies", {})) != {"ctx-history-index", "tempfile"}:
+if set(manifest.get("dev-dependencies", {})) != {
+    "ctx-history-index",
+    "ctx-pro-lifecycle",
+    "tempfile",
+}:
     raise SystemExit("ctx-pro-host dev dependency inventory differs")
 if manifest.get("features") != {
     "default": [],
@@ -147,9 +154,9 @@ if [[ -e "${host_root}/build.rs" ]]; then
   echo 'ctx-pro-host unexpectedly gained a build-script cfg authority' >&2
   exit 1
 fi
-if grep -En \
-  'release_trust|ProInstallMarker|signed_manifest|validate_manifest_release_trust|read_marker' \
-  "${host_root}/src/host_port.rs" "${host_root}/src/client/transport.rs"; then
+if grep -REn --include='*.rs' \
+  'pub struct (ProManifest|ProInstallMarker|PairIdentity)|PRO_RELEASE_(STABLE|STAGING)_PUBLIC_KEY_PEM|signed_manifest|validate_manifest_release_trust|read_marker' \
+  "${host_root}/src"; then
   echo 'signed lifecycle manifest authority leaked into the host port or protocol transport' >&2
   exit 1
 fi
@@ -163,10 +170,22 @@ grep -F 'ctx-pro-host = { path = "../ctx-pro-host", features = ["test-support"] 
 for target in lib test_support_lib qualification_lib qualification_test_support_lib; do
   grep -F "\"//crates/ctx-pro-host:${target}\"" "${cli_build}" >/dev/null
 done
-grep -F 'LifecycleValidatedHelper::new(' "${cli_lifecycle}" >/dev/null
-grep -F '&pair.artifact,' "${cli_lifecycle}" >/dev/null
-if grep -En 'helper\.(read_helper|read_marker)|retain_installation_guard' "${cli_lifecycle}"; then
-  echo 'CLI lifecycle duplicates host artifact reads or post-validation guard binding' >&2
+grep -F 'ValidatedArtifactIdentity' "${host_root}/src/host_port.rs" >/dev/null
+grep -F 'LifecycleOperation' "${host_root}/src/host_port.rs" >/dev/null
+grep -F 'ctx_pro_lifecycle::installation::discover_installed_artifact' \
+  "${repo_root}/crates/ctx-cli/src/pro/client.rs" >/dev/null
+grep -F 'ValidatedArtifactIdentity' "${host_root}/src/verified_executable.rs" >/dev/null
+grep -F 'STREAM_BUFFER_BYTES' "${host_root}/src/verified_executable.rs" >/dev/null
+grep -F 'stream_digest(' "${host_root}/src/verified_executable.rs" >/dev/null
+if grep -REn --include='*.rs' \
+  'LifecycleValidatedHelper|helper\.(read_helper|read_marker)|retain_installation_guard' \
+  "${repo_root}/crates/ctx-cli/src/pro" "${host_root}/src"; then
+  echo 'CLI or host duplicates lifecycle artifact reads or guard binding' >&2
+  exit 1
+fi
+if grep -En 'read_to_end|Vec::with_capacity|fs::read\(' \
+  "${host_root}/src/verified_executable.rs"; then
+  echo 'host executable verification must use fixed-buffer retained-handle streaming' >&2
   exit 1
 fi
 
