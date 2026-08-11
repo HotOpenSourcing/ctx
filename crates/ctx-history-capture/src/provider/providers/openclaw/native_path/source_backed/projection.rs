@@ -4,7 +4,6 @@ use ctx_history_core::{EventOrigin, SessionRelationshipKind, SubrecordSelector};
 
 const TOOL_CALL_SELECTOR_NAMESPACE: &str = "openclaw.tool-call-block";
 const TOOL_CALL_POSITION_KIND: &str = "openclaw.tool-call-block-position";
-const MAX_SELECTOR_CALL_ID_BYTES: usize = 16 * 1024;
 
 pub(super) enum StateBucket {
     Pending,
@@ -347,7 +346,14 @@ impl OpenClawProjector {
         Option<(String, PendingCall)>,
         Option<ctx_retrieval::ContributionClass>,
     ) {
-        let (context, _linkage_abstained) =
+        let exact_json_authority = crate::common::json::raw_object_keys_are_unique(source_bytes);
+        let (context, _linkage_abstained) = if result.ambiguous_linkage || !exact_json_authority {
+            input.outcome_abstentions.push((
+                RepositoryAbstentionReason::ProviderOutputUnjoined,
+                "openclaw_tool_result_call_id_is_ambiguous",
+            ));
+            (None, true)
+        } else {
             match result.call_id.filter(|call_id| !call_id.is_empty()) {
                 Some(call_id)
                     if !self
@@ -367,11 +373,12 @@ impl OpenClawProjector {
                     self.linkage_capacity_exceeded,
                     input,
                 ),
-            };
+            }
+        };
         let linked_invocation = context
             .as_ref()
             .map(|context| ctx_retrieval::ContributionClass::from(context.retrieval_contribution));
-        let result_contribution = if crate::common::json::raw_object_keys_are_unique(source_bytes) {
+        let result_contribution = if exact_json_authority && !result.ambiguous_linkage {
             classify_openclaw_tool_result(source_value, result, linked_invocation)
         } else {
             ctx_retrieval::ContributionClass::Unknown
@@ -476,9 +483,7 @@ fn project_tool_result(
                 .filter(|text| !text.trim().is_empty())
         })
         .unwrap_or_else(|| "tool output".to_owned());
-    let call_id = result
-        .call_id
-        .filter(|value| !value.trim().is_empty() && value.len() <= MAX_SELECTOR_CALL_ID_BYTES);
+    let call_id = result.call_id;
     let tool_name = ["toolName", "name", "tool_name", "tool"]
         .into_iter()
         .find_map(|key| result.message.get(key).and_then(Value::as_str))
@@ -601,16 +606,7 @@ fn classify_openclaw_tool_result(
     {
         atoms.push(ctx_retrieval::ResultAtom::Unknown);
     }
-    let call_id_members = ["toolCallId", "tool_call_id"]
-        .into_iter()
-        .filter_map(|key| result.message.get(key))
-        .collect::<Vec<_>>();
-    if call_id_members.len() != 1
-        || call_id_members[0]
-            .as_str()
-            .filter(|call_id| !call_id.is_empty())
-            != result.call_id
-    {
+    if result.call_id.is_none() || result.ambiguous_linkage {
         atoms.push(ctx_retrieval::ResultAtom::Unknown);
     }
 

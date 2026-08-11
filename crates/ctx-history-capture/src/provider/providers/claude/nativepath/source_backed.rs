@@ -60,7 +60,7 @@ const FALLBACK_EVENT_ID_DOMAIN: &[u8] = b"ctx-claude-fallback-event-id-v1\0";
 const LOGICAL_SESSION_KIND: &str = "claude-session";
 const LOGICAL_EVENT_KIND: &str = "claude-event";
 const SOURCE_SCHEMA_VARIANT: &str = "claude-nativepath-jsonl-v6";
-const PARSER_REVISION: &str = "claude-shared-jsonl-v10-private-thinking-ignore";
+const PARSER_REVISION: &str = "claude-shared-jsonl-v11-exact-result-alias-linkage";
 const MAX_PENDING_CALLS: usize = 4096;
 const MAX_RESULT_METADATA_BYTES: usize = 64 * 1024;
 const RESULT_TERMINAL_CALL_ID_DOMAIN: &[u8] = b"ctx/claude-nativepath/result-terminal-call-id/v1\0";
@@ -328,11 +328,18 @@ fn preflight_claude_result_terminals(
                 };
             let in_certified_prefix = certified_prefix_end
                 .is_some_and(|prefix_end| evidence.byte_end_exclusive() <= prefix_end);
-            for call_id in parsed.rows.iter().filter_map(|row| {
-                row.tool_result
-                    .as_ref()
-                    .and_then(|result| result.call_id.as_deref())
-            }) {
+            for result in parsed
+                .rows
+                .iter()
+                .filter_map(|row| row.tool_result.as_ref())
+            {
+                if result.retrieval_input_ambiguous {
+                    authority.observe_ambiguous_terminal();
+                    continue;
+                }
+                let Some(call_id) = result.call_id.as_deref() else {
+                    continue;
+                };
                 authority.observe(
                     RESULT_TERMINAL_CALL_ID_DOMAIN,
                     call_id,
@@ -537,20 +544,26 @@ impl JsonlFamilyProjector for ClaudeProjector {
                 }
             }
             if let Some(result) = &row.tool_result {
-                let (context, _linkage_abstained) = resolve_pending_call(
-                    &mut self.pending_calls,
-                    result.call_id.as_deref(),
-                    self.linkage_capacity_exceeded,
-                    &mut input,
-                );
                 let unique_terminal = result.call_id.as_deref().is_some_and(|call_id| {
                     self.result_terminal_authority
                         .is_unique(RESULT_TERMINAL_CALL_ID_DOMAIN, call_id)
                 });
-                discovery_contribution = claude_result_contribution(
-                    result,
-                    context.as_ref().filter(|_| unique_terminal),
-                );
+                let (context, _linkage_abstained) = if unique_terminal {
+                    resolve_pending_call(
+                        &mut self.pending_calls,
+                        result.call_id.as_deref(),
+                        self.linkage_capacity_exceeded,
+                        &mut input,
+                    )
+                } else {
+                    input.provider_native_context_ambiguous = true;
+                    input.outcome_abstentions.push((
+                        RepositoryAbstentionReason::ProviderOutputUnjoined,
+                        "claude_tool_result_call_id_is_ambiguous",
+                    ));
+                    (None, true)
+                };
+                discovery_contribution = claude_result_contribution(result, context.as_ref());
                 if let (Some(context), Some(result_call_id)) = (context, result.call_id.as_deref())
                 {
                     input.command = context.command.clone();

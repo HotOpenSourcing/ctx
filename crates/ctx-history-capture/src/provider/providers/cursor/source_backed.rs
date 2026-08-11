@@ -55,7 +55,7 @@ const NATIVE_EVENT_LOGICAL_KIND: &str = "cursor.logical-event-v3";
 const LOGICAL_SESSION_KIND: &str = "cursor-session";
 const LOGICAL_EVENT_KIND: &str = "cursor-event";
 const SOURCE_SCHEMA_VARIANT: &str = "cursor-agent-transcript-jsonl-v1";
-const PARSER_REVISION: &str = "cursor-shared-jsonl-v10-source-unique-result-exclusion";
+const PARSER_REVISION: &str = "cursor-shared-jsonl-v11-ambiguous-result-linkage-authority";
 const EVENT_SEQUENCE_PARTS: u64 = u16::MAX as u64 + 1;
 const MAX_CURSOR_TOOL_CONTEXTS: usize = 256;
 const RESULT_TERMINAL_CALL_ID_DOMAIN: &[u8] = b"ctx/cursor/result-terminal-call-id/v1\0";
@@ -398,10 +398,18 @@ fn preflight_cursor_result_terminals(
                 .is_some_and(|prefix_end| evidence.byte_end_exclusive() <= prefix_end);
             for event in events {
                 if let CursorEventBody::ToolOutput {
-                    call_id: Some(call_id),
+                    call_id,
+                    ambiguous_linkage,
                     ..
                 } = event.body
                 {
+                    if ambiguous_linkage {
+                        authority.observe_ambiguous_terminal();
+                        continue;
+                    }
+                    let Some(call_id) = call_id else {
+                        continue;
+                    };
                     authority.observe(
                         RESULT_TERMINAL_CALL_ID_DOMAIN,
                         &call_id,
@@ -638,7 +646,7 @@ impl CursorProjector {
                     self.result_terminal_authority
                         .is_unique(RESULT_TERMINAL_CALL_ID_DOMAIN, call_id)
                 });
-                let context = if *ambiguous_linkage {
+                let context = if *ambiguous_linkage || !unique_terminal {
                     None
                 } else {
                     call_id
@@ -649,10 +657,8 @@ impl CursorProjector {
                             CursorToolContextState::Ambiguous => None,
                         })
                 };
-                discovery_contribution = cursor_result_contribution(
-                    *discovery_evidence,
-                    context.as_ref().filter(|_| unique_terminal),
-                );
+                discovery_contribution =
+                    cursor_result_contribution(*discovery_evidence, context.as_ref());
                 if let Some(context) = context {
                     apply_cursor_context(&mut input, &context);
                     append_cursor_input_path_abstentions(

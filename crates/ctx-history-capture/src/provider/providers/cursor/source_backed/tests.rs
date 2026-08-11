@@ -1,3 +1,10 @@
+fn assert_no_linked_repository_evidence(record: &ctx_history_core::CoreRecord) {
+    assert!(record.repository_bindings.is_empty());
+    assert!(record.repository_file_invocation_evidence.is_empty());
+    assert!(record.repository_file_observations.is_empty());
+    assert!(record.repository_vcs_observations.is_empty());
+}
+
 #[cfg(test)]
 mod repository_tests {
     use std::{fs, path::PathBuf, process::Command};
@@ -83,10 +90,18 @@ mod repository_tests {
             {
                 for event in events {
                     if let CursorEventBody::ToolOutput {
-                        call_id: Some(call_id),
+                        call_id,
+                        ambiguous_linkage,
                         ..
                     } = event.body
                     {
+                        if ambiguous_linkage {
+                            authority.observe_ambiguous_terminal();
+                            continue;
+                        }
+                        let Some(call_id) = call_id else {
+                            continue;
+                        };
                         authority.observe(
                             RESULT_TERMINAL_CALL_ID_DOMAIN,
                             &call_id,
@@ -227,13 +242,20 @@ mod repository_tests {
 
     #[test]
     fn cursor_duplicate_result_terminals_fail_open_including_the_earlier_result() {
+        let temp = TempDir::new().unwrap();
+        let repo = repository(&temp);
+        let mut projector = projector();
         let records = project_cursor_records(
-            &mut projector(),
+            &mut projector,
             &[
                 cursor_ctx_call(
                     "duplicate-result",
                     "run_shell_command",
-                    serde_json::json!({"command": "ctx search duplicate-result"}),
+                    serde_json::json!({
+                        "command": "ctx search duplicate-result",
+                        "workdir": repo,
+                        "path": "src/lib.rs",
+                    }),
                 ),
                 cursor_ctx_result(
                     "duplicate-result",
@@ -251,6 +273,9 @@ mod repository_tests {
         );
 
         assert_eq!(records.len(), 3);
+        assert_eq!(records[0].repository_bindings.len(), 1);
+        assert_eq!(records[0].repository_file_observations.len(), 1);
+        assert!(projector.tool_contexts.contains_key("duplicate-result"));
         assert_eq!(
             records[0].content.discovery_exclusion,
             Some(CoreDiscoveryExclusion::CtxRetrievalDerived)
@@ -269,6 +294,87 @@ mod repository_tests {
             .as_deref()
             .unwrap()
             .contains("second duplicate Cursor payload"));
+        super::assert_no_linked_repository_evidence(&records[1]);
+        super::assert_no_linked_repository_evidence(&records[2]);
+    }
+
+    #[test]
+    fn cursor_malformed_linkage_matrix_poisons_authority_without_consuming_pending() {
+        let temp = TempDir::new().unwrap();
+        let repo = repository(&temp);
+        let oversized = "x".repeat(512 + 1);
+        let cases = [
+            (
+                "literal-duplicate",
+                r#""tool_use_id":"selector-call","tool_use_id":"other""#.to_owned(),
+            ),
+            (
+                "escaped-duplicate",
+                r#""tool_use_id":"selector-call","tool_\u0075se_id":"other""#.to_owned(),
+            ),
+            ("non-string", r#""tool_use_id":7"#.to_owned()),
+            ("empty", r#""tool_use_id":"""#.to_owned()),
+            ("oversized", format!(r#""tool_use_id":"{oversized}""#)),
+        ];
+        for (name, selector) in cases {
+            let raw = format!(
+                r#"{{"role":"user","message":{{"role":"user","content":[{{"type":"tool_result",{selector},"content":"payload"}}]}}}}"#
+            );
+            let result_event = event(&raw, 1);
+            let CursorEventBody::ToolOutput {
+                ambiguous_linkage, ..
+            } = &result_event.body
+            else {
+                panic!("expected Cursor tool output");
+            };
+            assert!(*ambiguous_linkage, "{name}");
+            let mut authority = CursorResultTerminalAuthority::available();
+            authority.observe_ambiguous_terminal();
+            assert!(authority.exhausted(), "{name}");
+            assert!(
+                !authority.is_unique(RESULT_TERMINAL_CALL_ID_DOMAIN, "selector-call"),
+                "{name}"
+            );
+
+            let call = cursor_ctx_call(
+                "selector-call",
+                "run_shell_command",
+                serde_json::json!({
+                    "command": "git commit -m selector",
+                    "workdir": repo,
+                    "path": "src/lib.rs",
+                }),
+            );
+            let call_event = event(&serde_json::to_string(&call).unwrap(), 0);
+            let mut projector = projector();
+            projector.result_terminal_authority = authority;
+            let mut worker = JsonlFamilyWorkerContext::default();
+            projector.attribution_for_event(&mut worker, &call_event);
+            assert!(
+                projector.tool_contexts.contains_key("selector-call"),
+                "{name}"
+            );
+            let result_annotation = projector.attribution_for_event(&mut worker, &result_event);
+            assert!(
+                projector.tool_contexts.contains_key("selector-call"),
+                "{name}"
+            );
+            assert!(
+                result_annotation.repository_vcs_observations.is_empty(),
+                "{name}"
+            );
+            assert!(result_annotation.repository_bindings.is_empty(), "{name}");
+            assert!(
+                result_annotation
+                    .repository_file_invocation_evidence
+                    .is_empty(),
+                "{name}"
+            );
+            assert!(
+                result_annotation.repository_file_observations.is_empty(),
+                "{name}"
+            );
+        }
     }
 
     #[test]
@@ -916,6 +1022,20 @@ mod fidelity_identity_tests {
             .join(format!("{session}.jsonl"))
     }
 
+    fn repository(temp: &TempDir) -> PathBuf {
+        let path = temp.path().join("repo");
+        fs::create_dir(&path).unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&path)
+            .status()
+            .unwrap()
+            .success());
+        fs::create_dir(path.join("src")).unwrap();
+        fs::write(path.join("src/lib.rs"), "pub fn native() {}\n").unwrap();
+        path
+    }
+
     fn write_transcript(path: &Path, rows: &[Value]) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut encoded = Vec::new();
@@ -1411,6 +1531,7 @@ mod fidelity_identity_tests {
     #[test]
     fn cursor_late_duplicate_result_forces_replacement_and_corrects_the_earlier_result() {
         let temp = TempDir::new().unwrap();
+        let repo = repository(&temp);
         let root = temp.path().join("cursor-data");
         let native_session_id = "late-duplicate-session";
         let transcript = transcript_path(&root, "project", native_session_id);
@@ -1422,7 +1543,11 @@ mod fidelity_identity_tests {
                 "type": "tool_use",
                 "id": call_id,
                 "name": "run_shell_command",
-                "input": {"command": "ctx search late-duplicate"}
+                "input": {
+                    "command": "ctx search late-duplicate",
+                    "workdir": repo,
+                    "path": "src/lib.rs",
+                }
             }]}
         });
         let result = |content: &str, timestamp: &str| {
@@ -1456,6 +1581,8 @@ mod fidelity_identity_tests {
         assert!(initial.iter().all(|record| {
             record.content.discovery_exclusion == Some(CoreDiscoveryExclusion::CtxRetrievalDerived)
         }));
+        assert_eq!(initial[1].repository_bindings.len(), 1);
+        assert_eq!(initial[1].repository_file_observations.len(), 1);
         let initial_ids = initial
             .iter()
             .map(|record| record.event_id)
@@ -1491,6 +1618,149 @@ mod fidelity_identity_tests {
             .as_deref()
             .unwrap()
             .contains("second late duplicate Cursor payload"));
+        super::assert_no_linked_repository_evidence(&corrected[1]);
+        super::assert_no_linked_repository_evidence(&corrected[2]);
+    }
+
+    #[test]
+    fn cursor_appended_malformed_linkage_matrix_retracts_prior_result_authority() {
+        let oversized = "x".repeat(512 + 1);
+        let cases = [
+            (
+                "literal-duplicate",
+                r#""tool_use_id":"same-object-ambiguous-result","tool_use_id":"other""#.to_owned(),
+            ),
+            (
+                "escaped-duplicate",
+                r#""tool_use_id":"same-object-ambiguous-result","tool_\u0075se_id":"other""#
+                    .to_owned(),
+            ),
+            ("non-string", r#""tool_use_id":7"#.to_owned()),
+            ("empty", r#""tool_use_id":"""#.to_owned()),
+            ("oversized", format!(r#""tool_use_id":"{oversized}""#)),
+        ];
+        for (name, selector) in cases {
+            let temp = TempDir::new().unwrap();
+            let repo = repository(&temp);
+            let root = temp.path().join("cursor-data");
+            let native_session_id = format!("same-object-ambiguous-{name}-session");
+            let transcript = transcript_path(&root, "project", &native_session_id);
+            let call_id = "same-object-ambiguous-result";
+            let call = json!({
+                "timestamp": "2026-07-31T12:00:00Z",
+                "role": "assistant",
+                "message": {"role": "assistant", "content": [{
+                    "type": "tool_use",
+                    "id": call_id,
+                    "name": "run_shell_command",
+                    "input": {
+                        "command": "ctx search same-object-ambiguous",
+                        "workdir": repo,
+                        "path": "src/lib.rs",
+                    }
+                }]}
+            });
+            let first = json!({
+                "timestamp": "2026-07-31T12:00:01Z",
+                "role": "user",
+                "message": {"role": "user", "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": call_id,
+                    "content": "first authoritative Cursor payload",
+                    "is_error": false
+                }]}
+            });
+            write_transcript(&transcript, &[call, first]);
+            let registry = registry(&root);
+            let index = temp.path().join("index");
+
+            refresh_source_backed_generation(&index, &registry, writer_options()).unwrap();
+            let initial = indexed_records(&index, &native_session_id);
+            assert_eq!(initial.len(), 2);
+            assert!(initial.iter().all(|record| {
+                record.content.discovery_exclusion
+                    == Some(CoreDiscoveryExclusion::CtxRetrievalDerived)
+            }));
+            assert_eq!(initial[1].repository_bindings.len(), 1, "{name}");
+            assert_eq!(initial[1].repository_file_observations.len(), 1, "{name}");
+            let initial_invocation_id = initial
+                .iter()
+                .find(|record| {
+                    record
+                        .content
+                        .normalized_body
+                        .as_deref()
+                        .is_some_and(|body| body.contains("ctx search same-object-ambiguous"))
+                })
+                .unwrap()
+                .event_id;
+            let initial_result_id = initial
+                .iter()
+                .find(|record| {
+                    record
+                        .content
+                        .normalized_body
+                        .as_deref()
+                        .is_some_and(|body| body.contains("first authoritative Cursor payload"))
+                })
+                .unwrap()
+                .event_id;
+
+            let ambiguous = format!(
+                r#"{{"timestamp":"2026-07-31T12:00:02Z","role":"user","message":{{"role":"user","content":[{{"type":"tool_result",{selector},"content":"ambiguous Cursor payload","is_error":false}}]}}}}"#
+            );
+            let mut file = OpenOptions::new().append(true).open(&transcript).unwrap();
+            file.write_all(ambiguous.as_bytes()).unwrap();
+            file.write_all(b"\n").unwrap();
+            file.sync_all().unwrap();
+
+            refresh_source_backed_generation(&index, &registry, writer_options()).unwrap();
+            let corrected = indexed_records(&index, &native_session_id);
+            assert_eq!(corrected.len(), 3);
+            let corrected_invocation = corrected
+                .iter()
+                .find(|record| {
+                    record
+                        .content
+                        .normalized_body
+                        .as_deref()
+                        .is_some_and(|body| body.contains("ctx search same-object-ambiguous"))
+                })
+                .unwrap();
+            let corrected_result = corrected
+                .iter()
+                .find(|record| {
+                    record
+                        .content
+                        .normalized_body
+                        .as_deref()
+                        .is_some_and(|body| body.contains("first authoritative Cursor payload"))
+                })
+                .unwrap();
+            let ambiguous_result = corrected
+                .iter()
+                .find(|record| {
+                    record
+                        .content
+                        .normalized_body
+                        .as_deref()
+                        .is_some_and(|body| body.contains("ambiguous Cursor payload"))
+                })
+                .unwrap();
+            assert_eq!(
+                corrected_invocation.event_id, initial_invocation_id,
+                "{name}"
+            );
+            assert_eq!(corrected_result.event_id, initial_result_id, "{name}");
+            assert_eq!(
+                corrected_invocation.content.discovery_exclusion,
+                Some(CoreDiscoveryExclusion::CtxRetrievalDerived)
+            );
+            assert_eq!(corrected_result.content.discovery_exclusion, None, "{name}");
+            assert_eq!(ambiguous_result.content.discovery_exclusion, None, "{name}");
+            super::assert_no_linked_repository_evidence(corrected_result);
+            super::assert_no_linked_repository_evidence(ambiguous_result);
+        }
     }
 
     #[test]

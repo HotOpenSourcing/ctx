@@ -1,4 +1,5 @@
 use super::*;
+use crate::common::json::{exact_bounded_string_alias, ExactJsonStringAlias};
 
 const TERMINAL_AUTHORITY_POLICY_REVISION: &str = "openclaw-terminal-result-authority-v1";
 pub(super) const TERMINAL_CALL_ID_DOMAIN: &[u8] = b"ctx/openclaw/terminal-call-id/v1\0";
@@ -25,8 +26,12 @@ fn observe_terminal_record(authority: &mut OpenClawTerminalAuthority, record: &[
     let Ok(value) = serde_json::from_slice::<Value>(record) else {
         return;
     };
-    if let Some(call_id) = native_tool_result(&value).and_then(|result| result.call_id) {
-        observe_terminal(authority, call_id);
+    if let Some(result) = native_tool_result(&value) {
+        if result.ambiguous_linkage {
+            authority.observe_ambiguous_terminal();
+        } else if let Some(call_id) = result.call_id {
+            observe_terminal(authority, call_id);
+        }
     }
 }
 
@@ -65,8 +70,12 @@ pub(super) fn terminal_authority_for_values<'a>(
 ) -> OpenClawTerminalAuthority {
     let mut authority = OpenClawTerminalAuthority::available();
     for value in values {
-        if let Some(call_id) = native_tool_result(value).and_then(|result| result.call_id) {
-            observe_terminal(&mut authority, call_id);
+        if let Some(result) = native_tool_result(value) {
+            if result.ambiguous_linkage {
+                authority.observe_ambiguous_terminal();
+            } else if let Some(call_id) = result.call_id {
+                observe_terminal(&mut authority, call_id);
+            }
         }
     }
     authority
@@ -97,6 +106,7 @@ pub(super) struct NativeToolCall<'a> {
 pub(super) struct NativeToolResult<'a> {
     pub(super) message: &'a Value,
     pub(super) call_id: Option<&'a str>,
+    pub(super) ambiguous_linkage: bool,
     pub(super) output: &'a Value,
     pub(super) structured_commit_oid: Option<&'a str>,
     pub(super) output_workdir: Option<&'a str>,
@@ -174,12 +184,22 @@ pub(super) fn native_tool_result(value: &Value) -> Option<NativeToolResult<'_>> 
             .or_else(|| details.get("commitOid"))
             .and_then(Value::as_str)
     });
+    let call_id = message
+        .as_object()
+        .map_or(ExactJsonStringAlias::Missing, |object| {
+            exact_bounded_string_alias(
+                object,
+                &["toolCallId", "tool_call_id"],
+                MAX_SELECTOR_CALL_ID_BYTES,
+            )
+        });
     Some(NativeToolResult {
         message,
-        call_id: message
-            .get("toolCallId")
-            .or_else(|| message.get("tool_call_id"))
-            .and_then(Value::as_str),
+        call_id: match call_id {
+            ExactJsonStringAlias::Exact(call_id) => Some(call_id),
+            ExactJsonStringAlias::Missing | ExactJsonStringAlias::Ambiguous => None,
+        },
+        ambiguous_linkage: matches!(call_id, ExactJsonStringAlias::Ambiguous),
         output,
         structured_commit_oid,
         output_workdir: details

@@ -816,6 +816,111 @@ fn openclaw_ambiguous_terminal_exhausts_source_wide_result_uniqueness() {
 }
 
 #[test]
+fn openclaw_valid_result_aliases_have_one_exact_output_byte_golden() {
+    const GOLDEN: &[u8] = br#"{"duration_ms":null,"exit_code":null,"outcome":"unknown","result_content_complete":true,"result_content_location":"normalized_body","tool_call_id":"alias-call","tool_name":"exec","type":"tool_result"}"#;
+    for alias in ["toolCallId", "tool_call_id"] {
+        let mut message = serde_json::json!({
+            "role": "toolResult",
+            "toolName": "exec",
+            "content": "complete alias payload",
+        });
+        message.as_object_mut().unwrap().insert(
+            alias.to_owned(),
+            serde_json::Value::String("alias-call".to_owned()),
+        );
+        let value = serde_json::json!({"type": "message", "message": message});
+        let result = native_tool_result(&value).unwrap();
+
+        assert_eq!(result.call_id, Some("alias-call"), "{alias}");
+        assert!(!result.ambiguous_linkage, "{alias}");
+        let (_temp, mut projector) = test_projector();
+        let records = project_values(&mut projector, &[value]);
+        let structured = records[0].content.structured_content.as_ref().unwrap();
+        assert_eq!(serde_json::to_vec(structured).unwrap(), GOLDEN, "{alias}");
+    }
+}
+
+#[test]
+fn openclaw_malformed_result_selector_matrix_exhausts_and_never_consumes_linkage() {
+    let oversized = "x".repeat(MAX_SELECTOR_CALL_ID_BYTES + 1);
+    let cases = [
+        (
+            "conflicting",
+            r#""toolCallId":"selector-call","tool_call_id":"other""#.to_owned(),
+        ),
+        (
+            "duplicate-alias",
+            r#""toolCallId":"selector-call","toolCallId":"other""#.to_owned(),
+        ),
+        ("non-string", r#""toolCallId":7"#.to_owned()),
+        ("empty", r#""toolCallId":"""#.to_owned()),
+        ("oversized", format!(r#""toolCallId":"{oversized}""#)),
+    ];
+    for (name, selector) in cases {
+        let call = serde_json::to_vec(&serde_json::json!({
+            "type": "message",
+            "id": format!("selector-call-{name}"),
+            "timestamp": "2026-08-05T12:00:00Z",
+            "message": {"role": "assistant", "content": [{
+                "type": "toolCall",
+                "id": "selector-call",
+                "name": "exec",
+                "arguments": {"command": "git commit -m selector"}
+            }]}
+        }))
+        .unwrap();
+        let result = format!(
+            r#"{{"type":"message","id":"selector-result-{name}","timestamp":"2026-08-05T12:00:01Z","message":{{"role":"toolResult",{selector},"content":"malformed selector payload","details":{{"status":"completed","exitCode":0}}}}}}"#
+        )
+        .into_bytes();
+        let authority = terminal_authority_for_records([call.as_slice(), result.as_slice()]);
+        assert!(!authority.is_unique("selector-call"), "{name}");
+
+        let (_temp, mut projector) = test_projector();
+        projector.terminal_authority = authority;
+        let mut worker = JsonlFamilyWorkerContext::default();
+        let mut records = Vec::new();
+        for (ordinal, bytes) in [call.as_slice(), result.as_slice()].into_iter().enumerate() {
+            projector
+                .project(
+                    JsonlRecordRef::for_test(bytes, ordinal as u64),
+                    &mut worker,
+                    &mut |record| {
+                        records.push(record);
+                        Ok(())
+                    },
+                )
+                .unwrap();
+        }
+
+        assert!(
+            projector.pending_calls.contains_key("selector-call"),
+            "{name}"
+        );
+        assert!(
+            records.iter().all(|record| {
+                record
+                    .repository_vcs_observations
+                    .iter()
+                    .all(|observation| {
+                        !matches!(observation.kind, RepositoryVcsObservationKind::Outcome(_))
+                    })
+            }),
+            "{name}"
+        );
+        let retained = records.iter().find(|record| {
+            record.content.normalized_body.as_deref() == Some("malformed selector payload")
+        });
+        assert!(retained.is_some(), "{name}");
+        assert_eq!(
+            retained.unwrap().content.discovery_exclusion,
+            None,
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn openclaw_mixed_diagnostic_and_unknown_shapes_fail_open() {
     let (_temp, mut projector) = test_projector();
     let records = project_values(
@@ -2056,7 +2161,7 @@ fn terminal_ambiguity_fingerprint_invalidates_only_affected_append() {
     assert!(duplicate_append.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-b"));
 
     let mut malformed_bytes = Vec::new();
-    for value in [first_call, first_result] {
+    for value in [first_call.clone(), first_result.clone()] {
         serde_json::to_writer(&mut malformed_bytes, &value).unwrap();
         malformed_bytes.push(b'\n');
     }
@@ -2071,6 +2176,52 @@ fn terminal_ambiguity_fingerprint_invalidates_only_affected_append() {
         malformed_append.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
     );
     assert!(!malformed_append.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-a"));
+
+    let selector_appends = [
+        serde_json::json!({
+            "type": "message",
+            "message": {"role": "toolResult", "toolCallId": "call-a", "tool_call_id": "other", "content": "conflict"}
+        }),
+        serde_json::json!({
+            "type": "message",
+            "message": {"role": "toolResult", "toolCallId": 7, "content": "non-string"}
+        }),
+        serde_json::json!({
+            "type": "message",
+            "message": {"role": "toolResult", "toolCallId": "", "content": "empty"}
+        }),
+        serde_json::json!({
+            "type": "message",
+            "message": {"role": "toolResult", "toolCallId": "x".repeat(MAX_SELECTOR_CALL_ID_BYTES + 1), "content": "oversized"}
+        }),
+    ];
+    for appended in selector_appends {
+        let authority = scan(&[first_result.clone(), appended]);
+        assert_ne!(
+            prefix.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
+            authority.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
+        );
+        assert!(!authority.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-a"));
+    }
+
+    let mut duplicate_selector_bytes = Vec::new();
+    for value in [first_call, first_result] {
+        serde_json::to_writer(&mut duplicate_selector_bytes, &value).unwrap();
+        duplicate_selector_bytes.push(b'\n');
+    }
+    duplicate_selector_bytes.extend_from_slice(
+        br#"{"type":"message","message":{"role":"toolResult","toolCallId":"call-a","toolCallId":"other","content":"duplicate selector"}}"#,
+    );
+    duplicate_selector_bytes.push(b'\n');
+    fs::write(&transcript_path, duplicate_selector_bytes).unwrap();
+    let opened = Arc::new(authority.open_file(Path::new("session.jsonl")).unwrap());
+    let duplicate_selector =
+        terminal_authority_for_source(&source, &transcript_path, opened).unwrap();
+    assert_ne!(
+        prefix.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
+        duplicate_selector.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
+    );
+    assert!(!duplicate_selector.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-a"));
 }
 
 #[test]

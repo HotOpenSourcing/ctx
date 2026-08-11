@@ -60,11 +60,12 @@ const FALLBACK_EVENT_ID_DOMAIN: &[u8] = b"ctx-openclaw-fallback-event-id-v1\0";
 const LOGICAL_SESSION_KIND: &str = "openclaw-legacy-session";
 const LOGICAL_EVENT_KIND: &str = "openclaw-legacy-event";
 const SOURCE_SCHEMA_VARIANT: &str = "openclaw-legacy-jsonl-v2";
-const PARSER_REVISION: &str = "openclaw-source-backed-v11-exact-retrieval-json-authority";
+const PARSER_REVISION: &str = "openclaw-source-backed-v12-exact-result-alias-linkage";
 const MAX_PENDING_CALLS: usize = 4096;
 const MAX_RUNNING_PROCESSES: usize = 256;
 const MAX_TERMINAL_CALL_IDS: usize = 4096;
 const MAX_RESULT_METADATA_BYTES: usize = 64 * 1024;
+const MAX_SELECTOR_CALL_ID_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Copy, Default)]
 struct OpenClawJsonlAdapter;

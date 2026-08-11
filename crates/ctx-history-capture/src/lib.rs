@@ -105,7 +105,9 @@ pub(crate) mod common {
     pub(crate) mod identity;
     pub(crate) mod io;
     pub(crate) mod json {
-        pub(crate) use ctx_history_jsonl::raw_object_keys_are_unique;
+        pub(crate) use ctx_history_jsonl::{
+            exact_bounded_string_alias, raw_object_keys_are_unique, ExactJsonStringAlias,
+        };
     }
     pub(crate) mod time;
 }

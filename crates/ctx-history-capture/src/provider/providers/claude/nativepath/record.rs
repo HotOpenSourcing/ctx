@@ -608,6 +608,7 @@ fn parse_native_record_inner(
         if !crate::common::json::raw_object_keys_are_unique(bytes) {
             for result in rows.iter_mut().filter_map(|row| row.tool_result.as_mut()) {
                 result.retrieval_input_ambiguous = true;
+                result.call_id = None;
             }
         }
         validate_row_count(&rows)?;
