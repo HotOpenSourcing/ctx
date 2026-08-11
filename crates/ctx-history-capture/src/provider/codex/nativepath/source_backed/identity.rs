@@ -140,16 +140,13 @@ fn hash_identity_text(hasher: &mut Sha256, value: &str) {
 pub(in crate::provider::codex::nativepath) fn codex_source_key(
     native_session_id: &str,
 ) -> CodexSourceBackedResultV0<SourceKey> {
-    let anchor = SourceAnchor::provider_native(
-        CODEX_SOURCE_ANCHOR_NAMESPACE,
-        TypedKey::utf8(native_session_id)?,
-    )?;
-    Ok(SourceKey::derive(
+    Ok(SourceKey::derive_provider_native(
         CaptureProvider::Codex.as_str(),
         CODEX_SESSION_SOURCE_FORMAT,
         CODEX_SOURCE_SCHEMA_VARIANT,
         1,
-        anchor,
+        CODEX_SOURCE_ANCHOR_NAMESPACE,
+        TypedKey::utf8(native_session_id)?,
     )?)
 }
 
@@ -157,15 +154,12 @@ pub(in crate::provider::codex::nativepath) fn codex_session_identity(
     source: &SourceKey,
     native_session_id: &str,
 ) -> CodexSourceBackedResultV0<StableEntityId> {
-    let native_session_key = NativeSessionKey::native_id(
+    Ok(derive_native_session_id(
+        source,
+        CODEX_LOGICAL_SESSION_KIND,
         CODEX_NATIVE_SESSION_NAMESPACE,
         TypedKey::utf8(native_session_id)?,
-    )?;
-    Ok(derive_session_id(SessionIdentityInput {
-        source,
-        logical_session_kind: CODEX_LOGICAL_SESSION_KIND,
-        native_session_key: &native_session_key,
-    })?)
+    )?)
 }
 
 pub(super) fn codex_event_identity(
@@ -218,7 +212,6 @@ pub(in crate::provider::codex::nativepath) fn codex_core_record(
         discovery_exclusion,
         mcp_tool_call,
         mcp_exchange,
-        touched_paths,
         repository_tools,
         repository_result,
         repository_files,
@@ -230,6 +223,18 @@ pub(in crate::provider::codex::nativepath) fn codex_core_record(
         .iter()
         .map(|evidence| evidence.structured_content.clone())
         .collect::<Vec<_>>();
+    let codex_native_activity = (!repository_files.is_empty()).then(|| {
+        let touched_paths = repository_files
+            .iter()
+            .map(|observation| serde_json::Value::String(observation.path.clone()))
+            .collect::<Vec<_>>();
+        let mut activity = serde_json::Map::new();
+        activity.insert(
+            "touched_paths".to_owned(),
+            serde_json::Value::Array(touched_paths),
+        );
+        serde_json::Value::Object(activity)
+    });
     let mut result_input = crate::repository_attribution::AttributionInput {
         activity_at_unix_ms: Some(occurred_at.timestamp_millis()),
         session_cwd: session_cwd.clone(),
@@ -353,11 +358,10 @@ pub(in crate::provider::codex::nativepath) fn codex_core_record(
             })),
         }),
     );
-    if !touched_paths.is_empty() {
-        annotation.metadata.insert(
-            "codex_native_activity".to_owned(),
-            serde_json::json!({ "touched_paths": touched_paths }),
-        );
+    if let Some(codex_native_activity) = codex_native_activity {
+        annotation
+            .metadata
+            .insert("codex_native_activity".to_owned(), codex_native_activity);
     }
 
     let agent_type = if is_primary { "primary" } else { "subagent" };
