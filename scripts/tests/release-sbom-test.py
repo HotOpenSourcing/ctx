@@ -36,6 +36,7 @@ WORKSPACE_PACKAGES = (
     ("ctx-daemon-application", "crates/ctx-daemon-application"),
     ("ctx-daemon-runtime", "crates/ctx-daemon-runtime"),
     ("ctx-daemon-service", "crates/ctx-daemon-service"),
+    ("ctx-pro-application", "crates/ctx-pro-application"),
     ("ctx-pro-host", "crates/ctx-pro-host"),
     ("ctx-pro-lifecycle", "crates/ctx-pro-lifecycle"),
     ("ctx-history-capture-model", "crates/ctx-history-capture-model"),
@@ -159,6 +160,7 @@ members = [
   "crates/ctx-daemon-application",
   "crates/ctx-daemon-runtime",
   "crates/ctx-daemon-service",
+  "crates/ctx-pro-application",
   "crates/ctx-pro-host",
   "crates/ctx-pro-lifecycle",
   "crates/ctx-history-capture-model",
@@ -204,6 +206,7 @@ tantivy = { version = "0.26.1", default-features = false, features = ["mmap", "l
                     "ctx-history-jsonl = { path = \"../ctx-history-jsonl\" }\n"
                     "ctx-history-refresh-execution = { path = \"../ctx-history-refresh-execution\" }\n"
                     "ctx-history-read-application = { path = \"../ctx-history-read-application\" }\n"
+                    "ctx-pro-application = { path = \"../ctx-pro-application\" }\n"
                     "ctx-pro-host = { path = \"../ctx-pro-host\" }\n"
                     "ctx-pro-lifecycle = { path = \"../ctx-pro-lifecycle\" }\n"
                     "ctx-history-repository-evidence = { path = \"../ctx-history-repository-evidence\" }\n"
@@ -229,6 +232,11 @@ tantivy = { version = "0.26.1", default-features = false, features = ["mmap", "l
                 ),
                 "ctx-daemon-runtime": (
                     "ctx-history-core = { path = \"../ctx-history-core\" }"
+                ),
+                "ctx-pro-application": (
+                    "ctx-history-index = { path = \"../ctx-history-index\" }\n"
+                    "ctx-pro-host = { path = \"../ctx-pro-host\" }\n"
+                    "ctx-pro-lifecycle = { path = \"../ctx-pro-lifecycle\" }"
                 ),
                 "ctx-pro-host": (
                     "ctx-history-core = { path = \"../ctx-history-core\" }\n"
@@ -292,6 +300,7 @@ tantivy = { version = "0.26.1", default-features = false, features = ["mmap", "l
                     "ctx-daemon-application",
                     "ctx-daemon-runtime",
                     "ctx-daemon-service",
+                    "ctx-pro-application",
                     "ctx-terminal",
                 }
                 else "version.workspace = true"
@@ -342,6 +351,7 @@ repository = "https://example.invalid/{name}"
             "@@//crates/ctx-daemon-application:ctx_daemon_application",
             "@@//crates/ctx-daemon-runtime:ctx_daemon_runtime",
             "@@//crates/ctx-daemon-service:ctx_daemon_service",
+            "@@//crates/ctx-pro-application:ctx_pro_application",
             "@@//crates/ctx-pro-host:ctx_pro_host",
             "@@//crates/ctx-pro-lifecycle:ctx_pro_lifecycle",
             "@@//crates/ctx-history-capture-model:ctx_history_capture_model",
@@ -444,6 +454,7 @@ repository = "https://example.invalid/{name}"
                     "ctx-history-core",
                     "ctx-daemon-runtime 1.0.0",
                     "ctx-daemon-service 1.0.0",
+                    "ctx-pro-application 1.0.0",
                     "ctx-pro-host",
                     "ctx-pro-lifecycle",
                     "ctx-history-capture-model",
@@ -506,6 +517,11 @@ repository = "https://example.invalid/{name}"
                     "ctx-semantic-model",
                     "ctx-upgrade-engine",
                 ),
+            ),
+            self.package(
+                "ctx-pro-application",
+                "1.0.0",
+                ("ctx-history-index", "ctx-pro-host", "ctx-pro-lifecycle"),
             ),
             self.package(
                 "ctx-pro-host",
