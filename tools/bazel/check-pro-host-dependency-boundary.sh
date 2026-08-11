@@ -46,9 +46,9 @@ check_direct_internal_deps() {
 }
 
 check_direct_internal_deps lib lib lib
-check_direct_internal_deps test_support_lib test_support_lib lib
-check_direct_internal_deps qualification_lib qualification_lib lib
-check_direct_internal_deps qualification_test_support_lib qualification_lib lib
+check_direct_internal_deps test_support_lib test_support_lib test_support_lib
+check_direct_internal_deps qualification_lib qualification_lib qualification_lib
+check_direct_internal_deps qualification_test_support_lib qualification_lib qualification_test_support_lib
 
 if [[ -z "$(query 'somepath(//crates/ctx-cli:ctx, //crates/ctx-pro-host:lib)')" ]]; then
   echo 'ctx-cli has no production dependency path to ctx-pro-host' >&2

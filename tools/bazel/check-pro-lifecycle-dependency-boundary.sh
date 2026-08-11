@@ -21,10 +21,12 @@ query() {
     "${repo_root}/scripts/bazelw" query "$1" --output=label
 }
 
-for target in lib test_support_lib; do
+check_direct_internal_deps() {
+  local target="$1"
+  local access_target="$2"
   printf '%s\n' \
     '//crates/ctx-history-core:lib' \
-    '//crates/ctx-pro-access:lib' \
+    "//crates/ctx-pro-access:${access_target}" \
     '//crates/ctx-pro-host-protocol:lib' \
     "//crates/ctx-pro-lifecycle:${target}" \
     | LC_ALL=C sort -u >"${scratch}/${target}-expected.txt"
@@ -34,7 +36,12 @@ for target in lib test_support_lib; do
     echo "unexpected direct internal dependency set for ctx-pro-lifecycle:${target}" >&2
     exit 1
   fi
-done
+}
+
+check_direct_internal_deps lib lib
+check_direct_internal_deps test_support_lib test_support_lib
+check_direct_internal_deps qualification_lib qualification_lib
+check_direct_internal_deps qualification_test_support_lib qualification_lib
 
 for consumer in '//crates/ctx-cli:ctx' '//crates/ctx-pro-host:lib'; do
   if [[ -z "$(query "somepath(${consumer}, //crates/ctx-pro-lifecycle:lib)")" ]]; then

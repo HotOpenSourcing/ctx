@@ -34,6 +34,12 @@ LIFECYCLE_TEST_DEPS = [
     "//crates/ctx-pro-host-protocol:lib",
 ]
 
+LIFECYCLE_QUALIFICATION_DEPS = [
+    "//crates/ctx-history-core:lib",
+    "//crates/ctx-pro-access:qualification_lib",
+    "//crates/ctx-pro-host-protocol:lib",
+]
+
 rust_library(
     name = "lib",
     srcs = PROD_SRCS,
@@ -55,7 +61,38 @@ rust_library(
     crate_root = "src/lib.rs",
     edition = crate_edition(),
     aliases = aliases(),
-    deps = all_crate_deps(normal = True) + LIFECYCLE_DEPS,
+    deps = all_crate_deps(normal = True) + LIFECYCLE_TEST_DEPS,
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    rustc_env = COMMON_RUSTC_ENV,
+    rustc_flags = LIFECYCLE_RUSTC_FLAGS + ['--cfg=feature="test-support"'],
+)
+
+# Bazel does not unify Cargo features across a dependency graph. These
+# test-only variants keep lifecycle's ctx-pro-access identity aligned with the
+# optimized qualification hosts while preserving one production :lib path.
+rust_library(
+    name = "qualification_lib",
+    testonly = True,
+    srcs = PROD_SRCS,
+    crate_name = "ctx_pro_lifecycle",
+    crate_root = "src/lib.rs",
+    edition = crate_edition(),
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + LIFECYCLE_QUALIFICATION_DEPS,
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    rustc_env = COMMON_RUSTC_ENV,
+    rustc_flags = LIFECYCLE_RUSTC_FLAGS,
+)
+
+rust_library(
+    name = "qualification_test_support_lib",
+    testonly = True,
+    srcs = PROD_SRCS,
+    crate_name = "ctx_pro_lifecycle",
+    crate_root = "src/lib.rs",
+    edition = crate_edition(),
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + LIFECYCLE_QUALIFICATION_DEPS,
     proc_macro_deps = all_crate_deps(proc_macro = True),
     rustc_env = COMMON_RUSTC_ENV,
     rustc_flags = LIFECYCLE_RUSTC_FLAGS + ['--cfg=feature="test-support"'],
