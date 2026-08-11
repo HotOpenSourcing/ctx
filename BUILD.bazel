@@ -10,6 +10,7 @@ load(
     "non_rust_gate",
     "real_harness_gate",
 )
+load("//tools/bazel:history_cli_boundary.bzl", "history_cli_boundary")
 load("//tools/bazel:loc_check_data.bzl", "LOC_CHECK_SOURCE_DATA")
 load(
     "//tools/bazel:release_routes.bzl",
@@ -27,11 +28,6 @@ load(
     "NIGHTLY_TESTS",
     "RUST_FORMAT_TARGETS",
 )
-
-exports_files([
-    "BUILD.bazel",
-    "Cargo.toml",
-])
 
 filegroup(
     name = "cloud_removed_build_inputs",
@@ -165,72 +161,9 @@ CARGO_WORKSPACE_PACKAGE_DATA = [
     "//crates/ctx-sdk:cargo_package_data",
 ]
 
-CARGO_WORKSPACE_BUILD_DATA = [
-    "//crates/ctx-agent-application:BUILD.bazel",
-    "//crates/ctx-agent-integrations:BUILD.bazel",
-    "//crates/ctx-cli:BUILD.bazel",
-    "//crates/ctx-client-observability:BUILD.bazel",
-    "//crates/ctx-daemon-application:BUILD.bazel",
-    "//crates/ctx-daemon-cli:BUILD.bazel",
-    "//crates/ctx-daemon-runtime:BUILD.bazel",
-    "//crates/ctx-daemon-service:BUILD.bazel",
-    "//crates/ctx-history-capture-model:BUILD.bazel",
-    "//crates/ctx-history-capture:BUILD.bazel",
-    "//crates/ctx-history-cli:BUILD.bazel",
-    "//crates/ctx-history-core:BUILD.bazel",
-    "//crates/ctx-history-index-format:BUILD.bazel",
-    "//crates/ctx-history-index-generation:BUILD.bazel",
-    "//crates/ctx-history-index-query:BUILD.bazel",
-    "//crates/ctx-history-index:BUILD.bazel",
-    "//crates/ctx-history-ingest-application:BUILD.bazel",
-    "//crates/ctx-history-jsonl:BUILD.bazel",
-    "//crates/ctx-history-read-application:BUILD.bazel",
-    "//crates/ctx-history-refresh-execution:BUILD.bazel",
-    "//crates/ctx-history-refresh:BUILD.bazel",
-    "//crates/ctx-history-repository-evidence:BUILD.bazel",
-    "//crates/ctx-history-source-discovery:BUILD.bazel",
-    "//crates/ctx-history-source-io:BUILD.bazel",
-    "//crates/ctx-pro-access:BUILD.bazel",
-    "//crates/ctx-pro-application:BUILD.bazel",
-    "//crates/ctx-pro-host-protocol:BUILD.bazel",
-    "//crates/ctx-pro-host:BUILD.bazel",
-    "//crates/ctx-pro-lifecycle:BUILD.bazel",
-    "//crates/ctx-protocol:BUILD.bazel",
-    "//crates/ctx-sdk:BUILD.bazel",
-    "//crates/ctx-semantic-index:BUILD.bazel",
-    "//crates/ctx-semantic-model:BUILD.bazel",
-    "//crates/ctx-terminal:BUILD.bazel",
-    "//crates/ctx-upgrade-engine:BUILD.bazel",
-]
-
-filegroup(
-    name = "history_cli_boundary_inputs",
-    srcs = CARGO_WORKSPACE_PACKAGE_DATA + CARGO_WORKSPACE_BUILD_DATA + [
-        "BUILD.bazel",
-        "Cargo.toml",
-    ],
-    visibility = ["//visibility:public"],
-)
-
-sh_test(
-    name = "history_cli_boundary_check",
-    srcs = ["//tools/bazel:check-history-cli-boundary.sh"],
-    args = ["$(rootpath BUILD.bazel)"],
-    data = [
-        "BUILD.bazel",
-        "Cargo.toml",
-        "scripts/bazelw",
-        ":history_cli_boundary_inputs",
-        "//tools/bazel:check_history_cli_boundary.py",
-    ],
-    # This gate queries the complete live Bazel graph so composed labels and
-    # loaded macros cannot evade its static inventory.
-    tags = [
-        "build-graph",
-        "exclusive",
-        "no-cache",
-        "no-sandbox",
-    ],
+history_cli_boundary(
+    cargo_package_data = CARGO_WORKSPACE_PACKAGE_DATA,
+    history_build_label = "//crates/ctx-history-cli:BUILD.bazel",
 )
 
 loc_check_manifest(
