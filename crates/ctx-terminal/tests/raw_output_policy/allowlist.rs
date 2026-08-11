@@ -635,7 +635,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         MCP_OPERATION,
-        "run_install#1@cabf7e3360848959",
+        "run_install#1@39786028d7f72c6d",
         PrintMacro,
         MachineProtocol,
         JSON_PROTOCOL,
@@ -643,7 +643,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         MCP_OPERATION,
-        "run_status#1@f440ab1655f0b975",
+        "run_status#1@2a691697c258f9a1",
         PrintMacro,
         MachineProtocol,
         JSON_PROTOCOL,
@@ -955,7 +955,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         SKILL_SELECTION,
-        "prompt_for_agents#1@596d62caccf3cad9",
+        "prompt_for_agents#1@47a2606e6662bb08",
         DirectWrite,
         InteractivePrompt,
         INTERACTIVE_PICKER,

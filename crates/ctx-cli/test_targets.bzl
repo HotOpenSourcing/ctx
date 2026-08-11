@@ -1,19 +1,13 @@
 """Native Bazel integration-test helper for the ctx CLI package."""
 
-load("@crates//:defs.bzl", "aliases", "crate_deps", "crate_edition")
-load("//tools/bazel:ctx_rust.bzl", "ctx_rust_test")
+load("@crates//:defs.bzl", "crate_deps")
+load(
+    "//tools/bazel:binary_contracts.bzl",
+    "CTX_BINARY_CONTRACT_RUSTC_FLAGS",
+    "ctx_binary_contract_test",
+)
 
-CTX_CLI_RUSTC_FLAGS = [
-    "--check-cfg=cfg(ctx_pro_qualification)",
-    "--check-cfg=cfg(ctx_pro_test_helper)",
-    "--check-cfg=cfg(ctx_release_qualification)",
-    "--check-cfg=cfg(ctx_cli_test_support_fixtures)",
-    "--check-cfg=cfg(ctx_cli_test_support_pro)",
-    "--check-cfg=cfg(ctx_cli_test_support_upgrade)",
-    "--check-cfg=cfg(ctx_cli_bazel_test)",
-    "--cfg=ctx_cli_bazel_test",
-    "--check-cfg=cfg(test)",
-]
+CTX_CLI_RUSTC_FLAGS = CTX_BINARY_CONTRACT_RUSTC_FLAGS
 
 _CTX_CLI_TEST_SUPPORT = {
     "base": struct(
@@ -31,7 +25,7 @@ _CTX_CLI_TEST_SUPPORT = {
             "tests/support/analytics.rs",
             "tests/support/assertions.rs",
             "tests/support/history_plugins.rs",
-            "tests/support/mcp.rs",
+            "//crates/ctx-agent-application:tests/contracts/support/mcp.rs",
             "tests/support/runner.rs",
         ],
     ),
@@ -137,31 +131,24 @@ def ctx_cli_integration_test(
         tags = [],
         test_support = ["base"]):
     test_support = _ctx_cli_test_support(test_support)
-    test_env = {
-        "CARGO_BIN_EXE_ctx": "$(rootpath %s)" % binary,
-    }
-    test_env.update(extra_env)
-    ctx_rust_test(
+    ctx_binary_contract_test(
         name = name,
-        srcs = [src] + test_support.srcs + extra_srcs,
-        crate_name = name,
-        crate_root = src,
-        edition = crate_edition(),
-        aliases = aliases(
-            normal_dev = True,
-            proc_macro_dev = True,
-        ),
-        compile_data = [
+        src = src,
+        binary = binary,
+        cargo_manifest_dir = "crates/ctx-cli",
+        support_deps = test_support.deps,
+        support_srcs = test_support.srcs,
+        support_rustc_flags = test_support.rustc_flags,
+        crate_features = crate_features,
+        extra_crates = extra_crates,
+        extra_env = extra_env,
+        extra_compile_data = [
             "//:ctx_bundled_skills",
             "//:ctx_embedded_docs",
         ] + native.glob(["tests/fixtures/**"]) + extra_compile_data,
-        crate_features = crate_features,
-        data = ctx_cli_test_data() + [binary] + extra_data,
-        deps = test_support.deps + crate_deps(extra_crates) + extra_deps,
-        env = test_env,
-        proc_macro_deps = [],
-        rustc_env = {"CARGO_MANIFEST_DIR": "crates/ctx-cli"},
+        extra_data = ctx_cli_test_data() + extra_data,
+        extra_deps = extra_deps,
+        extra_srcs = extra_srcs,
         rustc_env_files = [":cargo_toml_env_vars"],
-        rustc_flags = CTX_CLI_RUSTC_FLAGS + test_support.rustc_flags,
         tags = tags,
     )

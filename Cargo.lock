@@ -798,11 +798,19 @@ name = "ctx-agent-application"
 version = "0.26.0"
 dependencies = [
  "anyhow",
+ "assert_cmd",
  "ctx-agent-integrations",
  "ctx-client-observability",
  "ctx-history-core",
+ "ctx-history-index",
+ "predicates",
+ "rusqlite",
  "serde_json",
+ "serde_yaml",
+ "sha2",
  "tempfile",
+ "toml_edit 0.22.27",
+ "uuid",
 ]
 
 [[package]]
