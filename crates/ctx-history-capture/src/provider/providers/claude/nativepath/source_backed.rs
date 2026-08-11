@@ -9,9 +9,8 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use ctx_history_core::{
-    derive_event_id, derive_native_session_id, CaptureProvider, CertifiedSource, CoreRecord,
-    EventIdentityInput, NativeItemKey, RepositoryAbstentionReason, SourceKey, StableEntityId,
-    TypedKey,
+    derive_event_id, derive_native_session_id, CaptureProvider, CoreRecord, EventIdentityInput,
+    NativeItemKey, RepositoryAbstentionReason, SourceKey, StableEntityId, TypedKey,
 };
 use ctx_history_index::BaseEventIdentityLookup;
 use serde::{Deserialize, Serialize};

@@ -874,7 +874,10 @@ fn openclaw_malformed_result_selector_matrix_exhausts_and_never_consumes_linkage
         )
         .into_bytes();
         let authority = terminal_authority_for_records([call.as_slice(), result.as_slice()]);
-        assert!(!authority.is_unique("selector-call"), "{name}");
+        assert!(
+            !authority.is_unique(TERMINAL_CALL_ID_DOMAIN, "selector-call"),
+            "{name}"
+        );
 
         let (_temp, mut projector) = test_projector();
         projector.terminal_authority = authority;

@@ -10,10 +10,10 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use ctx_history_core::{
-    derive_event_id, derive_native_session_id, AgentType, CaptureProvider, CertifiedSource,
-    CoreDiscoveryExclusion, CoreRecord, EventIdentityInput, EventType, NativeItemKey,
-    RepositoryAbstention, RepositoryAbstentionReason, RepositoryEvidenceKind,
-    RepositoryFileObservationKind, SourceKey, StableEntityId, TypedKey,
+    derive_event_id, derive_native_session_id, AgentType, CaptureProvider, CoreDiscoveryExclusion,
+    CoreRecord, EventIdentityInput, EventType, NativeItemKey, RepositoryAbstention,
+    RepositoryAbstentionReason, RepositoryEvidenceKind, RepositoryFileObservationKind, SourceKey,
+    StableEntityId, TypedKey,
 };
 use ctx_history_index::BaseEventIdentityLookup;
 use serde::{Deserialize, Serialize};
