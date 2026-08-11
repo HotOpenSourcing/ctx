@@ -3,7 +3,6 @@ use std::path::Path;
 use super::lifecycle::ProDeletionService;
 use anyhow::Result;
 
-pub(super) use ctx_pro_lifecycle::deletion::local_pro_graph_key_cleanup_phase_exists;
 #[cfg(test)]
 pub(super) use ctx_pro_lifecycle::deletion::local_pro_initialization_indicator_exists;
 

@@ -13,6 +13,7 @@ mod commercial_config;
 mod commercial_lifecycle;
 mod commercial_production_record;
 mod evidence;
+mod lifecycle_commands;
 mod setup_validation;
 mod status;
 mod uninstall;
@@ -41,6 +42,12 @@ pub use ctx_pro_access::authorization::{
     AuthorizationProvider, EntitlementSchedule, InstallationChallengeSigner,
 };
 pub use evidence::hydrate_evidence_previews;
+pub use lifecycle_commands::{
+    reusable_setup_access_state, HelperConnectionFact, LifecycleCommandFacts, LifecycleExecution,
+    ManageAccess, ManageCommandOutcome, ManagePlan, MaterializationFact, ReconcileFact,
+    SetupAccess, SetupAccessRequest, SetupAdmission, SetupCommandHost, SetupCommandOutcome,
+    SetupCompletion, SetupPlan, SetupStart,
+};
 pub use setup_validation::{setup_artifact, validate_account_state, validate_staged_helper};
 pub use status::{lifecycle_status_value, LifecycleStatus};
 pub use uninstall::{

@@ -33,7 +33,7 @@ impl<T: CoreGenerationHost + CoreOrchestration> ProApplicationHost for T {}
 /// Borrowed Pro application facade. Construction is allocation- and I/O-free.
 #[derive(Clone, Copy)]
 pub struct ProApplication<'a, H: ProApplicationHost + ?Sized> {
-    host: &'a H,
+    pub(crate) host: &'a H,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

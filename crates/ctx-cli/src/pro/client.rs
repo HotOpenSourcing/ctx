@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use ctx_pro_application::AuthorizationProvider as _;
 use ctx_pro_application::{
-    CoreOrchestration, Identity, MaterializationMode, ProApplication, StoredAuthorizationProvider,
+    CoreOrchestration, Identity, ProApplication, SetupCommandHost, StoredAuthorizationProvider,
 };
 use ctx_pro_host::{
     AuthorizationMode, AuthorizationReceipt, CoreGenerationHost, CoreGenerationPin,
@@ -12,11 +12,10 @@ use ctx_pro_host::{
 use ctx_pro_host_protocol::{AuthorizationRequest, BlameTarget, AUTHORIZATION_CHALLENGE_BYTES};
 use ctx_pro_lifecycle::installed_artifact::ValidatedArtifactIdentity;
 
-use crate::analytics::{
-    ProHelperConnectionOutcomeV1, ProMaterializationModeV1, ProMaterializationTelemetryV1,
+use super::{
+    artifact_delivery::SetupArtifactBundle, commercial_config::CommercialConfig,
+    commercial_lifecycle,
 };
-
-use super::{commercial_config::CommercialConfig, commercial_lifecycle};
 
 #[cfg(test)]
 pub(crate) use ctx_pro_host::default_helper_path;
@@ -32,13 +31,58 @@ pub(crate) use ctx_pro_host::{
 
 pub(crate) type MaterializeReport = ctx_pro_host::MaterializationFinalizationReceipt;
 
-struct CtxInstalledProHost;
+pub(super) struct CtxInstalledProHost;
 
 const HOST: CtxInstalledProHost = CtxInstalledProHost;
+
+pub(super) const fn application() -> ProApplication<'static, CtxInstalledProHost> {
+    ProApplication::new(&HOST)
+}
 
 impl Identity for CtxInstalledProHost {
     fn existing_installation_id(&self, data_root: &Path) -> Result<Option<String>> {
         <Self as InstalledProHost>::existing_installation_id(self, data_root)
+    }
+}
+
+impl SetupCommandHost<SetupArtifactBundle> for CtxInstalledProHost {
+    fn initialize_setup_identity(&self, data_root: &Path) -> Result<()> {
+        crate::identity::installation_id(data_root)
+            .context("key_store_unavailable: initialize local Pro installation identity")?;
+        Ok(())
+    }
+
+    fn smoke_setup_artifact(
+        &self,
+        data_root: &Path,
+        artifact: &SetupArtifactBundle,
+    ) -> Result<HelperSmoke> {
+        match artifact {
+            SetupArtifactBundle::Release(bundle) => {
+                ctx_pro_host::smoke_validated_helper(self, data_root, bundle.identity().clone())
+            }
+            #[cfg(ctx_pro_test_helper)]
+            SetupArtifactBundle::TestControl(bundle) => {
+                let helper = bundle.verified_path()?;
+                ctx_pro_host::smoke_helper_at_path(self, data_root, &helper)
+            }
+        }
+    }
+
+    fn install_setup_artifact(
+        &self,
+        artifact: &SetupArtifactBundle,
+        operation: &ctx_pro_lifecycle::operation::LifecycleOperation,
+        trust: ctx_pro_lifecycle::release_manifest::ReleaseTrust,
+    ) -> Result<bool> {
+        match artifact {
+            SetupArtifactBundle::Release(bundle) => {
+                super::lifecycle::install_verified_bundle(bundle, operation, trust)?;
+                Ok(true)
+            }
+            #[cfg(ctx_pro_test_helper)]
+            SetupArtifactBundle::TestControl(_) => Ok(false),
+        }
     }
 }
 
@@ -131,7 +175,7 @@ impl InstalledProHost for CtxInstalledProHost {
 // Keep the daemon-service generation lease owned for the full host operation.
 // This local adapter also prevents either extracted crate from depending on the
 // other solely to satisfy Rust's trait coherence rules.
-struct CtxCoreGenerationPin(crate::semantic::PinnedSourceBackedGeneration);
+pub(super) struct CtxCoreGenerationPin(crate::semantic::PinnedSourceBackedGeneration);
 
 impl CoreGenerationPin for CtxCoreGenerationPin {
     fn generation_id(&self) -> &str {
@@ -202,18 +246,6 @@ pub(crate) fn sync_core_materialization(
     ctx_pro_host::sync_core_materialization(&HOST, data_root, index)
 }
 
-#[cfg(ctx_pro_test_helper)]
-pub(crate) fn smoke_helper_at_path(data_root: &Path, path: &Path) -> Result<HelperSmoke> {
-    ctx_pro_host::smoke_helper_at_path(&HOST, data_root, path)
-}
-
-pub(crate) fn smoke_validated_helper(
-    data_root: &Path,
-    identity: ValidatedArtifactIdentity,
-) -> Result<HelperSmoke> {
-    ctx_pro_host::smoke_validated_helper(&HOST, data_root, identity)
-}
-
 pub(crate) fn status(data_root: &Path) -> ProStatus {
     ProApplication::new(&HOST).status(data_root)
 }
@@ -223,70 +255,6 @@ pub(crate) fn status_for_core(
     active_core: Option<&ctx_history_index::VerifiedIndex>,
 ) -> ProStatus {
     ProApplication::new(&HOST).status_for_core(data_root, active_core)
-}
-
-#[cfg(test)]
-pub(crate) fn status_with_helper_resolver(
-    data_root: &Path,
-    resolve_helper: impl FnOnce(&Path) -> Result<PathBuf>,
-) -> ProStatus {
-    ctx_pro_host::status_with_helper_resolver(&HOST, data_root, resolve_helper)
-}
-
-pub(crate) fn materialize(
-    data_root: &Path,
-    telemetry: &mut ProMaterializationTelemetryV1,
-) -> Result<MaterializeReport> {
-    materialize_with_operation(data_root, None, telemetry)
-}
-
-pub(crate) fn materialize_in(
-    data_root: &Path,
-    operation: &ctx_pro_lifecycle::operation::LifecycleOperation,
-    telemetry: &mut ProMaterializationTelemetryV1,
-) -> Result<MaterializeReport> {
-    materialize_with_operation(data_root, Some(operation), telemetry)
-}
-
-fn materialize_with_operation(
-    data_root: &Path,
-    operation: Option<&ctx_pro_lifecycle::operation::LifecycleOperation>,
-    telemetry: &mut ProMaterializationTelemetryV1,
-) -> Result<MaterializeReport> {
-    let result = ProApplication::new(&HOST)
-        .materialize_in(data_root, operation)
-        .map(|outcome| {
-            telemetry.helper_connection = ProHelperConnectionOutcomeV1::Connected;
-            telemetry.mode = Some(match outcome.mode {
-                MaterializationMode::NoOp => ProMaterializationModeV1::NoOp,
-                MaterializationMode::Full => ProMaterializationModeV1::Full,
-                MaterializationMode::Incremental => ProMaterializationModeV1::Incremental,
-            });
-            telemetry.complete(
-                outcome.report.batches,
-                if outcome.mode == MaterializationMode::NoOp {
-                    0
-                } else {
-                    outcome.report.source_count
-                },
-                if outcome.mode == MaterializationMode::NoOp {
-                    0
-                } else {
-                    outcome.report.source_count
-                },
-                outcome.report.replayed_batches,
-                if outcome.mode == MaterializationMode::NoOp {
-                    0
-                } else {
-                    outcome.report.source_count
-                },
-            );
-            outcome.report
-        });
-    if let Err(error) = &result {
-        telemetry.fail(stable_error_code(error));
-    }
-    result
 }
 
 pub(crate) fn blame(

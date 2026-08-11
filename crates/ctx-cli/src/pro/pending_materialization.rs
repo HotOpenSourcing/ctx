@@ -12,16 +12,13 @@ use crate::{
     },
 };
 
-pub(super) fn defer_setup(
-    operation: &ctx_pro_lifecycle::operation::LifecycleOperation,
+pub(super) fn write_deferred_setup_result(
     data_root: &Path,
     account_state: &str,
     helper_updated: bool,
     json_output: bool,
     ui: &mut Ui,
 ) -> Result<()> {
-    operation.require_data_root(data_root)?;
-    ctx_pro_lifecycle::state_markers::request_materialization(operation)?;
     if json_output {
         println!(
             "{}",

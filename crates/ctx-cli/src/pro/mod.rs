@@ -15,7 +15,6 @@ mod pending_materialization;
 mod pricing;
 mod referral;
 mod render;
-mod setup_validation;
 #[cfg(ctx_pro_test_helper)]
 mod test_control;
 pub(crate) mod commercial_api {
