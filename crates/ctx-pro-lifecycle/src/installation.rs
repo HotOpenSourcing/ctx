@@ -12,14 +12,13 @@ use ctx_history_core::platform_security::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::artifact_delivery::VerifiedArtifactBundle;
 use crate::installed_artifact::{
     inspect_pair_at, installation_artifacts_present, load_pair_at, open_validated_pair_identity,
-    read_candidate, read_validated_artifact, setup_repair_required, validate_pair_bytes,
-    PairIdentity, PairInspection, ValidatedArtifactIdentity, ValidatedPair,
+    read_candidate, setup_repair_required, stream_retained_artifact, validate_retained_pair,
+    PairIdentity, PairInspection, RetainedArtifact, ValidatedArtifactIdentity, ValidatedPair,
 };
 use crate::operation::LifecycleOperation;
 use crate::release_manifest::{
@@ -44,7 +43,7 @@ use crate::operation::{
 #[path = "installation/persistence.rs"]
 mod persistence;
 use persistence::{
-    cleanup_transaction_files, durable_write, prepare_install_directory,
+    cleanup_transaction_files, durable_stream_write, durable_write, prepare_install_directory,
     protect_existing_installation, publish_current, publish_previous, remove_current_pair,
     sync_install_directory, write_journal,
 };
@@ -172,9 +171,12 @@ pub fn discover_installed_artifact_in(
     if !installation_artifacts_present(data_root) {
         bail!("pro_not_installed: signed Pro helper is not installed");
     }
-    let pair =
-        reconcile_installation_locked(&target, trust.public_key_pem, &mut Persistence::default())?
-            .ok_or_else(|| anyhow!("pro_not_installed: signed Pro helper is not installed"))?;
+    let pair = reconcile_installation_locked(
+        &target,
+        trust.public_key_pem(),
+        &mut Persistence::default(),
+    )?
+    .ok_or_else(|| anyhow!("pro_not_installed: signed Pro helper is not installed"))?;
     validate_manifest_release_trust(&pair.manifest, trust)?;
     let marker_path = install_marker_path(&target)?;
     open_validated_pair_identity(operation, &target, &marker_path, &pair, trust)
@@ -223,7 +225,7 @@ pub fn install_verified_bundle(
     let target = default_helper_path(data_root);
     let installation = reconcile_setup_installation_locked(
         &target,
-        trust.public_key_pem,
+        trust.public_key_pem(),
         &mut Persistence::default(),
     )?;
     if let SetupInstallation::Current(current) = &installation {
@@ -231,15 +233,18 @@ pub fn install_verified_bundle(
     }
     let manifest =
         verified_manifest_for_trust(bundle.manifest_bytes(), bundle.signature_bytes(), trust)?;
-    let artifact = read_validated_artifact(bundle.identity())?;
-    install_for_setup_bytes_locked(
+    bundle
+        .identity()
+        .operation()
+        .require_data_root(operation.data_root())?;
+    install_for_setup_retained_locked(
         data_root,
         installation,
-        artifact,
+        bundle.identity().retained_artifact(),
         bundle.manifest_bytes(),
         bundle.signature_bytes(),
         manifest,
-        trust.public_key_pem,
+        trust.public_key_pem(),
         recheck,
         &mut Persistence::default(),
     )
@@ -329,12 +334,17 @@ fn install_candidate_with_key_locked(
     let manifest_bytes = read_bounded(&args.manifest, MAX_MANIFEST_BYTES, "manifest")?;
     let signature = read_bounded(&args.signature, MAX_SIGNATURE_BYTES, "signature")?;
     let manifest = verified_manifest(&manifest_bytes, &signature, public_key_pem)?;
-    let artifact = read_bounded(&args.artifact, MAX_ARTIFACT_BYTES, "artifact")?;
-    install_candidate_bytes_locked(
+    let artifact = RetainedArtifact::open_verified(
+        &args.artifact,
+        manifest.artifact_size,
+        &manifest.artifact_sha256,
+        "Pro artifact",
+    )?;
+    install_candidate_retained_locked(
         data_root,
         current,
         replacing_existing,
-        artifact,
+        &artifact,
         &manifest_bytes,
         &signature,
         manifest,
@@ -345,10 +355,10 @@ fn install_candidate_with_key_locked(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn install_for_setup_bytes_locked(
+fn install_for_setup_retained_locked(
     data_root: &Path,
     installation: SetupInstallation,
-    artifact: Vec<u8>,
+    artifact: &RetainedArtifact,
     manifest_bytes: &[u8],
     signature: &[u8],
     manifest: ProManifest,
@@ -359,7 +369,7 @@ fn install_for_setup_bytes_locked(
     let replacing_existing =
         installation.is_repair_required() || matches!(&installation, SetupInstallation::Current(_));
     let current = installation.into_current();
-    install_candidate_bytes_locked(
+    install_candidate_retained_locked(
         data_root,
         current.as_ref(),
         replacing_existing,
@@ -374,11 +384,11 @@ fn install_for_setup_bytes_locked(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn install_candidate_bytes_locked(
+fn install_candidate_retained_locked(
     data_root: &Path,
     current: Option<&ValidatedPair>,
     replacing_existing: bool,
-    artifact: Vec<u8>,
+    artifact: &RetainedArtifact,
     manifest_bytes: &[u8],
     signature: &[u8],
     manifest: ProManifest,
@@ -390,17 +400,19 @@ fn install_candidate_bytes_locked(
     if let Some(current) = current {
         validate_update(current, &manifest)?;
     }
-    if artifact.len() as u64 != manifest.artifact_size {
+    if artifact.artifact_size() != manifest.artifact_size {
         bail!("invalid_response: Pro artifact size does not match signed manifest");
     }
-    let actual = format!("{:x}", Sha256::digest(&artifact));
-    if !actual.eq_ignore_ascii_case(&manifest.artifact_sha256) {
+    if !artifact
+        .artifact_sha256()
+        .eq_ignore_ascii_case(&manifest.artifact_sha256)
+    {
         bail!("invalid_response: Pro artifact digest does not match signed manifest");
     }
     let marker = ProInstallMarker::new(&manifest_bytes, &signature)?;
     let marker_bytes = serde_json::to_vec(&marker)
         .context("invalid_response: encode signed Pro install marker")?;
-    let new_identity = PairIdentity::new(&artifact, &marker_bytes, &manifest);
+    let new_identity = PairIdentity::new(artifact, &marker_bytes, &manifest);
     let helper_changed = current
         .map(|current| current.identity != new_identity)
         .unwrap_or(true);
@@ -414,7 +426,7 @@ fn install_candidate_bytes_locked(
     install_transaction_locked(
         &target,
         current,
-        &artifact,
+        artifact,
         &marker_bytes,
         new_identity,
         public_key_pem,
@@ -468,7 +480,7 @@ fn validate_update(current: &ValidatedPair, next: &ProManifest) -> Result<()> {
 fn install_transaction_locked(
     target: &Path,
     current: Option<&ValidatedPair>,
-    artifact: &[u8],
+    artifact: &RetainedArtifact,
     marker: &[u8],
     new_identity: PairIdentity,
     public_key_pem: &str,
@@ -483,7 +495,7 @@ fn install_transaction_locked(
         new: new_identity,
     };
     write_journal(target, &transaction, persistence)?;
-    durable_write(
+    durable_stream_write(
         &transaction_helper_path(target)?,
         artifact,
         0o700,
@@ -546,7 +558,7 @@ pub fn reconcile_setup_installation(
     let target = default_helper_path(operation.data_root());
     let installation = reconcile_setup_installation_locked(
         &target,
-        trust.public_key_pem,
+        trust.public_key_pem(),
         &mut Persistence::default(),
     )?;
     if let SetupInstallation::Current(current) = &installation {
@@ -651,8 +663,10 @@ fn reconcile_installation_locked_with_setup_repair(
         let previous_untrusted = previous.is_untrusted();
         if let PairInspection::Valid(previous) = previous {
             publish_current(target, &previous, public_key_pem, persistence)?;
+            let installed = load_pair_at(target, &install_marker_path(target)?, public_key_pem)?
+                .ok_or_else(|| anyhow!("invalid_response: recovered Pro helper pair is missing"))?;
             cleanup_transaction_files(target, persistence)?;
-            return Ok(SetupInstallation::Current(previous));
+            return Ok(SetupInstallation::Current(installed));
         }
         if current_untrusted || previous_untrusted {
             if allow_setup_repair {
@@ -703,8 +717,13 @@ fn reconcile_installation_locked_with_setup_repair(
                 )?;
                 if let PairInspection::Valid(previous) = previous {
                     publish_current(target, &previous, public_key_pem, persistence)?;
+                    let installed =
+                        load_pair_at(target, &install_marker_path(target)?, public_key_pem)?
+                            .ok_or_else(|| {
+                                anyhow!("invalid_response: recovered Pro helper pair is missing")
+                            })?;
                     cleanup_transaction_files(target, persistence)?;
-                    return Ok(SetupInstallation::Current(previous));
+                    return Ok(SetupInstallation::Current(installed));
                 }
                 return Ok(SetupInstallation::RepairRequired);
             }
@@ -781,28 +800,30 @@ fn find_pair(
         publish_marker_path(target)?,
         rollback_marker_stage_path(target)?,
     ];
-    let mut artifacts = Vec::new();
+    let mut artifact = None;
     for path in &helper_paths {
-        if let Some(bytes) = read_candidate(path, MAX_ARTIFACT_BYTES)? {
-            artifacts.push(bytes);
+        if let Some(candidate) = RetainedArtifact::open_optional(path, "Pro transaction helper")? {
+            if identity.matches_artifact(&candidate) {
+                artifact = Some(candidate);
+                break;
+            }
         }
     }
-    let mut markers = Vec::new();
+    let mut marker = None;
+    let mut marker_path = None;
     for path in &marker_paths {
         if let Some(bytes) = read_candidate(path, MAX_INSTALL_MARKER_BYTES)? {
-            markers.push(bytes);
+            if identity.matches_marker(&bytes) {
+                marker = Some(bytes);
+                marker_path = Some(path.as_path());
+                break;
+            }
         }
     }
-    let artifact = artifacts
-        .into_iter()
-        .find(|bytes| identity.matches_artifact(bytes));
-    let marker = markers
-        .into_iter()
-        .find(|bytes| identity.matches_marker(bytes));
-    let (Some(artifact), Some(marker)) = (artifact, marker) else {
+    let (Some(artifact), Some(marker), Some(marker_path)) = (artifact, marker, marker_path) else {
         return Ok(None);
     };
-    let Ok(pair) = validate_pair_bytes(artifact, marker, public_key_pem) else {
+    let Ok(pair) = validate_retained_pair(artifact, marker_path, marker, public_key_pem) else {
         return Ok(None);
     };
     if pair.identity != *identity {

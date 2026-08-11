@@ -144,7 +144,7 @@ pub fn fetch_latest(
     let target = platform_target();
     let manifest_url = manifest_url(
         config.release_api.origin().as_str(),
-        config.release_trust.channel.wire_name(),
+        config.release_trust.channel().wire_name(),
         &target,
     )?;
     let envelope_bytes = get_manifest_bounded(&agent, &manifest_url, config.release_api)?;

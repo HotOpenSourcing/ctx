@@ -221,7 +221,7 @@ mod tests {
             PRODUCTION_COMMERCIAL_API_ORIGIN
         );
         assert_eq!(config.workos.client_id, "client_01KQE1P04WPEN66E12QCBWHQ8V");
-        assert_eq!(config.release_trust.channel, ReleaseChannel::Stable);
+        assert_eq!(config.release_trust.channel(), ReleaseChannel::Stable);
         config
             .entitlement_trust
             .validate_identity(PRODUCTION_ENTITLEMENT_ISSUER, "production-2026-07-v1")
@@ -236,7 +236,7 @@ mod tests {
     fn staging_registry_binds_api_release_and_entitlement_identities() {
         let config = CommercialConfig::for_channel(ReleaseChannel::Staging).unwrap();
         assert_eq!(config.api.origin().as_str(), STAGING_COMMERCIAL_API_ORIGIN);
-        assert_eq!(config.release_trust.channel, ReleaseChannel::Staging);
+        assert_eq!(config.release_trust.channel(), ReleaseChannel::Staging);
         config
             .entitlement_trust
             .validate_identity(STAGING_ENTITLEMENT_ISSUER, "staging-2026-07-v3")

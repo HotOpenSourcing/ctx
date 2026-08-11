@@ -51,9 +51,24 @@ impl ReleaseChannel {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ReleaseTrust {
-    pub channel: ReleaseChannel,
-    pub key_id: &'static str,
-    pub public_key_pem: &'static str,
+    channel: ReleaseChannel,
+    key_id: &'static str,
+    public_key_pem: &'static str,
+}
+
+impl ReleaseTrust {
+    #[must_use]
+    pub const fn channel(self) -> ReleaseChannel {
+        self.channel
+    }
+
+    pub(crate) const fn key_id(self) -> &'static str {
+        self.key_id
+    }
+
+    pub(crate) const fn public_key_pem(self) -> &'static str {
+        self.public_key_pem
+    }
 }
 
 pub fn release_trust(channel: ReleaseChannel) -> Result<ReleaseTrust> {
@@ -173,12 +188,12 @@ pub fn verified_manifest_for_trust(
     let selector: KeySelector = serde_json::from_slice(manifest_bytes)
         .context("invalid_response: parse signed Pro manifest key selector")?;
     if selector.schema_version != 1
-        || selector.channel != trust.channel.wire_name()
-        || selector.release_key_id != trust.key_id
+        || selector.channel != trust.channel().wire_name()
+        || selector.release_key_id != trust.key_id()
     {
         bail!("invalid_response: signed manifest does not match the selected release channel");
     }
-    verify_signature_with_key(manifest_bytes, signature, trust.public_key_pem)?;
+    verify_signature_with_key(manifest_bytes, signature, trust.public_key_pem())?;
     let manifest: ProManifest = serde_json::from_slice(manifest_bytes)
         .context("invalid_response: parse signed Pro manifest")?;
     validate_manifest(&manifest)?;
@@ -188,8 +203,8 @@ pub fn verified_manifest_for_trust(
 
 pub fn validate_manifest_release_trust(manifest: &ProManifest, trust: ReleaseTrust) -> Result<()> {
     if manifest.schema_version != 1
-        || manifest.channel != trust.channel.wire_name()
-        || manifest.release_key_id != trust.key_id
+        || manifest.channel != trust.channel().wire_name()
+        || manifest.release_key_id != trust.key_id()
     {
         bail!("invalid_response: signed manifest does not match the selected release channel");
     }
@@ -376,12 +391,12 @@ mod release_tests {
     fn release_registry_has_distinct_channel_bound_public_keys() {
         let stable = release_trust(ReleaseChannel::Stable).unwrap();
         let staging = release_trust(ReleaseChannel::Staging).unwrap();
-        assert_eq!(stable.channel, ReleaseChannel::Stable);
-        assert_eq!(stable.key_id, "ctx-pro-release-stable-2026-07-27");
-        assert_eq!(staging.channel, ReleaseChannel::Staging);
-        assert_eq!(staging.key_id, "ctx-pro-release-staging-2026-07-30");
-        assert_ne!(stable.key_id, staging.key_id);
-        assert_ne!(stable.public_key_pem, staging.public_key_pem);
+        assert_eq!(stable.channel(), ReleaseChannel::Stable);
+        assert_eq!(stable.key_id(), "ctx-pro-release-stable-2026-07-27");
+        assert_eq!(staging.channel(), ReleaseChannel::Staging);
+        assert_eq!(staging.key_id(), "ctx-pro-release-staging-2026-07-30");
+        assert_ne!(stable.key_id(), staging.key_id());
+        assert_ne!(stable.public_key_pem(), staging.public_key_pem());
     }
 
     #[test]
@@ -398,12 +413,13 @@ mod release_tests {
             "LYJjW/dXDmmyoopA3fwyvTFjVmIQ7oAZ2Z/ZZRuoa/08OfApJihjALeie+fBKMfxE",
         );
         let staging = release_trust(ReleaseChannel::Staging).unwrap();
-        verify_signature_with_key(MESSAGE, SIGNATURE.as_bytes(), staging.public_key_pem).unwrap();
+        verify_signature_with_key(MESSAGE, SIGNATURE.as_bytes(), staging.public_key_pem()).unwrap();
 
         let stable = release_trust(ReleaseChannel::Stable).unwrap();
-        let error = verify_signature_with_key(MESSAGE, SIGNATURE.as_bytes(), stable.public_key_pem)
-            .unwrap_err()
-            .to_string();
+        let error =
+            verify_signature_with_key(MESSAGE, SIGNATURE.as_bytes(), stable.public_key_pem())
+                .unwrap_err()
+                .to_string();
         assert_eq!(
             error,
             "invalid_response: Pro manifest signature verification failed"
@@ -411,7 +427,7 @@ mod release_tests {
         assert!(verify_signature_with_key(
             b"ctx-pro staging signing authority retired",
             SIGNATURE.as_bytes(),
-            staging.public_key_pem,
+            staging.public_key_pem(),
         )
         .is_err());
     }

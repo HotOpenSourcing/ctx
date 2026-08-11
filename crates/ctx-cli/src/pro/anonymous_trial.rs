@@ -89,7 +89,7 @@ pub(super) fn setup(
     let target = platform_target();
     let challenge = service.api.trial_challenge(TrialChallengeRequest {
         schema_version: 1,
-        channel: service.config.release_trust.channel.wire_name(),
+        channel: service.config.release_trust.channel().wire_name(),
         target: &target,
         current_version: installed_version,
         protocol_version: ctx_pro_host_protocol::PROTOCOL_VERSION,

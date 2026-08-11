@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{Read as _, Seek as _, SeekFrom},
+    io::{Read as _, Seek as _, SeekFrom, Write as _},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -16,16 +16,120 @@ use crate::release_manifest::{
     MAX_ARTIFACT_BYTES, MAX_INSTALL_MARKER_BYTES,
 };
 
+pub(crate) const ARTIFACT_STREAM_BUFFER_BYTES: usize = 64 * 1024;
+
+/// A lifecycle-verified artifact retained by handle so later publication can
+/// neither follow a replaced pathname nor rematerialize the complete artifact.
+#[derive(Clone)]
+pub(crate) struct RetainedArtifact {
+    path: PathBuf,
+    artifact_size: u64,
+    artifact_sha256: String,
+    file: Arc<fs::File>,
+}
+
+impl std::fmt::Debug for RetainedArtifact {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RetainedArtifact")
+            .field("path", &self.path)
+            .field("artifact_size", &self.artifact_size)
+            .field("artifact_sha256", &self.artifact_sha256)
+            .finish_non_exhaustive()
+    }
+}
+
+impl RetainedArtifact {
+    fn new(path: PathBuf, artifact_size: u64, artifact_sha256: String, file: fs::File) -> Self {
+        Self {
+            path,
+            artifact_size,
+            artifact_sha256,
+            file: Arc::new(file),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_verified(
+        path: &Path,
+        expected_size: u64,
+        expected_sha256: &str,
+        label: &str,
+    ) -> Result<Self> {
+        let metadata = fs::symlink_metadata(path)
+            .with_context(|| format!("invalid_request: inspect {label}"))?;
+        if metadata.len() > MAX_ARTIFACT_BYTES {
+            bail!(
+                "invalid_request: {label} exceeds maximum size {}",
+                MAX_ARTIFACT_BYTES
+            );
+        }
+        let file = open_candidate(path, MAX_ARTIFACT_BYTES, label)?;
+        Self::open_verified_handle(path, file, expected_size, expected_sha256, label)
+    }
+
+    pub(crate) fn open_optional(path: &Path, label: &str) -> Result<Option<Self>> {
+        let Some(file) = open_optional_candidate(path, MAX_ARTIFACT_BYTES, label)? else {
+            return Ok(None);
+        };
+        let (artifact_size, artifact_sha256) =
+            digest_bounded_handle(&file, MAX_ARTIFACT_BYTES, label)?;
+        Ok(Some(Self::new(
+            path.to_path_buf(),
+            artifact_size,
+            artifact_sha256,
+            file,
+        )))
+    }
+
+    #[cfg(test)]
+    fn open_verified_handle(
+        path: &Path,
+        file: fs::File,
+        expected_size: u64,
+        expected_sha256: &str,
+        label: &str,
+    ) -> Result<Self> {
+        let (artifact_size, artifact_sha256) =
+            digest_bounded_handle(&file, MAX_ARTIFACT_BYTES, label)?;
+        if artifact_size != expected_size {
+            bail!("invalid_response: {label} size does not match signed manifest");
+        }
+        if !artifact_sha256.eq_ignore_ascii_case(expected_sha256) {
+            bail!("invalid_response: {label} digest does not match signed manifest");
+        }
+        Ok(Self::new(
+            path.to_path_buf(),
+            artifact_size,
+            artifact_sha256,
+            file,
+        ))
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn artifact_size(&self) -> u64 {
+        self.artifact_size
+    }
+
+    pub(crate) fn artifact_sha256(&self) -> &str {
+        &self.artifact_sha256
+    }
+
+    pub(crate) fn file(&self) -> &fs::File {
+        &self.file
+    }
+}
+
 /// Lifecycle-validated bytes and release identity retained for one host
 /// execution. The host may inspect the open file's OS identity, but it must not
 /// reopen or hash artifact bytes to establish release trust again.
 #[derive(Clone)]
 pub struct ValidatedArtifactIdentity {
-    path: PathBuf,
-    artifact_size: u64,
-    artifact_sha256: String,
+    artifact: RetainedArtifact,
     manifest: ProManifest,
-    artifact: Arc<fs::File>,
     operation: LifecycleOperation,
 }
 
@@ -33,9 +137,9 @@ impl std::fmt::Debug for ValidatedArtifactIdentity {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ValidatedArtifactIdentity")
-            .field("path", &self.path)
-            .field("artifact_size", &self.artifact_size)
-            .field("artifact_sha256", &self.artifact_sha256)
+            .field("path", &self.artifact.path)
+            .field("artifact_size", &self.artifact.artifact_size)
+            .field("artifact_sha256", &self.artifact.artifact_sha256)
             .field("manifest", &self.manifest)
             .finish_non_exhaustive()
     }
@@ -51,28 +155,25 @@ impl ValidatedArtifactIdentity {
         operation: LifecycleOperation,
     ) -> Self {
         Self {
-            path,
-            artifact_size,
-            artifact_sha256,
+            artifact: RetainedArtifact::new(path, artifact_size, artifact_sha256, artifact),
             manifest,
-            artifact: Arc::new(artifact),
             operation,
         }
     }
 
     #[must_use]
     pub fn path(&self) -> &Path {
-        &self.path
+        self.artifact.path()
     }
 
     #[must_use]
     pub fn artifact_sha256(&self) -> &str {
-        &self.artifact_sha256
+        self.artifact.artifact_sha256()
     }
 
     #[must_use]
     pub fn artifact_size(&self) -> u64 {
-        self.artifact_size
+        self.artifact.artifact_size()
     }
 
     #[must_use]
@@ -82,12 +183,16 @@ impl ValidatedArtifactIdentity {
 
     #[must_use]
     pub fn artifact_file(&self) -> &fs::File {
-        &self.artifact
+        self.artifact.file()
     }
 
     #[must_use]
     pub fn operation(&self) -> &LifecycleOperation {
         &self.operation
+    }
+
+    pub(crate) fn retained_artifact(&self) -> &RetainedArtifact {
+        &self.artifact
     }
 }
 
@@ -144,19 +249,19 @@ pub struct PairIdentity {
 
 impl PairIdentity {
     #[must_use]
-    pub fn new(artifact: &[u8], marker: &[u8], manifest: &ProManifest) -> Self {
+    pub(crate) fn new(artifact: &RetainedArtifact, marker: &[u8], manifest: &ProManifest) -> Self {
         Self {
-            artifact_size: artifact.len() as u64,
-            artifact_sha256: format!("{:x}", Sha256::digest(artifact)),
+            artifact_size: artifact.artifact_size(),
+            artifact_sha256: artifact.artifact_sha256().to_owned(),
             marker_sha256: format!("{:x}", Sha256::digest(marker)),
             version: manifest.version.clone(),
         }
     }
 
     #[must_use]
-    pub fn matches_artifact(&self, artifact: &[u8]) -> bool {
-        artifact.len() as u64 == self.artifact_size
-            && format!("{:x}", Sha256::digest(artifact)) == self.artifact_sha256
+    pub(crate) fn matches_artifact(&self, artifact: &RetainedArtifact) -> bool {
+        artifact.artifact_size() == self.artifact_size
+            && artifact.artifact_sha256() == self.artifact_sha256
     }
 
     #[must_use]
@@ -168,9 +273,20 @@ impl PairIdentity {
 #[derive(Debug, Clone)]
 pub struct ValidatedPair {
     pub identity: PairIdentity,
-    pub artifact: Vec<u8>,
     pub marker: Vec<u8>,
     pub manifest: ProManifest,
+    artifact: RetainedArtifact,
+    marker_path: PathBuf,
+}
+
+impl ValidatedPair {
+    pub(crate) fn artifact(&self) -> &RetainedArtifact {
+        &self.artifact
+    }
+
+    pub(crate) fn marker_path(&self) -> &Path {
+        &self.marker_path
+    }
 }
 
 #[derive(Debug)]
@@ -276,39 +392,43 @@ pub fn inspect_pair_at(
     marker_path: &Path,
     public_key_pem: &str,
 ) -> Result<PairInspection> {
-    let helper = read_candidate(helper_path, MAX_ARTIFACT_BYTES)?;
+    let helper = RetainedArtifact::open_optional(helper_path, "installed Pro helper")?;
     let marker = read_candidate(marker_path, MAX_INSTALL_MARKER_BYTES)?;
     match (helper, marker) {
         (None, None) => Ok(PairInspection::Absent),
-        (Some(helper), Some(marker)) => match validate_pair_bytes(helper, marker, public_key_pem) {
-            Ok(pair) => Ok(PairInspection::Valid(pair)),
-            Err(_) => Ok(PairInspection::Untrusted),
-        },
+        (Some(helper), Some(marker)) => {
+            match validate_retained_pair(helper, marker_path, marker, public_key_pem) {
+                Ok(pair) => Ok(PairInspection::Valid(pair)),
+                Err(_) => Ok(PairInspection::Untrusted),
+            }
+        }
         _ => Ok(PairInspection::Untrusted),
     }
 }
 
-pub fn validate_pair_bytes(
-    artifact: Vec<u8>,
+pub(crate) fn validate_retained_pair(
+    artifact: RetainedArtifact,
+    marker_path: &Path,
     marker_bytes: Vec<u8>,
     public_key_pem: &str,
 ) -> Result<ValidatedPair> {
     let marker: ProInstallMarker = serde_json::from_slice(&marker_bytes)
         .context("invalid_response: parse installed Pro marker")?;
     let manifest = marker.signed_manifest(public_key_pem)?;
-    let identity = PairIdentity::new(&artifact, &marker_bytes, &manifest);
-    if artifact.len() as u64 != manifest.artifact_size
-        || !identity
-            .artifact_sha256
+    if artifact.artifact_size() != manifest.artifact_size
+        || !artifact
+            .artifact_sha256()
             .eq_ignore_ascii_case(&manifest.artifact_sha256)
     {
         bail!("invalid_response: installed Pro helper does not match its signed marker");
     }
+    let identity = PairIdentity::new(&artifact, &marker_bytes, &manifest);
     Ok(ValidatedPair {
         identity,
-        artifact,
         marker: marker_bytes,
         manifest,
+        artifact,
+        marker_path: marker_path.to_path_buf(),
     })
 }
 
@@ -324,46 +444,15 @@ pub(crate) fn open_validated_pair_identity(
     if helper_path != layout.helper_path() || marker_path != layout.helper_marker_path() {
         bail!("invalid_response: installed Pro pair escaped its lifecycle root");
     }
-
-    let artifact_file = open_candidate(helper_path, MAX_ARTIFACT_BYTES, "installed Pro helper")?;
-    let marker_file = open_candidate(
-        marker_path,
-        MAX_INSTALL_MARKER_BYTES,
-        "installed Pro marker",
-    )?;
-    let marker_bytes = read_bounded_handle(
-        &marker_file,
-        MAX_INSTALL_MARKER_BYTES,
-        "installed Pro marker",
-    )?;
-    let marker: ProInstallMarker = serde_json::from_slice(&marker_bytes)
-        .context("invalid_response: parse installed Pro marker")?;
-    let manifest = marker.signed_manifest(trust.public_key_pem)?;
-    validate_manifest_release_trust(&manifest, trust)?;
-    let (artifact_size, artifact_sha256) =
-        digest_bounded_handle(&artifact_file, MAX_ARTIFACT_BYTES, "installed Pro helper")?;
-    if artifact_size != manifest.artifact_size
-        || !artifact_sha256.eq_ignore_ascii_case(&manifest.artifact_sha256)
-    {
-        bail!("invalid_response: installed Pro helper does not match its signed marker");
+    if expected.artifact().path() != helper_path || expected.marker_path() != marker_path {
+        bail!("invalid_response: installed Pro pair changed during validation");
     }
-    let locked_identity = PairIdentity {
-        artifact_size,
-        artifact_sha256,
-        marker_sha256: format!("{:x}", Sha256::digest(&marker_bytes)),
-        version: manifest.version.clone(),
-    };
-    if locked_identity != expected.identity {
-        bail!("invalid_response: installed Pro helper changed during validation");
-    }
-    Ok(ValidatedArtifactIdentity::new(
-        helper_path.to_path_buf(),
-        locked_identity.artifact_size,
-        locked_identity.artifact_sha256,
-        manifest,
-        artifact_file,
-        operation.clone(),
-    ))
+    validate_manifest_release_trust(&expected.manifest, trust)?;
+    Ok(ValidatedArtifactIdentity {
+        artifact: expected.artifact().clone(),
+        manifest: expected.manifest.clone(),
+        operation: operation.clone(),
+    })
 }
 
 pub(crate) fn open_validated_staged_identity(
@@ -387,14 +476,6 @@ pub(crate) fn open_validated_staged_identity(
         artifact_file,
         operation.clone(),
     ))
-}
-
-pub(crate) fn read_validated_artifact(identity: &ValidatedArtifactIdentity) -> Result<Vec<u8>> {
-    read_bounded_handle(
-        identity.artifact_file(),
-        MAX_ARTIFACT_BYTES,
-        "validated Pro helper",
-    )
 }
 
 fn open_candidate(path: &Path, maximum: u64, label: &str) -> Result<fs::File> {
@@ -424,28 +505,19 @@ fn open_candidate(path: &Path, maximum: u64, label: &str) -> Result<fs::File> {
     Ok(file)
 }
 
-fn read_bounded_handle(file: &fs::File, maximum: u64, label: &str) -> Result<Vec<u8>> {
-    let metadata = file
-        .metadata()
-        .with_context(|| format!("invalid_request: inspect {label}"))?;
-    if !metadata.is_file() || metadata.len() > maximum {
-        bail!("invalid_response: {label} is invalid");
+fn open_optional_candidate(path: &Path, maximum: u64, label: &str) -> Result<Option<fs::File>> {
+    match open_candidate(path, maximum, label) {
+        Ok(file) => Ok(Some(file)),
+        Err(error)
+            if error
+                .chain()
+                .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
+                .any(|cause| cause.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
     }
-    let mut reader = file
-        .try_clone()
-        .with_context(|| format!("invalid_request: clone {label} handle"))?;
-    reader
-        .seek(SeekFrom::Start(0))
-        .with_context(|| format!("invalid_request: seek {label} handle"))?;
-    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
-    reader
-        .take(maximum.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .with_context(|| format!("invalid_request: read {label} handle"))?;
-    if bytes.len() as u64 > maximum {
-        bail!("invalid_response: {label} exceeds maximum size");
-    }
-    Ok(bytes)
 }
 
 fn digest_bounded_handle(file: &fs::File, maximum: u64, label: &str) -> Result<(u64, String)> {
@@ -463,7 +535,7 @@ fn digest_bounded_handle(file: &fs::File, maximum: u64, label: &str) -> Result<(
         .with_context(|| format!("invalid_request: seek {label} handle"))?;
     let mut digest = Sha256::new();
     let mut total = 0_u64;
-    let mut buffer = [0_u8; 64 * 1024];
+    let mut buffer = [0_u8; ARTIFACT_STREAM_BUFFER_BYTES];
     loop {
         let read = reader
             .read(&mut buffer)
@@ -483,6 +555,60 @@ fn digest_bounded_handle(file: &fs::File, maximum: u64, label: &str) -> Result<(
         bail!("invalid_response: {label} changed while reading");
     }
     Ok((total, format!("{:x}", digest.finalize())))
+}
+
+pub(crate) fn stream_retained_artifact(
+    artifact: &RetainedArtifact,
+    destination: &mut fs::File,
+    label: &str,
+) -> Result<()> {
+    let before = artifact
+        .file()
+        .metadata()
+        .with_context(|| format!("invalid_request: inspect {label}"))?;
+    if !before.is_file() || before.len() != artifact.artifact_size() {
+        bail!("invalid_response: {label} changed before publication");
+    }
+    let mut reader = artifact
+        .file()
+        .try_clone()
+        .with_context(|| format!("invalid_request: clone {label} handle"))?;
+    reader
+        .seek(SeekFrom::Start(0))
+        .with_context(|| format!("invalid_request: seek {label} handle"))?;
+    let mut digest = Sha256::new();
+    let mut total = 0_u64;
+    let mut buffer = [0_u8; ARTIFACT_STREAM_BUFFER_BYTES];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .with_context(|| format!("invalid_request: read {label} handle"))?;
+        if read == 0 {
+            break;
+        }
+        total = total
+            .checked_add(read as u64)
+            .ok_or_else(|| anyhow::anyhow!("invalid_response: {label} exceeds maximum size"))?;
+        if total > artifact.artifact_size() {
+            bail!("invalid_response: {label} changed during publication");
+        }
+        destination
+            .write_all(&buffer[..read])
+            .with_context(|| format!("invalid_request: write streamed {label}"))?;
+        digest.update(&buffer[..read]);
+    }
+    let after = artifact
+        .file()
+        .metadata()
+        .with_context(|| format!("invalid_request: reinspect {label}"))?;
+    let actual_sha256 = format!("{:x}", digest.finalize());
+    if total != artifact.artifact_size()
+        || after.len() != before.len()
+        || !actual_sha256.eq_ignore_ascii_case(artifact.artifact_sha256())
+    {
+        bail!("invalid_response: {label} changed during publication");
+    }
+    Ok(())
 }
 
 pub fn read_candidate(path: &Path, maximum: u64) -> Result<Option<Vec<u8>>> {

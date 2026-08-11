@@ -1,9 +1,14 @@
 use std::{
+    alloc::{GlobalAlloc, Layout, System},
     cell::{Cell, RefCell},
     fs,
+    io::{Read as _, Seek as _, SeekFrom, Write as _},
     path::PathBuf,
     process::{Command, Stdio},
-    sync::mpsc,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering},
+        mpsc,
+    },
     thread,
     time::Duration,
 };
@@ -20,6 +25,71 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 use super::*;
+
+struct TrackingAllocator;
+
+static TRACK_INSTALL_ALLOCATIONS: AtomicBool = AtomicBool::new(false);
+static MAX_INSTALL_ALLOCATION: AtomicUsize = AtomicUsize::new(0);
+
+fn track_install_allocation(size: usize) {
+    if TRACK_INSTALL_ALLOCATIONS.load(AtomicOrdering::Relaxed) {
+        MAX_INSTALL_ALLOCATION.fetch_max(size, AtomicOrdering::Relaxed);
+    }
+}
+
+// SAFETY: every operation delegates to `System` with the original layout and
+// only records the requested size in lock-free atomics.
+unsafe impl GlobalAlloc for TrackingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        track_install_allocation(layout.size());
+        // SAFETY: delegated with the caller-provided layout.
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        track_install_allocation(layout.size());
+        // SAFETY: delegated with the caller-provided layout.
+        unsafe { System.alloc_zeroed(layout) }
+    }
+
+    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+        // SAFETY: delegated with the allocation's original pointer and layout.
+        unsafe { System.dealloc(pointer, layout) }
+    }
+
+    unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+        track_install_allocation(size);
+        // SAFETY: delegated with the allocation's original pointer/layout and
+        // the caller-requested replacement size.
+        unsafe { System.realloc(pointer, layout, size) }
+    }
+}
+
+#[global_allocator]
+static TEST_ALLOCATOR: TrackingAllocator = TrackingAllocator;
+
+struct InstallAllocationProbe;
+
+impl InstallAllocationProbe {
+    fn start() -> Self {
+        assert!(!TRACK_INSTALL_ALLOCATIONS.swap(true, AtomicOrdering::SeqCst));
+        MAX_INSTALL_ALLOCATION.store(0, AtomicOrdering::SeqCst);
+        Self
+    }
+
+    fn finish(self) -> usize {
+        TRACK_INSTALL_ALLOCATIONS.store(false, AtomicOrdering::SeqCst);
+        let maximum = MAX_INSTALL_ALLOCATION.load(AtomicOrdering::SeqCst);
+        std::mem::forget(self);
+        maximum
+    }
+}
+
+impl Drop for InstallAllocationProbe {
+    fn drop(&mut self) {
+        TRACK_INSTALL_ALLOCATIONS.store(false, AtomicOrdering::SeqCst);
+    }
+}
 
 type LifecycleLock = LifecycleOperation;
 
@@ -145,6 +215,14 @@ fn sign(bytes: &[u8]) -> String {
 }
 
 fn manifest(artifact: &[u8], version: &str) -> Value {
+    manifest_with_identity(
+        artifact.len() as u64,
+        format!("{:x}", Sha256::digest(artifact)),
+        version,
+    )
+}
+
+fn manifest_with_identity(artifact_size: u64, artifact_sha256: String, version: &str) -> Value {
     json!({
         "schema_version": 1,
         "product": "ctx-pro",
@@ -164,8 +242,8 @@ fn manifest(artifact: &[u8], version: &str) -> Value {
             platform_target(),
             if cfg!(windows) { "ctx-pro.exe" } else { "ctx-pro" },
         ),
-        "artifact_size": artifact.len(),
-        "artifact_sha256": format!("{:x}", Sha256::digest(artifact)),
+        "artifact_size": artifact_size,
+        "artifact_sha256": artifact_sha256,
         "public_artifact_sha256": "1".repeat(64),
         "public_package_sha256": "2".repeat(64),
         "private_package_sha256": "3".repeat(64),
@@ -173,6 +251,52 @@ fn manifest(artifact: &[u8], version: &str) -> Value {
         "runtime_run_id": "12345678-1234-4234-8234-123456789abc",
         "release_key_id": "test-v1",
     })
+}
+
+fn stream_file_identity(path: &Path) -> (u64, String) {
+    let mut file = fs::File::open(path).unwrap();
+    let mut digest = Sha256::new();
+    let mut size = 0_u64;
+    let mut buffer = [0_u8; crate::installed_artifact::ARTIFACT_STREAM_BUFFER_BYTES];
+    loop {
+        let read = file.read(&mut buffer).unwrap();
+        if read == 0 {
+            break;
+        }
+        size += read as u64;
+        digest.update(&buffer[..read]);
+    }
+    (size, format!("{:x}", digest.finalize()))
+}
+
+fn write_maximum_sparse_bundle(
+    directory: &Path,
+    name: &str,
+    version: &str,
+    first_byte: u8,
+) -> SignedBundle {
+    let artifact_path = directory.join(format!("{name}.bin"));
+    let manifest_path = directory.join(format!("{name}.json"));
+    let signature_path = directory.join(format!("{name}.sig"));
+    let mut artifact = fs::File::create(&artifact_path).unwrap();
+    artifact.set_len(MAX_ARTIFACT_BYTES).unwrap();
+    artifact.seek(SeekFrom::Start(0)).unwrap();
+    artifact.write_all(&[first_byte]).unwrap();
+    artifact.sync_all().unwrap();
+    drop(artifact);
+    let (artifact_size, artifact_sha256) = stream_file_identity(&artifact_path);
+    assert_eq!(artifact_size, MAX_ARTIFACT_BYTES);
+    let manifest = manifest_with_identity(artifact_size, artifact_sha256, version);
+    let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
+    fs::write(&manifest_path, &manifest_bytes).unwrap();
+    fs::write(&signature_path, sign(&manifest_bytes)).unwrap();
+    SignedBundle {
+        args: ProInstallArgs {
+            artifact: artifact_path,
+            manifest: manifest_path,
+            signature: signature_path,
+        },
+    }
 }
 
 fn write_bundle(directory: &Path, name: &str, artifact: &[u8], manifest: Value) -> SignedBundle {
@@ -228,6 +352,14 @@ fn install_bundle_with_recheck(
 
 fn target_bytes(data_root: &Path) -> Vec<u8> {
     fs::read(default_helper_path(data_root)).unwrap()
+}
+
+fn assert_pair_artifact(pair: &ValidatedPair, expected: &[u8]) {
+    assert_eq!(pair.identity.artifact_size, expected.len() as u64);
+    assert_eq!(
+        pair.identity.artifact_sha256,
+        format!("{:x}", Sha256::digest(expected))
+    );
 }
 
 fn reconcile(data_root: &Path) -> Result<Option<ValidatedPair>> {
@@ -501,6 +633,79 @@ fn queued_uninstall_cannot_interleave_with_setup_or_leave_resurrected_state() {
 
     assert!(!installation_artifacts_present(&data_root));
     assert!(!crate::state_markers::initialization_marker_exists(&data_root).unwrap());
+}
+
+#[test]
+fn staged_artifact_path_replacement_publishes_retained_signed_bytes() {
+    let root = TempDir::new().unwrap();
+    let signed_bytes = b"signed helper bytes";
+    let bundle = write_bundle(
+        root.path(),
+        "retained-stage",
+        signed_bytes,
+        manifest(signed_bytes, "1.0.0"),
+    );
+    let manifest_bytes = fs::read(&bundle.args.manifest).unwrap();
+    let signature = fs::read(&bundle.args.signature).unwrap();
+    let manifest = verified_manifest(&manifest_bytes, &signature, TEST_PUBLIC_KEY_PEM).unwrap();
+    let retained = RetainedArtifact::open_verified(
+        &bundle.args.artifact,
+        manifest.artifact_size,
+        &manifest.artifact_sha256,
+        "staged Pro helper",
+    )
+    .unwrap();
+    let retained_path = root.path().join("retained-original");
+    fs::rename(&bundle.args.artifact, &retained_path).unwrap();
+    fs::write(&bundle.args.artifact, vec![b'X'; signed_bytes.len()]).unwrap();
+
+    let operation = LifecycleOperation::begin(root.path(), true)
+        .unwrap()
+        .unwrap();
+    install_candidate_retained_locked(
+        root.path(),
+        None,
+        false,
+        &retained,
+        &manifest_bytes,
+        &signature,
+        manifest,
+        TEST_PUBLIC_KEY_PEM,
+        &NoopInstallRecheck,
+        &mut Persistence::default(),
+    )
+    .unwrap();
+    assert_eq!(target_bytes(root.path()), signed_bytes);
+    assert_eq!(
+        fs::read(&bundle.args.artifact).unwrap(),
+        vec![b'X'; signed_bytes.len()]
+    );
+    drop(operation);
+}
+
+#[test]
+#[ignore = "streams a full setup/update at the maximum supported artifact size"]
+fn maximum_artifact_update_has_no_artifact_sized_allocation() {
+    const MAX_ALLOWED_SINGLE_ALLOCATION: usize = 1024 * 1024;
+
+    let root = TempDir::new().unwrap();
+    let first = write_maximum_sparse_bundle(root.path(), "maximum-first", "1.0.0", 0);
+    let second = write_maximum_sparse_bundle(root.path(), "maximum-second", "2.0.0", 1);
+    let (_, expected_sha256) = stream_file_identity(&second.args.artifact);
+    install_bundle(&first, root.path(), false).unwrap();
+
+    let allocations = InstallAllocationProbe::start();
+    install_bundle(&second, root.path(), true).unwrap();
+    let maximum_allocation = allocations.finish();
+
+    assert!(
+        maximum_allocation <= MAX_ALLOWED_SINGLE_ALLOCATION,
+        "lifecycle update allocated {maximum_allocation} bytes at once"
+    );
+    let installed = installed_pair(root.path());
+    assert_eq!(installed.identity.artifact_size, MAX_ARTIFACT_BYTES);
+    assert_eq!(installed.identity.artifact_sha256, expected_sha256);
+    assert_eq!(installed.manifest.version, "2.0.0");
 }
 
 #[test]
@@ -1071,7 +1276,7 @@ fn every_initial_install_persistence_boundary_recovers_in_a_fresh_manager() {
         let first_recovery = reconcile(temp.path()).unwrap();
         if let Some(pair) = &first_recovery {
             assert_eq!(pair.manifest.version, "1.0.0");
-            assert_eq!(pair.artifact, b"initial helper");
+            assert_pair_artifact(pair, b"initial helper");
             assert_secure_permissions(temp.path());
             install_bundle(&bundle, temp.path(), true).unwrap();
         } else {
@@ -1132,8 +1337,8 @@ fn every_update_persistence_boundary_recovers_old_or_new_signed_pair() {
             "1.0.0" | "2.0.0"
         ));
         match recovered.manifest.version.as_str() {
-            "1.0.0" => assert_eq!(recovered.artifact, b"first helper"),
-            "2.0.0" => assert_eq!(recovered.artifact, b"second helper"),
+            "1.0.0" => assert_pair_artifact(&recovered, b"first helper"),
+            "2.0.0" => assert_pair_artifact(&recovered, b"second helper"),
             _ => unreachable!(),
         }
         assert_secure_permissions(temp.path());
@@ -1213,7 +1418,7 @@ fn committed_stage_tamper_falls_back_to_known_good_and_journal_is_bounded() {
     fs::write(transaction_helper_path(&target).unwrap(), b"tampered").unwrap();
     let recovered = reconcile(temp.path()).unwrap().unwrap();
     assert_eq!(recovered.manifest.version, "1.0.0");
-    assert_eq!(recovered.artifact, b"first helper");
+    assert_pair_artifact(&recovered, b"first helper");
     assert_no_transaction_files(temp.path());
 
     let journal_path = transaction_journal_path(&target).unwrap();
@@ -1250,7 +1455,7 @@ fn mismatched_or_tampered_signed_pairs_are_never_accepted() {
     fs::write(install_marker_path(&target).unwrap(), b"{}").unwrap();
     let repaired = reconcile(temp.path()).unwrap().unwrap();
     assert_eq!(repaired.manifest.version, "1.0.0");
-    assert_eq!(repaired.artifact, b"first helper");
+    assert_pair_artifact(&repaired, b"first helper");
 
     fs::write(&target, b"tampered current").unwrap();
     fs::write(install_marker_path(&target).unwrap(), b"{}").unwrap();

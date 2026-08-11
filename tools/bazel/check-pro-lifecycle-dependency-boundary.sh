@@ -154,6 +154,21 @@ if grep -REn --include='*.rs' \
   echo 'duplicate Pro release trust or signed-pair authority exists outside ctx-pro-lifecycle' >&2
   exit 1
 fi
+if grep -REn --include='*.rs' 'ReleaseTrust[[:space:]]*{' "${repo_root}/crates" \
+  | grep -v '/ctx-pro-lifecycle/src/release_manifest.rs:'; then
+  echo 'a lifecycle dependent can construct arbitrary Pro release trust' >&2
+  exit 1
+fi
+if grep -En \
+  "pub channel:[[:space:]]*ReleaseChannel|pub (key_id|public_key_pem):[[:space:]]*&'static str" \
+  "${lifecycle_root}/src/release_manifest.rs"; then
+  echo 'Pro release trust fields must remain opaque outside lifecycle' >&2
+  exit 1
+fi
+grep -F 'pub const fn channel(self) -> ReleaseChannel' \
+  "${lifecycle_root}/src/release_manifest.rs" >/dev/null
+grep -F 'pub(crate) const fn public_key_pem(self)' \
+  "${lifecycle_root}/src/release_manifest.rs" >/dev/null
 if grep -REn --include='*.rs' \
   'ctx-local-pro-initialized-v1|\.ctx-pro\.initialized' \
   "${repo_root}/crates" \
@@ -163,8 +178,21 @@ if grep -REn --include='*.rs' \
 fi
 grep -F 'pub struct ValidatedArtifactIdentity' \
   "${lifecycle_root}/src/installed_artifact.rs" >/dev/null
-grep -F 'artifact: Arc<fs::File>' "${lifecycle_root}/src/installed_artifact.rs" >/dev/null
+grep -F 'struct RetainedArtifact' "${lifecycle_root}/src/installed_artifact.rs" >/dev/null
+grep -F 'file: Arc<fs::File>' "${lifecycle_root}/src/installed_artifact.rs" >/dev/null
 grep -F 'operation: LifecycleOperation' "${lifecycle_root}/src/installed_artifact.rs" >/dev/null
+grep -F 'ARTIFACT_STREAM_BUFFER_BYTES' \
+  "${lifecycle_root}/src/installed_artifact.rs" >/dev/null
+grep -F 'durable_stream_write' \
+  "${lifecycle_root}/src/installation/persistence.rs" >/dev/null
+if grep -REn --include='*.rs' \
+  'artifact:[[:space:]]*Vec<u8>|read_validated_artifact|matches_artifact\([^&]*\[u8\]' \
+  "${lifecycle_root}/src/installed_artifact.rs" \
+  "${lifecycle_root}/src/installation.rs" \
+  "${lifecycle_root}/src/installation"; then
+  echo 'lifecycle installation must not rematerialize complete Pro artifacts' >&2
+  exit 1
+fi
 grep -F 'pub struct LifecycleOperation' "${lifecycle_root}/src/operation.rs" >/dev/null
 grep -F 'ValidatedArtifactIdentity' "${host_root}/src/host_port.rs" >/dev/null
 grep -F 'STREAM_BUFFER_BYTES' "${host_root}/src/verified_executable.rs" >/dev/null

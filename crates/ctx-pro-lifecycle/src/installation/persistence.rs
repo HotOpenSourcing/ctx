@@ -54,6 +54,39 @@ pub(super) fn durable_write(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(super) fn durable_stream_write(
+    path: &Path,
+    artifact: &RetainedArtifact,
+    unix_mode: u32,
+    persistence: &mut Persistence,
+    write_boundary: &'static str,
+    chmod_boundary: &'static str,
+    fsync_boundary: &'static str,
+) -> Result<()> {
+    remove_file_if_present(path, persistence, "remove_stale_staging_file")?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(unix_mode);
+    }
+    let mut file = options
+        .open(path)
+        .context("invalid_request: create staged Pro install file")?;
+    restrict_private_executable(path)
+        .context("invalid_request: protect staged Pro install executable")?;
+    stream_retained_artifact(artifact, &mut file, "validated Pro helper")?;
+    persistence.boundary(write_boundary)?;
+    persistence.boundary(chmod_boundary)?;
+    file.sync_all()
+        .context("invalid_request: sync staged Pro install file")?;
+    persistence.boundary(fsync_boundary)?;
+    let _ = unix_mode;
+    Ok(())
+}
+
 pub(super) fn write_journal(
     target: &Path,
     transaction: &InstallTransaction,
@@ -229,9 +262,9 @@ fn publish_pair(
     marker_rename: &'static str,
     marker_directory_fsync: &'static str,
 ) -> Result<()> {
-    durable_write(
+    durable_stream_write(
         helper_stage,
-        &pair.artifact,
+        pair.artifact(),
         0o700,
         persistence,
         helper_write,
