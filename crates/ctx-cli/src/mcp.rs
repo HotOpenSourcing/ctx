@@ -15,10 +15,7 @@ use {
         handle_protocol_message, McpHandled, McpServerIdentity, McpUsage, RequestDescriptor,
     },
     serde_json::json,
-    std::{
-        io::{BufRead, Write},
-        path::Path,
-    },
+    std::path::Path,
 };
 
 pub(crate) mod text;
