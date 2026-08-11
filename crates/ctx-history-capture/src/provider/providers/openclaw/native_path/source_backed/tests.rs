@@ -193,7 +193,7 @@ fn test_projector_with_lineage(
             authority,
             pending_calls: HashMap::new(),
             running_processes: HashMap::new(),
-            terminal_authority: OpenClawTerminalAuthority::unscanned_for_test(),
+            terminal_authority: OpenClawTerminalAuthority::default(),
             linkage_capacity_exceeded: false,
             fallback_identities: FallbackEventIdentityState::default(),
         },
@@ -237,7 +237,7 @@ fn project_session_event(
         authority,
         pending_calls: HashMap::new(),
         running_processes: HashMap::new(),
-        terminal_authority: OpenClawTerminalAuthority::unscanned_for_test(),
+        terminal_authority: OpenClawTerminalAuthority::default(),
         linkage_capacity_exceeded: false,
         fallback_identities: FallbackEventIdentityState::default(),
     };
@@ -282,6 +282,206 @@ fn project_values(projector: &mut OpenClawProjector, values: &[Value]) -> Vec<Co
             .unwrap();
     }
     emitted
+}
+
+#[derive(Debug)]
+struct LegacyOpenClawTerminalAuthority {
+    call_ids: HashMap<[u8; 32], u8>,
+    exhausted: bool,
+    complete: bool,
+}
+
+impl LegacyOpenClawTerminalAuthority {
+    fn scanned() -> Self {
+        Self {
+            call_ids: HashMap::new(),
+            exhausted: false,
+            complete: true,
+        }
+    }
+
+    fn unscanned() -> Self {
+        Self {
+            complete: false,
+            ..Self::scanned()
+        }
+    }
+
+    fn observe(&mut self, call_id: &str, capacity: usize) {
+        if self.exhausted || call_id.is_empty() {
+            return;
+        }
+        let digest = legacy_openclaw_terminal_digest(call_id);
+        if !self.call_ids.contains_key(&digest) && self.call_ids.len() >= capacity {
+            self.observe_ambiguous_terminal();
+            return;
+        }
+        let count = self.call_ids.entry(digest).or_default();
+        *count = count.saturating_add(1).min(2);
+    }
+
+    fn observe_ambiguous_terminal(&mut self) {
+        self.call_ids.clear();
+        self.exhausted = true;
+    }
+
+    fn is_unique(&self, call_id: &str) -> bool {
+        !self.complete
+            || (!self.exhausted
+                && self
+                    .call_ids
+                    .get(&legacy_openclaw_terminal_digest(call_id))
+                    .is_some_and(|count| *count == 1))
+    }
+
+    fn ambiguity_fingerprint(&self) -> [u8; 32] {
+        let mut ambiguous = self
+            .call_ids
+            .iter()
+            .filter_map(|(digest, count)| (*count > 1).then_some(*digest))
+            .collect::<Vec<_>>();
+        ambiguous.sort_unstable();
+        let mut hasher = Sha256::new();
+        hasher.update(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN);
+        hasher.update([u8::from(self.exhausted)]);
+        for digest in ambiguous {
+            hasher.update(digest);
+        }
+        hasher.finalize().into()
+    }
+}
+
+fn legacy_openclaw_terminal_digest(call_id: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(TERMINAL_CALL_ID_DOMAIN);
+    hasher.update(call_id.as_bytes());
+    hasher.finalize().into()
+}
+
+fn digest_hex(digest: [u8; 32]) -> String {
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[derive(Clone, Copy)]
+enum TerminalObservation<'a> {
+    Call(&'a str),
+    Ambiguous,
+}
+
+#[test]
+fn openclaw_shared_terminal_authority_matches_legacy_duplicate_overflow_matrix() {
+    use TerminalObservation::{Ambiguous, Call};
+
+    assert_eq!(
+        std::mem::size_of::<OpenClawTerminalAuthority>(),
+        std::mem::size_of::<LegacyOpenClawTerminalAuthority>()
+    );
+    #[cfg(target_pointer_width = "64")]
+    assert_eq!(std::mem::size_of::<OpenClawTerminalAuthority>(), 56);
+    assert_eq!(
+        std::mem::size_of::<ctx_history_jsonl::JsonlTerminalMultiplicity>(),
+        std::mem::size_of::<u8>()
+    );
+
+    let legacy_unscanned = LegacyOpenClawTerminalAuthority::unscanned();
+    let shared_unscanned = OpenClawTerminalAuthority::default();
+    for call_id in ["", "alpha", "missing"] {
+        assert_eq!(
+            legacy_unscanned.is_unique(call_id),
+            shared_unscanned.is_unique(TERMINAL_CALL_ID_DOMAIN, call_id)
+        );
+    }
+    assert_eq!(
+        legacy_unscanned.ambiguity_fingerprint(),
+        shared_unscanned.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
+    );
+
+    let matrix: &[&[TerminalObservation<'_>]] = &[
+        &[],
+        &[Call("")],
+        &[Call("alpha")],
+        &[Call("alpha"), Call("alpha"), Call("alpha")],
+        &[Call("alpha"), Call("beta")],
+        &[Call("alpha"), Call("alpha"), Call("beta")],
+        &[Call("alpha"), Call("beta"), Call("alpha")],
+        &[Call("alpha"), Ambiguous, Call("beta")],
+        &[Ambiguous, Call("alpha"), Call("alpha")],
+    ];
+    for capacity in [0, 1, 2, 3] {
+        for observations in matrix {
+            let mut legacy = LegacyOpenClawTerminalAuthority::scanned();
+            let mut shared = OpenClawTerminalAuthority::available();
+            for observation in *observations {
+                match observation {
+                    Call(call_id) => {
+                        legacy.observe(call_id, capacity);
+                        if !call_id.is_empty() {
+                            shared.observe(
+                                TERMINAL_CALL_ID_DOMAIN,
+                                call_id,
+                                JsonlTerminalObservationRegion::WholeSource,
+                                capacity,
+                            );
+                        }
+                    }
+                    Ambiguous => {
+                        legacy.observe_ambiguous_terminal();
+                        shared.observe_ambiguous_terminal();
+                    }
+                }
+                assert_eq!(legacy.exhausted, shared.exhausted());
+                assert_eq!(
+                    legacy.call_ids,
+                    shared.digest_counts().collect::<HashMap<_, _>>()
+                );
+                assert_eq!(
+                    legacy.ambiguity_fingerprint(),
+                    shared.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
+                );
+                for call_id in ["", "alpha", "beta", "missing"] {
+                    assert_eq!(
+                        legacy.is_unique(call_id),
+                        shared.is_unique(TERMINAL_CALL_ID_DOMAIN, call_id)
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn openclaw_terminal_ambiguity_digest_wire_goldens_are_unchanged() {
+    let empty = OpenClawTerminalAuthority::available();
+    assert_eq!(
+        digest_hex(empty.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)),
+        "6120df961ec6205c5a6858ba4231c961315cbd492a61d69001a3ab37913313c9"
+    );
+
+    let mut duplicate = OpenClawTerminalAuthority::available();
+    for _ in 0..2 {
+        duplicate.observe(
+            TERMINAL_CALL_ID_DOMAIN,
+            "alpha",
+            JsonlTerminalObservationRegion::WholeSource,
+            1,
+        );
+    }
+    assert_eq!(
+        digest_hex(duplicate.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)),
+        "7f18f41f46aaa6cfd7b5b5da99f7e0edd7783cd9100abf46aa64ea3ac82ad4c6"
+    );
+
+    let mut exhausted = OpenClawTerminalAuthority::available();
+    exhausted.observe(
+        TERMINAL_CALL_ID_DOMAIN,
+        "overflow",
+        JsonlTerminalObservationRegion::WholeSource,
+        0,
+    );
+    assert_eq!(
+        digest_hex(exhausted.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)),
+        "f66dd43c08f6a7e2a5bb531bf51fc4f906c491e92b44c053168ec5ba84f3a84f"
+    );
 }
 
 #[cfg(unix)]
@@ -557,7 +757,7 @@ fn openclaw_ambiguous_terminal_exhausts_source_wide_result_uniqueness() {
         first_result_bytes.as_slice(),
         ambiguous_result.as_slice(),
     ]);
-    assert!(!authority.is_unique("ambiguous-terminal-call"));
+    assert!(!authority.is_unique(TERMINAL_CALL_ID_DOMAIN, "ambiguous-terminal-call"));
 
     let (_temp, mut projector) = test_projector();
     projector.terminal_authority = authority;
@@ -603,7 +803,7 @@ fn openclaw_ambiguous_terminal_exhausts_source_wide_result_uniqueness() {
             first_result_bytes.as_slice(),
             malformed,
         ]);
-        assert!(!authority.is_unique("ambiguous-terminal-call"));
+        assert!(!authority.is_unique(TERMINAL_CALL_ID_DOMAIN, "ambiguous-terminal-call"));
     }
 
     let hidden_terminal = br#"{"type":"message","id":"hidden-terminal","message":{"role":"toolResult","toolCallId":"ambiguous-terminal-call","content":"hidden result"},"message":{"role":"assistant","content":"last-wins ordinary message"}}"#;
@@ -612,7 +812,115 @@ fn openclaw_ambiguous_terminal_exhausts_source_wide_result_uniqueness() {
         first_result_bytes.as_slice(),
         hidden_terminal.as_slice(),
     ]);
-    assert!(!authority.is_unique("ambiguous-terminal-call"));
+    assert!(!authority.is_unique(TERMINAL_CALL_ID_DOMAIN, "ambiguous-terminal-call"));
+}
+
+#[test]
+fn openclaw_valid_result_aliases_have_one_exact_output_byte_golden() {
+    const GOLDEN: &[u8] = br#"{"duration_ms":null,"exit_code":null,"outcome":"unknown","result_content_complete":true,"result_content_location":"normalized_body","tool_call_id":"alias-call","tool_name":"exec","type":"tool_result"}"#;
+    for alias in ["toolCallId", "tool_call_id"] {
+        let mut message = serde_json::json!({
+            "role": "toolResult",
+            "toolName": "exec",
+            "content": "complete alias payload",
+        });
+        message.as_object_mut().unwrap().insert(
+            alias.to_owned(),
+            serde_json::Value::String("alias-call".to_owned()),
+        );
+        let value = serde_json::json!({"type": "message", "message": message});
+        let result = native_tool_result(&value).unwrap();
+
+        assert_eq!(result.call_id, Some("alias-call"), "{alias}");
+        assert!(!result.ambiguous_linkage, "{alias}");
+        let (_temp, mut projector) = test_projector();
+        let records = project_values(&mut projector, &[value]);
+        let structured = records[0].content.structured_content.as_ref().unwrap();
+        assert_eq!(serde_json::to_vec(structured).unwrap(), GOLDEN, "{alias}");
+    }
+}
+
+#[test]
+fn openclaw_malformed_result_selector_matrix_exhausts_and_never_consumes_linkage() {
+    let oversized = "x".repeat(MAX_SELECTOR_CALL_ID_BYTES + 1);
+    let cases = [
+        (
+            "conflicting",
+            r#""toolCallId":"selector-call","tool_call_id":"other""#.to_owned(),
+        ),
+        (
+            "duplicate-alias",
+            r#""toolCallId":"selector-call","toolCallId":"other""#.to_owned(),
+        ),
+        ("non-string", r#""toolCallId":7"#.to_owned()),
+        ("empty", r#""toolCallId":"""#.to_owned()),
+        ("oversized", format!(r#""toolCallId":"{oversized}""#)),
+    ];
+    for (name, selector) in cases {
+        let call = serde_json::to_vec(&serde_json::json!({
+            "type": "message",
+            "id": format!("selector-call-{name}"),
+            "timestamp": "2026-08-05T12:00:00Z",
+            "message": {"role": "assistant", "content": [{
+                "type": "toolCall",
+                "id": "selector-call",
+                "name": "exec",
+                "arguments": {"command": "git commit -m selector"}
+            }]}
+        }))
+        .unwrap();
+        let result = format!(
+            r#"{{"type":"message","id":"selector-result-{name}","timestamp":"2026-08-05T12:00:01Z","message":{{"role":"toolResult",{selector},"content":"malformed selector payload","details":{{"status":"completed","exitCode":0}}}}}}"#
+        )
+        .into_bytes();
+        let authority = terminal_authority_for_records([call.as_slice(), result.as_slice()]);
+        assert!(
+            !authority.is_unique(TERMINAL_CALL_ID_DOMAIN, "selector-call"),
+            "{name}"
+        );
+
+        let (_temp, mut projector) = test_projector();
+        projector.terminal_authority = authority;
+        let mut worker = JsonlFamilyWorkerContext::default();
+        let mut records = Vec::new();
+        for (ordinal, bytes) in [call.as_slice(), result.as_slice()].into_iter().enumerate() {
+            projector
+                .project(
+                    JsonlRecordRef::for_test(bytes, ordinal as u64),
+                    &mut worker,
+                    &mut |record| {
+                        records.push(record);
+                        Ok(())
+                    },
+                )
+                .unwrap();
+        }
+
+        assert!(
+            projector.pending_calls.contains_key("selector-call"),
+            "{name}"
+        );
+        assert!(
+            records.iter().all(|record| {
+                record
+                    .repository_vcs_observations
+                    .iter()
+                    .all(|observation| {
+                        !matches!(observation.kind, RepositoryVcsObservationKind::Outcome(_))
+                    })
+            }),
+            "{name}"
+        );
+        let retained = records.iter().find(|record| {
+            record.content.normalized_body.as_deref() == Some("malformed selector payload")
+        });
+        assert!(retained.is_some(), "{name}");
+        assert_eq!(
+            retained.unwrap().content.discovery_exclusion,
+            None,
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -727,8 +1035,8 @@ fn openclaw_running_retrieval_survives_checkpoint_and_continuation_linkage() {
         native_session_id: projector.native_session_id.clone(),
         index: Value::Null,
         native_session_family: OpenClawNativeSessionFamily::Absent,
-        terminal_ambiguity_fingerprint: OpenClawTerminalAuthority::for_scan()
-            .ambiguity_fingerprint(),
+        terminal_ambiguity_fingerprint: OpenClawTerminalAuthority::available()
+            .ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
     };
     let restored = decode_projector_checkpoint(&checkpoint, &binding).unwrap();
     assert!(matches!(
@@ -1835,11 +2143,11 @@ fn terminal_ambiguity_fingerprint_invalidates_only_affected_append() {
         second_result.clone(),
     ]);
     assert_eq!(
-        prefix.ambiguity_fingerprint(),
-        unique_append.ambiguity_fingerprint()
+        prefix.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
+        unique_append.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
     );
-    assert!(unique_append.is_unique("call-a"));
-    assert!(unique_append.is_unique("call-b"));
+    assert!(unique_append.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-a"));
+    assert!(unique_append.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-b"));
 
     let duplicate_append = scan(&[
         first_call.clone(),
@@ -1849,14 +2157,14 @@ fn terminal_ambiguity_fingerprint_invalidates_only_affected_append() {
         reused_result.clone(),
     ]);
     assert_ne!(
-        prefix.ambiguity_fingerprint(),
-        duplicate_append.ambiguity_fingerprint()
+        prefix.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
+        duplicate_append.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
     );
-    assert!(!duplicate_append.is_unique("call-a"));
-    assert!(duplicate_append.is_unique("call-b"));
+    assert!(!duplicate_append.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-a"));
+    assert!(duplicate_append.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-b"));
 
     let mut malformed_bytes = Vec::new();
-    for value in [first_call, first_result] {
+    for value in [first_call.clone(), first_result.clone()] {
         serde_json::to_writer(&mut malformed_bytes, &value).unwrap();
         malformed_bytes.push(b'\n');
     }
@@ -1867,10 +2175,56 @@ fn terminal_ambiguity_fingerprint_invalidates_only_affected_append() {
     let malformed_append =
         terminal_authority_for_source(&source, &transcript_path, opened).unwrap();
     assert_ne!(
-        prefix.ambiguity_fingerprint(),
-        malformed_append.ambiguity_fingerprint()
+        prefix.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
+        malformed_append.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
     );
-    assert!(!malformed_append.is_unique("call-a"));
+    assert!(!malformed_append.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-a"));
+
+    let selector_appends = [
+        serde_json::json!({
+            "type": "message",
+            "message": {"role": "toolResult", "toolCallId": "call-a", "tool_call_id": "other", "content": "conflict"}
+        }),
+        serde_json::json!({
+            "type": "message",
+            "message": {"role": "toolResult", "toolCallId": 7, "content": "non-string"}
+        }),
+        serde_json::json!({
+            "type": "message",
+            "message": {"role": "toolResult", "toolCallId": "", "content": "empty"}
+        }),
+        serde_json::json!({
+            "type": "message",
+            "message": {"role": "toolResult", "toolCallId": "x".repeat(MAX_SELECTOR_CALL_ID_BYTES + 1), "content": "oversized"}
+        }),
+    ];
+    for appended in selector_appends {
+        let authority = scan(&[first_result.clone(), appended]);
+        assert_ne!(
+            prefix.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
+            authority.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
+        );
+        assert!(!authority.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-a"));
+    }
+
+    let mut duplicate_selector_bytes = Vec::new();
+    for value in [first_call, first_result] {
+        serde_json::to_writer(&mut duplicate_selector_bytes, &value).unwrap();
+        duplicate_selector_bytes.push(b'\n');
+    }
+    duplicate_selector_bytes.extend_from_slice(
+        br#"{"type":"message","message":{"role":"toolResult","toolCallId":"call-a","toolCallId":"other","content":"duplicate selector"}}"#,
+    );
+    duplicate_selector_bytes.push(b'\n');
+    fs::write(&transcript_path, duplicate_selector_bytes).unwrap();
+    let opened = Arc::new(authority.open_file(Path::new("session.jsonl")).unwrap());
+    let duplicate_selector =
+        terminal_authority_for_source(&source, &transcript_path, opened).unwrap();
+    assert_ne!(
+        prefix.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
+        duplicate_selector.ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
+    );
+    assert!(!duplicate_selector.is_unique(TERMINAL_CALL_ID_DOMAIN, "call-a"));
 }
 
 #[test]
@@ -1899,8 +2253,8 @@ fn append_after_prior_duplicate_probes_base_and_restores_call_ambiguity() {
         native_session_id: native_session_id.to_owned(),
         index: Value::Null,
         native_session_family: OpenClawNativeSessionFamily::Absent,
-        terminal_ambiguity_fingerprint: OpenClawTerminalAuthority::for_scan()
-            .ambiguity_fingerprint(),
+        terminal_ambiguity_fingerprint: OpenClawTerminalAuthority::available()
+            .ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
     };
     let source = source_key(native_session_id).unwrap();
     let session_id = session_identity(&source, native_session_id).unwrap();
@@ -1954,7 +2308,7 @@ fn append_after_prior_duplicate_probes_base_and_restores_call_ambiguity() {
         authority,
         pending_calls,
         running_processes: HashMap::new(),
-        terminal_authority: OpenClawTerminalAuthority::unscanned_for_test(),
+        terminal_authority: OpenClawTerminalAuthority::default(),
         linkage_capacity_exceeded,
         fallback_identities: FallbackEventIdentityState::default(),
     };

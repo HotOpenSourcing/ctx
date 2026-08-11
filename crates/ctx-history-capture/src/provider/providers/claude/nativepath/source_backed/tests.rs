@@ -3,8 +3,9 @@ use super::*;
 use crate::repository_attribution::RepositoryAttributor;
 use crate::{
     provider::source_backed::{
-        refresh_source_backed_generation, register_landed_source_backed_route,
-        SourceBackedProviderRegistry, SourceBackedRouteSelection,
+        family::jsonl::set_after_jsonl_semantic_preflight_hook, refresh_source_backed_generation,
+        register_landed_source_backed_route, SourceBackedProviderRegistry,
+        SourceBackedRouteSelection, SourceBackedSourceFailureClass,
     },
     ProviderCatalogSupport, ProviderImportSupport, ProviderSource, ProviderSourceKind,
     ProviderSourceStatus,
@@ -44,6 +45,13 @@ fn initialized_test_repository() -> tempfile::TempDir {
             .success());
     }
     temp
+}
+
+fn assert_no_linked_repository_evidence(record: &CoreRecord) {
+    assert!(record.repository_bindings.is_empty());
+    assert!(record.repository_file_invocation_evidence.is_empty());
+    assert!(record.repository_file_observations.is_empty());
+    assert!(record.repository_vcs_observations.is_empty());
 }
 
 fn claude_test_registry(root: &Path) -> SourceBackedProviderRegistry {
@@ -545,7 +553,7 @@ fn idless_tool_call_fallback_identity_excludes_additive_invocation_cache() {
         agent_id: None,
     };
     let source = source_key(&key).unwrap();
-    let session_id = session_identity(&source, &session_typed_key(&key).unwrap()).unwrap();
+    let session_id = session_identity(&source, session_typed_key(&key).unwrap()).unwrap();
     let (event_id, _) = fallback_event_id(
         &row,
         &source,
@@ -568,7 +576,7 @@ fn fallback_event_ids(bodies: &[&str]) -> Vec<StableEntityId> {
         agent_id: None,
     };
     let source = source_key(&key).unwrap();
-    let session_id = session_identity(&source, &session_typed_key(&key).unwrap()).unwrap();
+    let session_id = session_identity(&source, session_typed_key(&key).unwrap()).unwrap();
     let mut state = FallbackEventIdentityState::default();
     bodies
         .iter()
@@ -755,12 +763,22 @@ fn project_claude_records(projector: &mut ClaudeProjector, records: &[Vec<u8>]) 
             line_number: ordinal as u64 + 1,
             record_sha256: Sha256::digest(record).into(),
         };
+        if !crate::common::json::raw_object_keys_are_unique(record) {
+            authority.observe_ambiguous_terminal();
+        }
         if let Ok(parsed) = parse_native_record(record, ordinal as u64, &locator) {
-            for call_id in parsed.rows.iter().filter_map(|row| {
-                row.tool_result
-                    .as_ref()
-                    .and_then(|result| result.call_id.as_deref())
-            }) {
+            for result in parsed
+                .rows
+                .iter()
+                .filter_map(|row| row.tool_result.as_ref())
+            {
+                if result.retrieval_input_ambiguous {
+                    authority.observe_ambiguous_terminal();
+                    continue;
+                }
+                let Some(call_id) = result.call_id.as_deref() else {
+                    continue;
+                };
                 authority.observe(
                     RESULT_TERMINAL_CALL_ID_DOMAIN,
                     call_id,
@@ -833,6 +851,25 @@ fn claude_ctx_result(
     serde_json::to_vec(&record).unwrap()
 }
 
+fn claude_result_with_alias(alias: &str, call_id: serde_json::Value, content: &str) -> Vec<u8> {
+    let mut block = serde_json::json!({
+        "type": "tool_result",
+        "content": content,
+        "is_error": false,
+    });
+    block
+        .as_object_mut()
+        .unwrap()
+        .insert(alias.to_owned(), call_id);
+    serde_json::to_vec(&serde_json::json!({
+        "type": "user",
+        "uuid": format!("result-{alias}"),
+        "sessionId": "test-session",
+        "message": {"role": "user", "content": [block]},
+    }))
+    .unwrap()
+}
+
 #[test]
 fn claude_ctx_retrieval_cli_mcp_and_success_payloads_are_excluded_without_body_loss() {
     let cli_call = claude_ctx_call(
@@ -887,6 +924,105 @@ fn claude_ctx_retrieval_cli_mcp_and_success_payloads_are_excluded_without_body_l
             .and_then(serde_json::Value::as_bool),
         Some(true)
     );
+}
+
+#[test]
+fn claude_valid_result_aliases_have_one_exact_output_byte_golden() {
+    const GOLDEN: &[u8] = br#"{"duration_ms":null,"exit_code":null,"outcome":"success","result_content_complete":true,"result_content_location":"normalized_body","tool_use_id":"alias-call","type":"tool_result"}"#;
+    for alias in ["tool_use_id", "toolUseId", "toolCallId"] {
+        let bytes = claude_result_with_alias(
+            alias,
+            serde_json::Value::String("alias-call".to_owned()),
+            "complete alias payload",
+        );
+        let locator = ClaudePhysicalLocator {
+            path: PathBuf::from("test-session.jsonl"),
+            byte_start: 0,
+            byte_end_exclusive: bytes.len() as u64,
+            line_number: 1,
+            record_sha256: Sha256::digest(&bytes).into(),
+        };
+        let parsed = parse_native_record(&bytes, 0, &locator).unwrap();
+        let row = parsed
+            .rows
+            .iter()
+            .find(|row| row.tool_result.is_some())
+            .unwrap();
+        let result = row.tool_result.as_ref().unwrap();
+        assert_eq!(result.call_id.as_deref(), Some("alias-call"), "{alias}");
+        assert!(!result.retrieval_input_ambiguous, "{alias}");
+        assert_eq!(
+            serde_json::to_vec(&row_structured_content(row).unwrap()).unwrap(),
+            GOLDEN,
+            "{alias}"
+        );
+    }
+}
+
+#[test]
+fn claude_malformed_direct_result_selector_matrix_exhausts_and_never_consumes_linkage() {
+    let repository = initialized_test_repository();
+    let oversized = "x".repeat(257);
+    let cases = [
+        (
+            "conflicting",
+            r#""tool_use_id":"selector-call","toolUseId":"other""#.to_owned(),
+        ),
+        (
+            "duplicate-alias",
+            r#""toolCallId":"selector-call","toolCallId":"other""#.to_owned(),
+        ),
+        ("non-string", r#""toolCallId":7"#.to_owned()),
+        ("empty", r#""toolCallId":"""#.to_owned()),
+        ("oversized", format!(r#""toolCallId":"{oversized}""#)),
+    ];
+    for (name, selector) in cases {
+        let call = claude_ctx_call(
+            "selector-call",
+            "Bash",
+            serde_json::json!({
+                "command": "git commit -m selector",
+                "workdir": repository.path(),
+            }),
+        );
+        let result = format!(
+            r#"{{"type":"tool_result","uuid":"result-{name}","sessionId":"test-session",{selector},"content":"malformed selector payload"}}"#
+        )
+        .into_bytes();
+        let mut projector = test_projector();
+        let records = project_claude_records(&mut projector, &[call, result]);
+
+        assert!(projector.result_terminal_authority.exhausted(), "{name}");
+        assert!(
+            projector.pending_calls.contains_key("selector-call"),
+            "{name}"
+        );
+        assert!(
+            records.iter().all(|record| {
+                record
+                    .repository_vcs_observations
+                    .iter()
+                    .all(|observation| {
+                        !matches!(observation.kind, RepositoryVcsObservationKind::Outcome(_))
+                    })
+            }),
+            "{name}"
+        );
+        assert!(
+            records
+                .iter()
+                .filter(|record| {
+                    record.content.normalized_body.as_deref() == Some("malformed selector payload")
+                })
+                .all(|record| record.content.discovery_exclusion.is_none()),
+            "{name}"
+        );
+        for result in records.iter().filter(|record| {
+            record.content.normalized_body.as_deref() == Some("malformed selector payload")
+        }) {
+            assert_no_linked_repository_evidence(result);
+        }
+    }
 }
 
 #[test]
@@ -992,10 +1128,14 @@ fn claude_duplicate_raw_result_members_remain_searchable() {
 
 #[test]
 fn claude_duplicate_result_terminals_fail_open_without_retracting_invocation_exclusion() {
+    let repository = initialized_test_repository();
     let call = claude_ctx_call(
         "duplicate-result",
         "Bash",
-        serde_json::json!({"command": "ctx search duplicate-result"}),
+        serde_json::json!({
+            "command": "ctx search duplicate-result",
+            "workdir": repository.path(),
+        }),
     );
     let first = claude_ctx_result(
         "duplicate-result",
@@ -1012,8 +1152,11 @@ fn claude_duplicate_result_terminals_fail_open_without_retracting_invocation_exc
         None,
     );
 
-    let records = project_claude_records(&mut test_projector(), &[call, first, second]);
+    let mut projector = test_projector();
+    let records = project_claude_records(&mut projector, &[call, first, second]);
     assert_eq!(records.len(), 3);
+    assert_eq!(records[0].repository_bindings.len(), 1);
+    assert!(projector.pending_calls.contains_key("duplicate-result"));
     assert_eq!(
         records[0].content.discovery_exclusion,
         Some(CoreDiscoveryExclusion::CtxRetrievalDerived)
@@ -1028,11 +1171,14 @@ fn claude_duplicate_result_terminals_fail_open_without_retracting_invocation_exc
         records[2].content.normalized_body.as_deref(),
         Some("second duplicate result payload")
     );
+    assert_no_linked_repository_evidence(&records[1]);
+    assert_no_linked_repository_evidence(&records[2]);
 }
 
 #[test]
 fn claude_late_duplicate_result_forces_replacement_and_retracts_prior_exclusion() {
     let temp = tempfile::tempdir().unwrap();
+    let repository = initialized_test_repository();
     let projects = temp.path().join("projects");
     let transcript = projects
         .join("project")
@@ -1048,7 +1194,10 @@ fn claude_late_duplicate_result_forces_replacement_and_retracts_prior_exclusion(
             "type": "tool_use",
             "id": call_id,
             "name": "Bash",
-            "input": {"command": "ctx search late-duplicate"}
+            "input": {
+                "command": "ctx search late-duplicate",
+                "workdir": repository.path(),
+            }
         }]},
     });
     let result = |uuid: &str, content: &str| {
@@ -1082,6 +1231,7 @@ fn claude_late_duplicate_result_forces_replacement_and_retracts_prior_exclusion(
     assert!(initial.iter().all(|record| {
         record.content.discovery_exclusion == Some(CoreDiscoveryExclusion::CtxRetrievalDerived)
     }));
+    assert_eq!(initial[1].repository_bindings.len(), 1);
     let initial_ids = initial
         .iter()
         .map(|record| record.event_id)
@@ -1112,6 +1262,63 @@ fn claude_late_duplicate_result_forces_replacement_and_retracts_prior_exclusion(
     assert_eq!(
         corrected[2].content.normalized_body.as_deref(),
         Some("second late duplicate Claude payload")
+    );
+    assert_no_linked_repository_evidence(&corrected[1]);
+    assert_no_linked_repository_evidence(&corrected[2]);
+}
+
+#[test]
+fn claude_projector_preflight_rejects_same_length_interpass_rewrite() {
+    let temp = tempfile::tempdir().unwrap();
+    let projects = temp.path().join("projects");
+    let transcript = projects.join("project").join("preflight-race.jsonl");
+    let index = temp.path().join("index");
+    let native_session_id = "preflight-race";
+    write_claude_transcript(
+        &transcript,
+        &[serde_json::json!({
+            "type": "user",
+            "uuid": "stable-record",
+            "sessionId": native_session_id,
+            "message": {"role": "user", "content": "stable baseline"},
+        })],
+    );
+    let registry = claude_test_registry(&projects);
+    let initial =
+        refresh_source_backed_generation(&index, &registry, claude_test_writer_options()).unwrap();
+    assert!(initial.failed_routes.is_empty());
+
+    append_claude_transcript(
+        &transcript,
+        &serde_json::json!({
+            "type": "assistant",
+            "uuid": "racing-record",
+            "sessionId": native_session_id,
+            "message": {"role": "assistant", "content": "race-before"},
+        }),
+    );
+    let hook_path = fs::canonicalize(&transcript).unwrap();
+    set_after_jsonl_semantic_preflight_hook(hook_path.clone(), move || {
+        let before = fs::read_to_string(&hook_path).unwrap();
+        let after = before.replace("race-before", "race-after!");
+        assert_eq!(before.len(), after.len());
+        assert_ne!(before, after);
+        fs::write(hook_path, after).unwrap();
+    });
+
+    let failed =
+        refresh_source_backed_generation(&index, &registry, claude_test_writer_options()).unwrap();
+    assert_eq!(failed.failed_routes.len(), 1);
+    assert_eq!(
+        failed.failed_routes[0].class,
+        SourceBackedSourceFailureClass::SourceChanged
+    );
+    assert!(failed.failed_routes[0].carried_forward);
+    let retained = indexed_claude_records(&index, native_session_id);
+    assert_eq!(retained.len(), 1);
+    assert_eq!(
+        retained[0].content.normalized_body.as_deref(),
+        Some("stable baseline")
     );
 }
 
@@ -1287,6 +1494,148 @@ fn claude_appended_duplicate_member_terminal_retracts_prior_result_exclusion() {
     assert!(ambiguous
         .iter()
         .all(|record| record.content.discovery_exclusion.is_none()));
+}
+
+#[test]
+fn claude_appended_malformed_selector_matrix_retracts_prior_result_authority() {
+    let repository = initialized_test_repository();
+    let call_id = "selector-alias-result";
+    let oversized = "x".repeat(257);
+    let cases = [
+        (
+            "conflicting",
+            format!(r#""toolUseId":"{call_id}","toolCallId":"other""#),
+            true,
+        ),
+        (
+            "duplicate-alias",
+            format!(r#""toolCallId":"{call_id}","toolCallId":"other""#),
+            false,
+        ),
+        ("non-string", r#""toolCallId":7"#.to_owned(), true),
+        ("empty", r#""toolCallId":"""#.to_owned(), true),
+        ("oversized", format!(r#""toolCallId":"{oversized}""#), true),
+    ];
+    for (name, selector, appended_is_retained) in cases {
+        let temp = tempfile::tempdir().unwrap();
+        let projects = temp.path().join("projects");
+        let native_session_id = format!("selector-alias-{name}-session");
+        let transcript = projects
+            .join("project")
+            .join(format!("{native_session_id}.jsonl"));
+        let index = temp.path().join("index");
+        let call = serde_json::json!({
+            "type": "assistant",
+            "uuid": format!("selector-alias-{name}-call"),
+            "sessionId": native_session_id,
+            "message": {"role": "assistant", "content": [{
+                "type": "tool_use",
+                "id": call_id,
+                "name": "Bash",
+                "input": {
+                    "command": "ctx search selector-alias",
+                    "workdir": repository.path(),
+                }
+            }]},
+        });
+        let first_result = serde_json::json!({
+            "type": "user",
+            "uuid": format!("selector-alias-{name}-first"),
+            "sessionId": native_session_id,
+            "message": {"role": "user", "content": [{
+                "type": "tool_result",
+                "tool_use_id": call_id,
+                "content": "first authoritative selector payload",
+                "is_error": false
+            }]},
+        });
+        write_claude_transcript(&transcript, &[call, first_result]);
+        let registry = claude_test_registry(&projects);
+
+        refresh_source_backed_generation(&index, &registry, claude_test_writer_options()).unwrap();
+        let initial = indexed_claude_records(&index, &native_session_id);
+        assert_eq!(initial.len(), 2, "{name}");
+        assert!(
+            initial.iter().all(|record| {
+                record.content.discovery_exclusion
+                    == Some(CoreDiscoveryExclusion::CtxRetrievalDerived)
+            }),
+            "{name}"
+        );
+        assert_eq!(initial[1].repository_bindings.len(), 1, "{name}");
+        let initial_invocation_id = initial
+            .iter()
+            .find(|record| {
+                record
+                    .content
+                    .normalized_body
+                    .as_deref()
+                    .is_some_and(|body| body.contains("ctx search selector-alias"))
+            })
+            .unwrap()
+            .event_id;
+        let initial_result_id = initial
+            .iter()
+            .find(|record| {
+                record.content.normalized_body.as_deref()
+                    == Some("first authoritative selector payload")
+            })
+            .unwrap()
+            .event_id;
+
+        let ambiguous = format!(
+            r#"{{"type":"user","uuid":"selector-alias-{name}-second","sessionId":"{native_session_id}","message":{{"role":"user","content":[{{"type":"tool_result",{selector},"content":"ambiguous selector alias payload","is_error":false}}]}}}}"#
+        );
+        let mut file = OpenOptions::new().append(true).open(&transcript).unwrap();
+        file.write_all(ambiguous.as_bytes()).unwrap();
+        file.write_all(b"\n").unwrap();
+        file.sync_all().unwrap();
+
+        refresh_source_backed_generation(&index, &registry, claude_test_writer_options()).unwrap();
+        let corrected = indexed_claude_records(&index, &native_session_id);
+        assert_eq!(
+            corrected.len(),
+            2 + usize::from(appended_is_retained),
+            "{name}"
+        );
+        let corrected_invocation = corrected
+            .iter()
+            .find(|record| {
+                record
+                    .content
+                    .normalized_body
+                    .as_deref()
+                    .is_some_and(|body| body.contains("ctx search selector-alias"))
+            })
+            .unwrap();
+        let corrected_result = corrected
+            .iter()
+            .find(|record| {
+                record.content.normalized_body.as_deref()
+                    == Some("first authoritative selector payload")
+            })
+            .unwrap();
+        let ambiguous_result = corrected.iter().find(|record| {
+            record.content.normalized_body.as_deref() == Some("ambiguous selector alias payload")
+        });
+        assert_eq!(
+            corrected_invocation.event_id, initial_invocation_id,
+            "{name}"
+        );
+        assert_eq!(corrected_result.event_id, initial_result_id, "{name}");
+        assert_eq!(
+            corrected_invocation.content.discovery_exclusion,
+            Some(CoreDiscoveryExclusion::CtxRetrievalDerived),
+            "{name}"
+        );
+        assert_eq!(corrected_result.content.discovery_exclusion, None, "{name}");
+        assert_no_linked_repository_evidence(corrected_result);
+        assert_eq!(ambiguous_result.is_some(), appended_is_retained, "{name}");
+        if let Some(ambiguous_result) = ambiguous_result {
+            assert_eq!(ambiguous_result.content.discovery_exclusion, None, "{name}");
+            assert_no_linked_repository_evidence(ambiguous_result);
+        }
+    }
 }
 
 #[test]

@@ -1,101 +1,38 @@
 use super::*;
+use crate::common::json::{exact_bounded_string_alias, ExactJsonStringAlias};
 
 const TERMINAL_AUTHORITY_POLICY_REVISION: &str = "openclaw-terminal-result-authority-v1";
-const TERMINAL_CALL_ID_DOMAIN: &[u8] = b"ctx/openclaw/terminal-call-id/v1\0";
-const TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN: &[u8] =
+pub(super) const TERMINAL_CALL_ID_DOMAIN: &[u8] = b"ctx/openclaw/terminal-call-id/v1\0";
+pub(super) const TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN: &[u8] =
     b"ctx/openclaw/terminal-ambiguity-fingerprint/v1\0";
 
-#[derive(Debug)]
-pub(super) struct OpenClawTerminalAuthority {
-    call_ids: HashMap<[u8; 32], u8>,
-    exhausted: bool,
-    complete: bool,
-}
+pub(super) type OpenClawTerminalAuthority = JsonlTerminalAuthority;
 
-impl OpenClawTerminalAuthority {
-    pub(super) fn for_scan() -> Self {
-        Self {
-            call_ids: HashMap::new(),
-            exhausted: false,
-            complete: true,
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn unscanned_for_test() -> Self {
-        Self {
-            call_ids: HashMap::new(),
-            exhausted: false,
-            complete: false,
-        }
-    }
-
-    fn observe(&mut self, call_id: &str) {
-        if self.exhausted || call_id.is_empty() {
-            return;
-        }
-        let digest = terminal_call_id_digest(call_id);
-        if !self.call_ids.contains_key(&digest) && self.call_ids.len() >= MAX_TERMINAL_CALL_IDS {
-            self.call_ids.clear();
-            self.exhausted = true;
-            return;
-        }
-        let count = self.call_ids.entry(digest).or_default();
-        *count = count.saturating_add(1).min(2);
-    }
-
-    fn observe_ambiguous_terminal(&mut self) {
-        self.call_ids.clear();
-        self.exhausted = true;
-    }
-
-    fn observe_record(&mut self, record: &[u8]) {
-        let exact_json_authority = crate::common::json::raw_object_keys_are_unique(record);
-        if !exact_json_authority {
-            self.observe_ambiguous_terminal();
-        }
-        let Ok(value) = serde_json::from_slice::<Value>(record) else {
-            return;
-        };
-        let result = native_tool_result(&value);
-        if let Some(call_id) = result.and_then(|result| result.call_id) {
-            self.observe(call_id);
-        }
-    }
-
-    pub(super) fn is_unique(&self, call_id: &str) -> bool {
-        if !self.complete {
-            return true;
-        }
-        !self.exhausted
-            && self
-                .call_ids
-                .get(&terminal_call_id_digest(call_id))
-                .is_some_and(|count| *count == 1)
-    }
-
-    pub(super) fn ambiguity_fingerprint(&self) -> [u8; 32] {
-        let mut ambiguous = self
-            .call_ids
-            .iter()
-            .filter_map(|(digest, count)| (*count > 1).then_some(*digest))
-            .collect::<Vec<_>>();
-        ambiguous.sort_unstable();
-        let mut hasher = Sha256::new();
-        hasher.update(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN);
-        hasher.update([u8::from(self.exhausted)]);
-        for digest in ambiguous {
-            hasher.update(digest);
-        }
-        hasher.finalize().into()
+fn observe_terminal(authority: &mut OpenClawTerminalAuthority, call_id: &str) {
+    if !authority.exhausted() && !call_id.is_empty() {
+        authority.observe(
+            TERMINAL_CALL_ID_DOMAIN,
+            call_id,
+            JsonlTerminalObservationRegion::WholeSource,
+            MAX_TERMINAL_CALL_IDS,
+        );
     }
 }
 
-fn terminal_call_id_digest(call_id: &str) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(TERMINAL_CALL_ID_DOMAIN);
-    hasher.update(call_id.as_bytes());
-    hasher.finalize().into()
+fn observe_terminal_record(authority: &mut OpenClawTerminalAuthority, record: &[u8]) {
+    if !crate::common::json::raw_object_keys_are_unique(record) {
+        authority.observe_ambiguous_terminal();
+    }
+    let Ok(value) = serde_json::from_slice::<Value>(record) else {
+        return;
+    };
+    if let Some(result) = native_tool_result(&value) {
+        if result.ambiguous_linkage {
+            authority.observe_ambiguous_terminal();
+        } else if let Some(call_id) = result.call_id {
+            observe_terminal(authority, call_id);
+        }
+    }
 }
 
 pub(super) fn terminal_authority_for_source(
@@ -111,10 +48,10 @@ pub(super) fn terminal_authority_for_source(
         source_path,
     );
     let mut reader = JsonlReader::open(identity, source_file, None, None)?;
-    let mut authority = OpenClawTerminalAuthority::for_scan();
+    let mut authority = OpenClawTerminalAuthority::available();
     while reader
         .visit_page(&mut |record| -> Result<()> {
-            authority.observe_record(record.bytes());
+            observe_terminal_record(&mut authority, record.bytes());
             Ok(())
         })?
         .is_some()
@@ -131,10 +68,14 @@ pub(super) fn terminal_authority_for_source(
 pub(super) fn terminal_authority_for_values<'a>(
     values: impl IntoIterator<Item = &'a Value>,
 ) -> OpenClawTerminalAuthority {
-    let mut authority = OpenClawTerminalAuthority::for_scan();
+    let mut authority = OpenClawTerminalAuthority::available();
     for value in values {
-        if let Some(call_id) = native_tool_result(value).and_then(|result| result.call_id) {
-            authority.observe(call_id);
+        if let Some(result) = native_tool_result(value) {
+            if result.ambiguous_linkage {
+                authority.observe_ambiguous_terminal();
+            } else if let Some(call_id) = result.call_id {
+                observe_terminal(&mut authority, call_id);
+            }
         }
     }
     authority
@@ -144,9 +85,9 @@ pub(super) fn terminal_authority_for_values<'a>(
 pub(super) fn terminal_authority_for_records<'a>(
     records: impl IntoIterator<Item = &'a [u8]>,
 ) -> OpenClawTerminalAuthority {
-    let mut authority = OpenClawTerminalAuthority::for_scan();
+    let mut authority = OpenClawTerminalAuthority::available();
     for record in records {
-        authority.observe_record(record);
+        observe_terminal_record(&mut authority, record);
     }
     authority
 }
@@ -165,6 +106,7 @@ pub(super) struct NativeToolCall<'a> {
 pub(super) struct NativeToolResult<'a> {
     pub(super) message: &'a Value,
     pub(super) call_id: Option<&'a str>,
+    pub(super) ambiguous_linkage: bool,
     pub(super) output: &'a Value,
     pub(super) structured_commit_oid: Option<&'a str>,
     pub(super) output_workdir: Option<&'a str>,
@@ -242,12 +184,22 @@ pub(super) fn native_tool_result(value: &Value) -> Option<NativeToolResult<'_>> 
             .or_else(|| details.get("commitOid"))
             .and_then(Value::as_str)
     });
+    let call_id = message
+        .as_object()
+        .map_or(ExactJsonStringAlias::Missing, |object| {
+            exact_bounded_string_alias(
+                object,
+                &["toolCallId", "tool_call_id"],
+                MAX_SELECTOR_CALL_ID_BYTES,
+            )
+        });
     Some(NativeToolResult {
         message,
-        call_id: message
-            .get("toolCallId")
-            .or_else(|| message.get("tool_call_id"))
-            .and_then(Value::as_str),
+        call_id: match call_id {
+            ExactJsonStringAlias::Exact(call_id) => Some(call_id),
+            ExactJsonStringAlias::Missing | ExactJsonStringAlias::Ambiguous => None,
+        },
+        ambiguous_linkage: matches!(call_id, ExactJsonStringAlias::Ambiguous),
         output,
         structured_commit_oid,
         output_workdir: details

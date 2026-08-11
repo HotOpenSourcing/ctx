@@ -1,11 +1,10 @@
 //! Thin OpenClaw legacy-session adapter for the shared borrowed JSONL family.
 use chrono::{DateTime, Utc};
 use ctx_history_core::{
-    derive_event_id, derive_session_id, AgentType, CaptureProvider, CoreRecord, EventIdentityInput,
-    EventType, NativeItemKey, NativeSessionKey, RepositoryAbstention, RepositoryAbstentionReason,
-    RepositoryEvidenceKind, RepositoryFileObservationKind, SessionIdentityInput,
-    SessionRelationshipKind, SourceAnchor, SourceKey, StableEntityId, TypedKey,
-    CORE_REPOSITORY_ASSOCIATION_POLICY_REVISION,
+    derive_event_id, derive_native_session_id, AgentType, CaptureProvider, CoreRecord,
+    EventIdentityInput, EventType, NativeItemKey, RepositoryAbstention, RepositoryAbstentionReason,
+    RepositoryEvidenceKind, RepositoryFileObservationKind, SessionRelationshipKind, SourceKey,
+    StableEntityId, TypedKey, CORE_REPOSITORY_ASSOCIATION_POLICY_REVISION,
 };
 use ctx_history_index::BaseEventIdentityLookup;
 use serde::{Deserialize, Serialize};
@@ -36,6 +35,7 @@ use crate::{
             JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyTerminalProof,
             JsonlFamilyWorkerContext, JsonlPendingExchangeLookup, JsonlPendingExchangeRemember,
             JsonlPendingExchangeState, JsonlReader, JsonlRecordRef, JsonlSourceIdentity,
+            JsonlTerminalAuthority, JsonlTerminalObservationRegion,
         },
     },
     provider_sources::{provider_source_for_path, ProviderSourceStatus},
@@ -60,11 +60,12 @@ const FALLBACK_EVENT_ID_DOMAIN: &[u8] = b"ctx-openclaw-fallback-event-id-v1\0";
 const LOGICAL_SESSION_KIND: &str = "openclaw-legacy-session";
 const LOGICAL_EVENT_KIND: &str = "openclaw-legacy-event";
 const SOURCE_SCHEMA_VARIANT: &str = "openclaw-legacy-jsonl-v2";
-const PARSER_REVISION: &str = "openclaw-source-backed-v11-exact-retrieval-json-authority";
+const PARSER_REVISION: &str = "openclaw-source-backed-v12-exact-result-alias-linkage";
 const MAX_PENDING_CALLS: usize = 4096;
 const MAX_RUNNING_PROCESSES: usize = 256;
 const MAX_TERMINAL_CALL_IDS: usize = 4096;
 const MAX_RESULT_METADATA_BYTES: usize = 64 * 1024;
+const MAX_SELECTOR_CALL_ID_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Copy, Default)]
 struct OpenClawJsonlAdapter;
@@ -187,7 +188,9 @@ impl JsonlFamilyAdapter for OpenClawJsonlAdapter {
                 native_session_id,
                 index: compound.index,
                 native_session_family: compound.native_session_family,
-                terminal_ambiguity_fingerprint: compound.terminal_authority.ambiguity_fingerprint(),
+                terminal_ambiguity_fingerprint: compound
+                    .terminal_authority
+                    .ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN),
             };
             leaves.push(JsonlFamilyLeaf::observe(
                 source,
@@ -238,7 +241,9 @@ impl JsonlFamilyAdapter for OpenClawJsonlAdapter {
         )?;
         if compound.index != binding.index
             || compound.native_session_family != binding.native_session_family
-            || compound.terminal_authority.ambiguity_fingerprint()
+            || compound
+                .terminal_authority
+                .ambiguity_fingerprint(TERMINAL_AMBIGUITY_FINGERPRINT_DOMAIN)
                 != binding.terminal_ambiguity_fingerprint
         {
             return Err(CaptureError::SourceChangedDuringCapture);
@@ -354,32 +359,24 @@ struct FallbackEventIdentity {
 type FallbackEventIdentityState = JsonlAppendOccurrenceState<[u8; 32]>;
 
 fn source_key(native_session_id: &str) -> Result<SourceKey> {
-    let anchor = SourceAnchor::provider_native(
-        SOURCE_ANCHOR_NAMESPACE,
-        TypedKey::utf8(native_session_id).map_err(contract)?,
-    )
-    .map_err(contract)?;
-    SourceKey::derive(
+    SourceKey::derive_provider_native(
         CaptureProvider::OpenClaw.as_str(),
         OPENCLAW_SOURCE_FORMAT,
         SOURCE_SCHEMA_VARIANT,
         1,
-        anchor,
+        SOURCE_ANCHOR_NAMESPACE,
+        TypedKey::utf8(native_session_id).map_err(contract)?,
     )
     .map_err(contract)
 }
 
 fn session_identity(source: &SourceKey, native_session_id: &str) -> Result<StableEntityId> {
-    let key = NativeSessionKey::native_id(
+    derive_native_session_id(
+        source,
+        LOGICAL_SESSION_KIND,
         NATIVE_SESSION_NAMESPACE,
         TypedKey::utf8(native_session_id).map_err(contract)?,
     )
-    .map_err(contract)?;
-    derive_session_id(SessionIdentityInput {
-        source,
-        logical_session_kind: LOGICAL_SESSION_KIND,
-        native_session_key: &key,
-    })
     .map_err(contract)
 }
 

@@ -105,15 +105,9 @@ pub(crate) mod common {
     pub(crate) mod identity;
     pub(crate) mod io;
     pub(crate) mod json {
-        use serde_json::{Map, Value};
-
         pub(crate) use ctx_history_jsonl::{
-            exact_json_value as exact_value, raw_object_keys_are_unique,
+            exact_bounded_string_alias, raw_object_keys_are_unique, ExactJsonStringAlias,
         };
-
-        pub(crate) fn default_metadata() -> Value {
-            Value::Object(Map::new())
-        }
     }
     pub(crate) mod time;
 }

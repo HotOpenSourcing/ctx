@@ -16,10 +16,9 @@ use super::record::{
     CodexStructuralOutput,
 };
 use crate::provider::codex::events::{
-    codex_command_preview, codex_command_text, codex_content_text, codex_local_preview,
-    codex_message_body, codex_provider_event, codex_result_content, codex_tool_arguments_preview,
-    codex_tool_arguments_text, codex_tool_arguments_value, codex_tool_name,
-    CodexInvocationOriginV0, CodexNativeEvent, CodexToolCallContext,
+    codex_command_preview, codex_command_text, codex_content_text, codex_result_content,
+    codex_tool_arguments_preview, codex_tool_arguments_text, codex_tool_arguments_value,
+    codex_tool_name, CodexInvocationOriginV0, CodexToolCallContext,
 };
 use crate::{
     provider::codex::repository::{
@@ -27,8 +26,7 @@ use crate::{
         CodexRepositoryToolEvidence,
     },
     repository_attribution::{UnscopedFileObservation, UnscopedRepositoryFileInvocationEvidence},
-    CaptureError, OutputOutcomeMetadata, Result as CaptureResult, CODEX_SESSION_SOURCE_FORMAT,
-    PROVIDER_MAX_PREVIEW_CHARS,
+    OutputOutcomeMetadata, Result as CaptureResult,
 };
 
 const OWNED_ALLOCATION_OVERHEAD_BYTES: usize = 16;
@@ -89,16 +87,10 @@ pub(crate) struct CodexSessionGitMetadata {
     pub(crate) repository_url: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct CodexEventRow {
-    pub(crate) provider_event: CodexNativeEvent,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CodexSourceBackedRowV0 {
+pub(crate) struct CodexCoreRecordDraft {
     pub(crate) raw_ordinal: u64,
     pub(crate) provider_event_identity: Option<CodexProviderEventIdentityV0>,
-    pub(crate) copied_from_native_session_id: Option<String>,
     pub(crate) repository_result_origin: CodexInvocationOriginV0,
     pub(crate) occurred_at: DateTime<Utc>,
     pub(crate) event_type: EventType,
@@ -115,99 +107,68 @@ pub(crate) struct CodexSourceBackedRowV0 {
     pub(crate) repository_files: Vec<UnscopedFileObservation>,
 }
 
-impl CodexSourceBackedRowV0 {
+impl CodexCoreRecordDraft {
     pub(crate) fn estimated_owned_bytes(&self) -> Option<usize> {
-        let path_slots = self
-            .touched_paths
-            .capacity()
-            .checked_mul(size_of::<String>())?;
-        let path_bytes = self
-            .touched_paths
-            .iter()
-            .try_fold(0_usize, |total, path| total.checked_add(path.capacity()))?;
-        let repository_bytes = self
-            .repository_tools
-            .iter()
-            .fold(0_usize, |total, evidence| {
-                total
-                    .saturating_add(encoded_json_len(&evidence.structured_content).unwrap_or(0))
-                    .saturating_add(evidence.command.as_ref().map_or(0, String::capacity))
-                    .saturating_add(
-                        evidence
-                            .declared_workdir
-                            .as_ref()
-                            .map_or(0, String::capacity),
-                    )
-                    .saturating_add(
-                        evidence
-                            .file_observations
-                            .iter()
-                            .map(|observation| observation.path.capacity())
-                            .sum::<usize>(),
-                    )
-                    .saturating_add(
-                        evidence
-                            .file_invocations
-                            .capacity()
-                            .saturating_mul(size_of::<UnscopedRepositoryFileInvocationEvidence>()),
-                    )
-                    .saturating_add(
-                        evidence
-                            .file_invocations
-                            .iter()
-                            .map(|invocation| {
-                                invocation.path.capacity()
-                                    + invocation.prior_path.as_ref().map_or(0, String::capacity)
-                                    + invocation.tool_name.as_ref().map_or(0, String::capacity)
-                            })
-                            .sum::<usize>(),
-                    )
-                    .saturating_add(evidence.abstentions.capacity().saturating_mul(size_of::<(
-                        ctx_history_core::RepositoryAbstentionReason,
-                        &'static str,
-                    )>(
-                    )))
-            });
+        let repository_bytes =
+            self.repository_tools
+                .iter()
+                .fold(0_usize, |total, evidence| {
+                    let strings = string_capacities(
+                        [
+                            evidence.command.as_ref(),
+                            evidence.declared_workdir.as_ref(),
+                        ]
+                        .into_iter()
+                        .chain(
+                            evidence
+                                .file_observations
+                                .iter()
+                                .map(|item| Some(&item.path)),
+                        )
+                        .chain(evidence.file_invocations.iter().flat_map(|item| {
+                            [
+                                Some(&item.path),
+                                item.prior_path.as_ref(),
+                                item.tool_name.as_ref(),
+                            ]
+                        })),
+                    );
+                    let slots = evidence
+                        .file_invocations
+                        .capacity()
+                        .saturating_mul(size_of::<UnscopedRepositoryFileInvocationEvidence>())
+                        .saturating_add(evidence.abstentions.capacity().saturating_mul(
+                            size_of::<(ctx_history_core::RepositoryAbstentionReason, &'static str)>(
+                            ),
+                        ));
+                    total
+                        .saturating_add(encoded_json_len(&evidence.structured_content).unwrap_or(0))
+                        .saturating_add(strings)
+                        .saturating_add(slots)
+                });
         let repository_result_bytes = self.repository_result.as_ref().map_or(0, |evidence| {
-            evidence.origin_call_id.as_ref().map_or(0, String::capacity)
-                + evidence.result_call_id.as_ref().map_or(0, String::capacity)
-                + evidence.command.as_ref().map_or(0, String::capacity)
-                + evidence
-                    .declared_workdir
-                    .as_ref()
-                    .map_or(0, String::capacity)
-                + evidence
-                    .outcome_operation_repository_path
-                    .as_ref()
-                    .map_or(0, String::capacity)
-                + evidence
-                    .outcome_output_repository_path
-                    .as_ref()
-                    .map_or(0, String::capacity)
-                + encoded_json_len(&evidence.structured_content).unwrap_or(0)
+            string_capacities(
+                [
+                    evidence.origin_call_id.as_ref(),
+                    evidence.result_call_id.as_ref(),
+                    evidence.command.as_ref(),
+                    evidence.declared_workdir.as_ref(),
+                    evidence.outcome_operation_repository_path.as_ref(),
+                    evidence.outcome_output_repository_path.as_ref(),
+                ]
+                .into_iter(),
+            ) + encoded_json_len(&evidence.structured_content).unwrap_or(0)
                 + encoded_json_len(&evidence.provider_native_repository_aliases).unwrap_or(0)
                 + encoded_json_len(&evidence.outcomes).unwrap_or(0)
         });
-        let repository_file_bytes =
+        let repository_file_bytes = checked_string_capacities(
             self.repository_files
                 .iter()
-                .try_fold(0_usize, |total, observation| {
-                    total
-                        .checked_add(observation.path.capacity())?
-                        .checked_add(observation.prior_path.as_ref().map_or(0, String::capacity))
-                })?;
-        let mcp_tool_call_bytes = match self.mcp_tool_call.as_ref() {
-            Some(attribution) => attribution
-                .server
-                .capacity()
-                .checked_add(attribution.tool.capacity())?,
-            None => 0,
-        };
-        let mcp_exchange_bytes = self
-            .mcp_exchange
-            .as_ref()
-            .and_then(encoded_json_len)
-            .unwrap_or_default();
+                .flat_map(|item| [Some(&item.path), item.prior_path.as_ref()]),
+        )?;
+        let mcp_tool_call_bytes = self.mcp_tool_call.as_ref().map_or(Some(0), |item| {
+            item.server.capacity().checked_add(item.tool.capacity())
+        })?;
         let allocation_count = 3_usize
             .checked_add(self.touched_paths.len())?
             .checked_add(self.repository_files.len())?
@@ -217,40 +178,54 @@ impl CodexSourceBackedRowV0 {
             )))?
             .checked_add(usize::from(self.mcp_tool_call.is_some()).checked_mul(2)?)?
             .checked_add(usize::from(self.mcp_exchange.is_some()))?;
-        size_of::<Self>()
-            .checked_add(
-                self.provider_event_identity
-                    .as_ref()
-                    .map_or(0, |identity| identity.value.capacity()),
-            )?
-            .checked_add(
-                self.copied_from_native_session_id
-                    .as_ref()
-                    .map_or(0, String::capacity),
-            )?
-            .checked_add(match &self.repository_result_origin {
+        [
+            size_of::<Self>(),
+            self.provider_event_identity
+                .as_ref()
+                .map_or(0, |identity| identity.value.capacity()),
+            match &self.repository_result_origin {
                 CodexInvocationOriginV0::CopiedFromAncestor {
                     ancestor_native_session_id,
                 } => ancestor_native_session_id.capacity(),
                 CodexInvocationOriginV0::UniqueToSession | CodexInvocationOriginV0::Unproven => 0,
-            })?
-            .checked_add(self.lexical_body.capacity())?
-            .checked_add(
-                self.structured_content
-                    .as_ref()
-                    .and_then(encoded_json_len)
-                    .unwrap_or(0),
-            )?
-            .checked_add(mcp_tool_call_bytes)?
-            .checked_add(mcp_exchange_bytes)?
-            .checked_add(self.session_cwd.as_ref().map_or(0, String::capacity))?
-            .checked_add(path_slots)?
-            .checked_add(path_bytes)?
-            .checked_add(repository_bytes)?
-            .checked_add(repository_result_bytes)?
-            .checked_add(repository_file_bytes)?
-            .checked_add(allocation_count.checked_mul(OWNED_ALLOCATION_OVERHEAD_BYTES)?)
+            },
+            self.lexical_body.capacity(),
+            self.structured_content
+                .as_ref()
+                .and_then(encoded_json_len)
+                .unwrap_or(0),
+            mcp_tool_call_bytes,
+            self.mcp_exchange
+                .as_ref()
+                .and_then(encoded_json_len)
+                .unwrap_or(0),
+            self.session_cwd.as_ref().map_or(0, String::capacity),
+            self.touched_paths
+                .capacity()
+                .checked_mul(size_of::<String>())?,
+            checked_string_capacities(self.touched_paths.iter().map(Some))?,
+            repository_bytes,
+            repository_result_bytes,
+            repository_file_bytes,
+            allocation_count.checked_mul(OWNED_ALLOCATION_OVERHEAD_BYTES)?,
+        ]
+        .into_iter()
+        .try_fold(0_usize, usize::checked_add)
     }
+}
+
+fn string_capacities<'a>(values: impl Iterator<Item = Option<&'a String>>) -> usize {
+    values.flatten().fold(0_usize, |total, value| {
+        total.saturating_add(value.capacity())
+    })
+}
+
+fn checked_string_capacities<'a>(
+    values: impl Iterator<Item = Option<&'a String>>,
+) -> Option<usize> {
+    values
+        .flatten()
+        .try_fold(0_usize, |total, value| total.checked_add(value.capacity()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -275,61 +250,13 @@ pub(crate) struct CodexProviderEventIdentityV0 {
 }
 
 pub(super) struct CodexSourceBackedBuiltRowV0 {
-    pub(super) row: CodexSourceBackedRowV0,
+    pub(super) row: CodexCoreRecordDraft,
     pub(super) tool_context: Option<(String, CodexToolCallContext)>,
 }
 
 pub(super) enum CodexRetainedNonMaterialized {
     ValidUnmaterializable,
     Malformed,
-}
-
-pub(super) type CodexRetainedProjection =
-    std::result::Result<CodexEventRow, CodexRetainedNonMaterialized>;
-
-pub(super) fn build_event_row(
-    raw_ordinal: u64,
-    kind: CodexRetainedKind,
-    retained: &CodexDecodedRecord,
-) -> CaptureResult<CodexRetainedProjection> {
-    let built = match kind {
-        CodexRetainedKind::Message => build_message(&retained.payload),
-        CodexRetainedKind::Reasoning => build_reasoning(&retained.payload),
-        CodexRetainedKind::Compacted => build_compacted(&retained.payload),
-        CodexRetainedKind::ToolCall => build_tool_call(&retained.payload),
-    };
-    let built = match built {
-        BuiltBodyProjection::Materialized(built) => built,
-        BuiltBodyProjection::ValidUnmaterializable => {
-            return Ok(Err(CodexRetainedNonMaterialized::ValidUnmaterializable));
-        }
-        BuiltBodyProjection::Malformed => {
-            return Ok(Err(CodexRetainedNonMaterialized::Malformed));
-        }
-    };
-    let line_number = raw_ordinal
-        .checked_add(1)
-        .and_then(|line| usize::try_from(line).ok())
-        .ok_or(CaptureError::SystemInvariant(
-            "Codex NativePath raw ordinal exceeds platform limits",
-        ))?;
-    let provider_event = codex_provider_event(
-        line_number,
-        retained.occurred_at,
-        built.event_type,
-        built.role,
-        built.body.clone(),
-        json!({
-            "source": "codex_session",
-            "source_format": CODEX_SESSION_SOURCE_FORMAT,
-            "line": line_number,
-            "item_type": built.item_type,
-            "tool": built.body.get("tool").and_then(Value::as_str),
-            "source_record_ordinal": raw_ordinal,
-            "source_record_subrecord_index": 0,
-        }),
-    );
-    Ok(Ok(CodexEventRow { provider_event }))
 }
 
 pub(super) fn build_source_backed_event_row(
@@ -373,10 +300,9 @@ pub(super) fn build_source_backed_event_row(
         }
     }
     Ok(Ok(CodexSourceBackedBuiltRowV0 {
-        row: CodexSourceBackedRowV0 {
+        row: CodexCoreRecordDraft {
             raw_ordinal,
             provider_event_identity: provider_event_identity(&retained.payload),
-            copied_from_native_session_id: None,
             repository_result_origin: CodexInvocationOriginV0::Unproven,
             occurred_at: retained.occurred_at,
             event_type: semantic.event_type,
@@ -411,7 +337,7 @@ pub(super) fn build_source_backed_sparse_output_row(
     mcp_exchange: Option<McpExchangeContent>,
     repository_result: Option<CodexRepositoryResultEvidence>,
     session_cwd: Option<String>,
-) -> CaptureResult<Option<CodexSourceBackedRowV0>> {
+) -> CaptureResult<Option<CodexCoreRecordDraft>> {
     let tool_name = context
         .map(|context| context.tool_name.as_str())
         .unwrap_or_else(|| result_kind.item_type());
@@ -428,16 +354,9 @@ pub(super) fn build_source_backed_sparse_output_row(
     let repository_result_origin = context
         .map(|context| context.invocation_origin.clone())
         .unwrap_or(CodexInvocationOriginV0::Unproven);
-    let copied_from_native_session_id = match &repository_result_origin {
-        CodexInvocationOriginV0::CopiedFromAncestor {
-            ancestor_native_session_id,
-        } => Some(ancestor_native_session_id.clone()),
-        CodexInvocationOriginV0::UniqueToSession | CodexInvocationOriginV0::Unproven => None,
-    };
-    Ok(Some(CodexSourceBackedRowV0 {
+    Ok(Some(CodexCoreRecordDraft {
         raw_ordinal,
         provider_event_identity,
-        copied_from_native_session_id,
         repository_result_origin,
         occurred_at,
         event_type,
@@ -773,100 +692,6 @@ pub(super) fn source_backed_lexical_body(
     )
 }
 
-pub(super) fn tool_context_from_row(row: &CodexEventRow) -> Option<(String, CodexToolCallContext)> {
-    (row.provider_event.event_type == EventType::ToolCall).then_some(())?;
-    let call_id = row
-        .provider_event
-        .payload
-        .get("call_id")
-        .and_then(Value::as_str)?
-        .to_owned();
-    let tool_name = row
-        .provider_event
-        .payload
-        .get("tool")
-        .and_then(Value::as_str)
-        .unwrap_or("tool")
-        .to_owned();
-    let command_preview = row
-        .provider_event
-        .payload
-        .get("command")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let arguments_preview = row
-        .provider_event
-        .payload
-        .get("arguments_preview")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    Some((
-        call_id,
-        CodexToolCallContext {
-            tool_name,
-            command_preview,
-            arguments_preview,
-            ..CodexToolCallContext::default()
-        },
-    ))
-}
-
-struct BuiltBody {
-    event_type: EventType,
-    role: Option<EventRole>,
-    body: Value,
-    item_type: String,
-}
-
-enum BuiltBodyProjection {
-    Materialized(BuiltBody),
-    ValidUnmaterializable,
-    Malformed,
-}
-
-fn build_message(payload: &Value) -> BuiltBodyProjection {
-    let Some((role, body)) = codex_message_body(payload) else {
-        return BuiltBodyProjection::Malformed;
-    };
-    BuiltBodyProjection::Materialized(BuiltBody {
-        event_type: EventType::Message,
-        role: Some(role),
-        body,
-        item_type: "message".to_owned(),
-    })
-}
-
-fn build_reasoning(payload: &Value) -> BuiltBodyProjection {
-    let summary = payload
-        .get("summary")
-        .and_then(codex_content_text)
-        .or_else(|| {
-            payload
-                .get("summary_text")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        });
-    let Some(summary) = summary else {
-        return if is_encrypted_reasoning_without_plaintext(payload) {
-            BuiltBodyProjection::ValidUnmaterializable
-        } else {
-            BuiltBodyProjection::Malformed
-        };
-    };
-    BuiltBodyProjection::Materialized(BuiltBody {
-        event_type: EventType::Summary,
-        role: Some(EventRole::Assistant),
-        body: json!({
-            "item_type": "reasoning",
-            "summary": summary,
-            "text": summary,
-            "truncated": false,
-            "encrypted_content_present": payload.get("encrypted_content").is_some(),
-        }),
-        item_type: "reasoning".to_owned(),
-    })
-}
-
 fn is_encrypted_reasoning_without_plaintext(payload: &Value) -> bool {
     let Some(object) = payload.as_object() else {
         return false;
@@ -888,26 +713,6 @@ fn is_encrypted_reasoning_without_plaintext(payload: &Value) -> bool {
     empty_summary && empty_summary_text
 }
 
-fn build_compacted(payload: &Value) -> BuiltBodyProjection {
-    let Some(text) = codex_content_text(payload) else {
-        return if is_source_only_compacted(payload) {
-            BuiltBodyProjection::ValidUnmaterializable
-        } else {
-            BuiltBodyProjection::Malformed
-        };
-    };
-    BuiltBodyProjection::Materialized(BuiltBody {
-        event_type: EventType::Summary,
-        role: Some(EventRole::System),
-        body: json!({
-            "entry_type": "compacted",
-            "text": text,
-            "truncated": false,
-        }),
-        item_type: "compacted".to_owned(),
-    })
-}
-
 fn is_source_only_compacted(payload: &Value) -> bool {
     let Some(object) = payload.as_object() else {
         return false;
@@ -916,49 +721,4 @@ fn is_source_only_compacted(payload: &Value) -> bool {
         && object
             .get("replacement_history")
             .is_some_and(Value::is_array)
-}
-
-fn build_tool_call(payload: &Value) -> BuiltBodyProjection {
-    let Some(item_type) = payload.get("type").and_then(Value::as_str) else {
-        return BuiltBodyProjection::Malformed;
-    };
-    let tool_name = codex_tool_name(payload, item_type);
-    let call_id = payload.get("call_id").and_then(Value::as_str);
-    let arguments = payload
-        .get("arguments")
-        .or_else(|| payload.get("input"))
-        .or_else(|| payload.get("action"))
-        .or_else(|| payload.get("execution"));
-    let command_preview = codex_command_preview(&tool_name, arguments);
-    let (arguments_preview, arguments_truncated, raw_arguments_retained) = arguments
-        .map(codex_tool_arguments_preview)
-        .unwrap_or_else(|| (String::new(), false, false));
-    let text = command_preview
-        .as_deref()
-        .map(|command| format!("{tool_name}: {command}"))
-        .unwrap_or_else(|| {
-            if arguments_preview.is_empty() {
-                format!("{tool_name} tool call")
-            } else {
-                format!("{tool_name}: {arguments_preview}")
-            }
-        });
-    let (text, text_truncated) = codex_local_preview(&text, PROVIDER_MAX_PREVIEW_CHARS);
-    BuiltBodyProjection::Materialized(BuiltBody {
-        event_type: EventType::ToolCall,
-        role: Some(EventRole::Assistant),
-        body: json!({
-            "item_type": item_type,
-            "tool": tool_name,
-            "name": tool_name,
-            "call_id": call_id,
-            "command": command_preview,
-            "arguments_preview": arguments_preview,
-            "arguments_truncated": arguments_truncated,
-            "raw_arguments_retained": raw_arguments_retained,
-            "text": text,
-            "truncated": text_truncated || arguments_truncated,
-        }),
-        item_type: item_type.to_owned(),
-    })
 }

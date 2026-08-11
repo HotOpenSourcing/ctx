@@ -2,7 +2,6 @@ use std::{
     collections::BTreeSet,
     fs,
     hint::black_box,
-    io::Write,
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -15,9 +14,87 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
-use super::rows::CodexSourceBackedRowV0;
 use super::*;
-use crate::{common::io::open_provider_source_file, CODEX_SESSION_SOURCE_FORMAT};
+use crate::{
+    common::io::open_provider_source_file,
+    provider::source_backed::family::jsonl::{
+        JsonlFamilyExecutionIo, JsonlReader, JsonlRecordFraming, JsonlSemanticPreflightMode,
+        JsonlSourceIdentity,
+    },
+    CODEX_SESSION_SOURCE_FORMAT,
+};
+
+trait TestCoreRecord {
+    fn raw_ordinal(&self) -> u64;
+    fn semantic_event_type(&self) -> EventType;
+    fn lexical_body(&self) -> &str;
+    fn structured_content(&self) -> &Option<Value>;
+    fn discovery_exclusion(&self) -> Option<CoreDiscoveryExclusion>;
+    fn session_cwd(&self) -> &Option<String>;
+    fn mcp_exchange(&self) -> &Option<ctx_history_core::McpExchangeContent>;
+    fn provider_event_identity(&self) -> Option<super::rows::CodexProviderEventIdentityV0>;
+    fn estimated_owned_bytes(&self) -> Option<usize>;
+}
+
+impl TestCoreRecord for ctx_history_core::CoreRecord {
+    fn raw_ordinal(&self) -> u64 {
+        self.event_sequence
+    }
+
+    fn semantic_event_type(&self) -> EventType {
+        match self.event_type.as_str() {
+            "message" => EventType::Message,
+            "summary" => EventType::Summary,
+            "tool_call" => EventType::ToolCall,
+            "tool_output" => EventType::ToolOutput,
+            "command_output" => EventType::CommandOutput,
+            event_type => panic!("unexpected Codex test event type {event_type:?}"),
+        }
+    }
+
+    fn lexical_body(&self) -> &str {
+        self.content.normalized_body.as_deref().unwrap()
+    }
+
+    fn structured_content(&self) -> &Option<Value> {
+        &self.content.structured_content
+    }
+
+    fn discovery_exclusion(&self) -> Option<CoreDiscoveryExclusion> {
+        self.content.discovery_exclusion
+    }
+
+    fn session_cwd(&self) -> &Option<String> {
+        &self.cwd
+    }
+
+    fn mcp_exchange(&self) -> &Option<ctx_history_core::McpExchangeContent> {
+        &self.content.mcp_exchange
+    }
+
+    fn provider_event_identity(&self) -> Option<super::rows::CodexProviderEventIdentityV0> {
+        let ctx_history_core::TypedKey::Composite(parts) = self.native_event_id.as_ref()? else {
+            return None;
+        };
+        let [ctx_history_core::TypedKey::Utf8(version), ctx_history_core::TypedKey::Utf8(kind), ctx_history_core::TypedKey::Utf8(value), ..] =
+            parts.as_slice()
+        else {
+            return None;
+        };
+        (version == "provider-native-v1").then(|| super::rows::CodexProviderEventIdentityV0 {
+            kind: match kind.as_str() {
+                "id" => super::rows::CodexProviderEventIdentityKindV0::Id,
+                "call_id" => super::rows::CodexProviderEventIdentityKindV0::CallId,
+                kind => panic!("unexpected Codex test provider identity kind {kind:?}"),
+            },
+            value: value.clone(),
+        })
+    }
+
+    fn estimated_owned_bytes(&self) -> Option<usize> {
+        self.encode_stored().ok().map(|bytes| bytes.len())
+    }
+}
 
 fn jsonl(value: Value) -> String {
     let mut line = serde_json::to_string(&value).unwrap();
@@ -80,27 +157,6 @@ fn successful_tool_output(call_id: &str, output: &str) -> String {
         call_id,
         &format!("Script completed\nProcess exited with code 0\n{output}"),
     )
-}
-
-fn failed_tool_output(call_id: &str, output: &str) -> String {
-    tool_output(
-        call_id,
-        &format!("Process exited with code 7\nWall time: 0.25 seconds\n{output}"),
-    )
-}
-
-fn timed_out_tool_output(call_id: &str, output: &str) -> String {
-    jsonl(json!({
-        "timestamp": "2026-01-01T00:00:03Z",
-        "type": "response_item",
-        "payload": {
-            "type": "function_call_output",
-            "call_id": call_id,
-            "timed_out": true,
-            "duration_ms": 9_000,
-            "output": format!("command timed out\n{output}")
-        }
-    }))
 }
 
 fn reasoning(text: &str) -> String {
@@ -168,53 +224,87 @@ pub(super) fn write_source(contents: &str) -> (TempDir, std::path::PathBuf) {
 
 #[derive(Default)]
 struct CollectingSink {
-    rows: Vec<CodexSourceBackedRowV0>,
+    rows: Vec<ctx_history_core::CoreRecord>,
     pages: Vec<(usize, usize)>,
     physical_records: Vec<u64>,
-    frontiers: Vec<(CodexNativeFrontier, CodexNativeFrontier)>,
     owner_ids: BTreeSet<String>,
 }
 
-fn scan_collect(
-    source: CodexCatalogSource,
-    proof: Option<&CodexAppendProof>,
-) -> (CodexSourceScan, CollectingSink) {
-    let mut scanner = CodexNativeScanner::new_source_backed_v0(source, proof).unwrap();
+struct TestSemanticScan {
+    counters: CodexScanCounters,
+    complete_prefix_end: u64,
+    next_raw_ordinal: u64,
+    incomplete_tail: Option<()>,
+}
+
+fn scan_collect(source: CodexCatalogSource) -> (TestSemanticScan, CollectingSink) {
+    let opened = super::reader::reopen_codex_source_capability(&source).unwrap();
+    let identity = JsonlSourceIdentity::new(
+        "codex",
+        "codex-semantic-test-v1",
+        "shared-jsonl-semantic-io-v1",
+        [7; 32],
+        source.source_path.clone(),
+    );
+    let reader = JsonlReader::open_semantic_with_record_framing(
+        identity,
+        opened,
+        None,
+        JsonlSemanticPreflightMode::AdmittedEof(None),
+        None,
+        JsonlRecordFraming::terminal_nul_padded(crate::MAX_PROVIDER_JSONL_LINE_BYTES),
+        None,
+    )
+    .unwrap();
+    let mut input = JsonlFamilyExecutionIo::new(reader);
+    let initial = input.position().unwrap();
+    let mut attributor = crate::repository_attribution::RepositoryAttributor::default();
+    attributor.begin_source();
+    let mut scanner = CodexNativeScanner::new_semantic(source, None).unwrap();
+    assert!(!scanner.preflight_semantic(&mut input).unwrap());
+    assert!(input.settle_preflight(initial).unwrap());
     let mut collected = CollectingSink::default();
-    while let Some(page) = scanner.next_page().unwrap() {
-        let CodexNativeOwnedPage::Core(page) = page;
-        assert!(page.core_rows.is_empty());
-        let units = page.source_backed_rows.len();
+    while let Some(page) = scanner
+        .next_semantic_page(&mut input, &mut attributor)
+        .unwrap()
+    {
+        input.release_record_buffer().unwrap();
+        let units = page.records.len();
         assert!(units <= MAX_CODEX_PAGE_ROWS);
         assert!(
             page.serialized_bytes <= MAX_CODEX_PAGE_BYTES
                 || (units == 1
                     && page.serialized_bytes <= MAX_CODEX_SOURCE_BACKED_SINGLE_ROW_PAGE_BYTES)
         );
-        assert_eq!(
-            page.next_safe_frontier
-                .next_raw_ordinal
-                .saturating_sub(page.expected_frontier.next_raw_ordinal),
-            page.physical_records
-        );
-        if let Some(owner) = page.owner.as_ref() {
-            collected.owner_ids.insert(owner.native_session_id.clone());
+        if let Some(owner) = page
+            .records
+            .first()
+            .and_then(|record| record.provider_session_id.as_ref())
+        {
+            collected.owner_ids.insert(owner.clone());
         }
         collected.pages.push((units, page.serialized_bytes));
         collected.physical_records.push(page.physical_records);
-        collected
-            .frontiers
-            .push((page.expected_frontier, page.next_safe_frontier));
-        collected.rows.extend(page.source_backed_rows);
+        collected.rows.extend(page.records);
     }
-    let scan = scanner.finish().unwrap();
-    (scan, collected)
+    let complete_prefix_end = input.complete_prefix_end().unwrap();
+    let scan = scanner.finish_semantic().unwrap();
+    let incomplete_tail = (scan.counters.incomplete_records != 0).then_some(());
+    (
+        TestSemanticScan {
+            next_raw_ordinal: scan.counters.complete_records,
+            complete_prefix_end,
+            incomplete_tail,
+            counters: scan.counters,
+        },
+        collected,
+    )
 }
 
 use super::record;
 
 mod bounds;
-mod lifecycle;
+mod core_bytes;
 mod paging;
 mod profiles;
 mod structure;
@@ -258,24 +348,4 @@ fn quickbench_fixture_hash(fixture_root: &Path, paths: &[PathBuf]) -> (u64, Stri
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     (byte_size, sha256)
-}
-
-fn assert_checkpoint_replay_rejected(
-    path: &Path,
-    native_session_id: &str,
-    checkpoint: CodexNativeCheckpoint,
-) {
-    let identity = CodexSourceIdentity::new(
-        "canonical-tampered",
-        path.parent().unwrap().display().to_string(),
-        path.to_path_buf(),
-    )
-    .unwrap();
-    let proof = CodexAppendProof::new(identity, CodexCheckpointGeneration::new(88), checkpoint);
-    let error = CodexNativeScanner::new_source_backed_v0(
-        discover_one(path, native_session_id),
-        Some(&proof),
-    )
-    .unwrap_err();
-    assert!(format!("{error}").contains("invalid Codex append proof"));
 }

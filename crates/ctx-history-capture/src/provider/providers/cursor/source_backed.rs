@@ -1,28 +1,29 @@
 //! Thin Cursor adapter for the shared certified-append JSONL family.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fs,
     io::{self, BufReader},
     path::Path,
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use chrono::{DateTime, Utc};
 use ctx_history_core::{
-    derive_event_id, derive_session_id, AgentType, CaptureProvider, CertifiedSource,
-    CoreDiscoveryExclusion, CoreRecord, EventIdentityInput, EventType, NativeItemKey,
-    NativeSessionKey, RepositoryAbstention, RepositoryAbstentionReason, RepositoryEvidenceKind,
-    RepositoryFileObservationKind, SessionIdentityInput, SourceAnchor, SourceKey, StableEntityId,
-    TypedKey,
+    derive_event_id, derive_native_session_id, AgentType, CaptureProvider, CoreDiscoveryExclusion,
+    CoreRecord, EventIdentityInput, EventType, NativeItemKey, RepositoryAbstention,
+    RepositoryAbstentionReason, RepositoryEvidenceKind, RepositoryFileObservationKind, SourceKey,
+    StableEntityId, TypedKey,
 };
 use ctx_history_index::BaseEventIdentityLookup;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 #[cfg(test)]
-use std::cell::Cell;
-#[cfg(test)]
-use std::sync::LazyLock;
+use std::{
+    cell::Cell,
+    collections::HashMap,
+    sync::{LazyLock, Mutex},
+};
 
 #[cfg(test)]
 use super::parser::MAX_CURSOR_INPUT_PATHS;
@@ -34,18 +35,18 @@ use super::{
     projection::{CursorEventBody, CursorNativeEvent},
 };
 use crate::{
-    common::io::{open_provider_source_file, OpenedProviderSourceFile},
+    common::io::OpenedProviderSourceFile,
     provider::ctx_retrieval::{
         classify_direct_cli_command, classify_linked_result, classify_mcp_invocation,
         discovery_exclusion_for, ContributionClass, ResultAtom, ResultTerminalStatus,
     },
     provider::source_backed::family::jsonl::{
-        observe_opened_file, read_bounded_record_unhashed, remember_pending_exchange,
-        JsonlFamilyAdapter, JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf,
-        JsonlFamilyProjectionMode, JsonlFamilyProjector, JsonlFamilyTerminalProof,
-        JsonlFamilyWorkerContext, JsonlOrderedAppendOccurrenceState, JsonlPendingExchangeRemember,
-        JsonlPendingExchangeState, JsonlReader, JsonlRecordFraming, JsonlRecordRef,
-        JsonlSourceIdentity, JsonlTerminalAuthority, JsonlTerminalObservationRegion,
+        read_bounded_record_unhashed, remember_pending_exchange, JsonlFamilyAdapter,
+        JsonlFamilyAppendMode, JsonlFamilyInventory, JsonlFamilyLeaf, JsonlFamilyProjectionMode,
+        JsonlFamilyProjector, JsonlFamilyTerminalProof, JsonlFamilyWorkerContext,
+        JsonlOrderedAppendOccurrenceState, JsonlPendingExchangeRemember, JsonlPendingExchangeState,
+        JsonlReader, JsonlRecordFraming, JsonlRecordRef, JsonlTerminalAuthority,
+        JsonlTerminalObservationRegion,
     },
     CaptureError, Result, CURSOR_AGENT_TRANSCRIPT_SOURCE_FORMAT, MAX_PROVIDER_JSONL_LINE_BYTES,
 };
@@ -56,7 +57,7 @@ const NATIVE_EVENT_LOGICAL_KIND: &str = "cursor.logical-event-v3";
 const LOGICAL_SESSION_KIND: &str = "cursor-session";
 const LOGICAL_EVENT_KIND: &str = "cursor-event";
 const SOURCE_SCHEMA_VARIANT: &str = "cursor-agent-transcript-jsonl-v1";
-const PARSER_REVISION: &str = "cursor-shared-jsonl-v10-source-unique-result-exclusion";
+const PARSER_REVISION: &str = "cursor-shared-jsonl-v11-ambiguous-result-linkage-authority";
 const EVENT_SEQUENCE_PARTS: u64 = u16::MAX as u64 + 1;
 const MAX_CURSOR_TOOL_CONTEXTS: usize = 256;
 const RESULT_TERMINAL_CALL_ID_DOMAIN: &[u8] = b"ctx/cursor/result-terminal-call-id/v1\0";
@@ -129,15 +130,7 @@ fn cursor_base_identity_probes() -> u64 {
 }
 
 #[derive(Debug, Default)]
-struct CursorJsonlAdapter {
-    preflight: Mutex<CursorPreflightState>,
-}
-
-#[derive(Debug, Default)]
-struct CursorPreflightState {
-    replacement_required: bool,
-    authorities: HashMap<[u8; 32], CursorResultTerminalAuthority>,
-}
+struct CursorJsonlAdapter;
 
 type CursorResultTerminalAuthority = JsonlTerminalAuthority;
 
@@ -163,43 +156,7 @@ impl JsonlFamilyAdapter for CursorJsonlAdapter {
     }
 
     fn append_mode(&self) -> JsonlFamilyAppendMode {
-        if self
-            .preflight
-            .lock()
-            .map(|state| state.replacement_required)
-            .unwrap_or(true)
-        {
-            JsonlFamilyAppendMode::Replacement
-        } else {
-            JsonlFamilyAppendMode::CertifiedSuffix
-        }
-    }
-
-    fn prepare_leaf_scans(
-        &self,
-        leaves: &[JsonlFamilyLeaf],
-        bases: &HashMap<[u8; 32], &CertifiedSource>,
-    ) -> Result<Option<usize>> {
-        let mut authorities = HashMap::new();
-        let mut replacement_required = false;
-        for leaf in leaves {
-            let digest = leaf.source().exact_descriptor_digest();
-            let certified_prefix_end = bases
-                .get(&digest)
-                .and_then(|base| base.frontier())
-                .map(|frontier| frontier.certified_prefix_bytes());
-            let opened = open_cursor_preflight_source(leaf)?;
-            let authority = preflight_cursor_result_terminals(leaf, opened, certified_prefix_end)?;
-            replacement_required |=
-                certified_prefix_end.is_some() && authority.append_requires_replacement();
-            authorities.insert(digest, authority);
-        }
-        let mut state = self.preflight.lock().map_err(|_| {
-            CaptureError::SystemInvariant("Cursor result-terminal preflight lock was poisoned")
-        })?;
-        state.replacement_required = replacement_required;
-        state.authorities = authorities;
-        Ok(None)
+        JsonlFamilyAppendMode::ProjectorPreflight(true)
     }
 
     fn discover(&self, root: &Path) -> Result<JsonlFamilyInventory> {
@@ -295,22 +252,6 @@ impl JsonlFamilyAdapter for CursorJsonlAdapter {
         )
     }
 
-    fn projector(
-        &self,
-        leaf: &JsonlFamilyLeaf,
-        source_file: Arc<OpenedProviderSourceFile>,
-        imported_at: DateTime<Utc>,
-    ) -> Result<Box<dyn JsonlFamilyProjector>> {
-        self.projector_with_provider_checkpoint(
-            leaf,
-            source_file,
-            imported_at,
-            None,
-            None,
-            JsonlFamilyProjectionMode::Cold,
-        )
-    }
-
     fn projector_with_provider_checkpoint(
         &self,
         leaf: &JsonlFamilyLeaf,
@@ -322,19 +263,6 @@ impl JsonlFamilyAdapter for CursorJsonlAdapter {
     ) -> Result<Box<dyn JsonlFamilyProjector>> {
         let binding = decode_binding(leaf)?;
         validate_binding(leaf, &binding, source_file.as_ref())?;
-        let source_digest = leaf.source().exact_descriptor_digest();
-        let result_terminal_authority = self
-            .preflight
-            .lock()
-            .map_err(|_| {
-                CaptureError::SystemInvariant("Cursor result-terminal preflight lock was poisoned")
-            })?
-            .authorities
-            .remove(&source_digest)
-            .map(Ok)
-            .unwrap_or_else(|| {
-                preflight_cursor_result_terminals(leaf, Arc::clone(&source_file), None)
-            })?;
         let session_id = session_id(leaf.source(), &binding.native_session_id)?;
         let restored = checkpoint
             .map(|checkpoint| decode_cursor_checkpoint(checkpoint, &binding.native_session_id))
@@ -349,7 +277,7 @@ impl JsonlFamilyAdapter for CursorJsonlAdapter {
             session_id,
             tool_contexts,
             linkage_capacity_exceeded,
-            result_terminal_authority,
+            result_terminal_authority: CursorResultTerminalAuthority::default(),
             event_identities: match (mode, base_event_lookup) {
                 (JsonlFamilyProjectionMode::CertifiedAppend, Some(base_lookup)) => {
                     CursorEventIdentityState::for_append(base_lookup)
@@ -358,68 +286,6 @@ impl JsonlFamilyAdapter for CursorJsonlAdapter {
             },
         }))
     }
-}
-
-fn open_cursor_preflight_source(leaf: &JsonlFamilyLeaf) -> Result<Arc<OpenedProviderSourceFile>> {
-    let opened = open_provider_source_file(leaf.source_path())?;
-    if observe_opened_file(leaf.source_path(), &opened)? != *leaf.observation() {
-        return Err(CaptureError::SourceChangedDuringCapture);
-    }
-    Ok(Arc::new(opened))
-}
-
-fn preflight_cursor_result_terminals(
-    leaf: &JsonlFamilyLeaf,
-    source_file: Arc<OpenedProviderSourceFile>,
-    certified_prefix_end: Option<u64>,
-) -> Result<CursorResultTerminalAuthority> {
-    let identity = JsonlSourceIdentity::new(
-        CaptureProvider::Cursor.as_str(),
-        PARSER_REVISION,
-        "cursor-result-terminal-preflight-v1",
-        leaf.source().exact_descriptor_digest(),
-        leaf.source_path(),
-    );
-    let mut reader = JsonlReader::open(identity, source_file, None, None)?;
-    let mut authority = CursorResultTerminalAuthority::available();
-    while reader
-        .visit_page(&mut |record: JsonlRecordRef<'_>| -> Result<()> {
-            let evidence = record.evidence();
-            let Some(events) = project_cursor_jsonl_record(
-                record.bytes(),
-                evidence.physical_ordinal(),
-                evidence.physical_ordinal(),
-                evidence.byte_start(),
-                evidence.byte_end_exclusive(),
-            )?
-            else {
-                return Ok(());
-            };
-            let in_certified_prefix = certified_prefix_end
-                .is_some_and(|prefix_end| evidence.byte_end_exclusive() <= prefix_end);
-            for event in events {
-                if let CursorEventBody::ToolOutput {
-                    call_id: Some(call_id),
-                    ..
-                } = event.body
-                {
-                    authority.observe(
-                        RESULT_TERMINAL_CALL_ID_DOMAIN,
-                        &call_id,
-                        if in_certified_prefix {
-                            JsonlTerminalObservationRegion::CertifiedPrefix
-                        } else {
-                            JsonlTerminalObservationRegion::AppendedSuffix
-                        },
-                        MAX_CURSOR_TOOL_CONTEXTS,
-                    );
-                }
-            }
-            Ok(())
-        })?
-        .is_some()
-    {}
-    Ok(authority)
 }
 
 struct CursorProjector {
@@ -468,6 +334,68 @@ struct CursorToolContext {
 type CursorToolContextState = JsonlPendingExchangeState<CursorToolContext>;
 
 impl JsonlFamilyProjector for CursorProjector {
+    fn preflight(
+        &mut self,
+        reader: &mut JsonlReader,
+        certified_prefix_end: Option<u64>,
+    ) -> Result<bool> {
+        let mut authority = CursorResultTerminalAuthority::available();
+        while reader
+            .visit_page(&mut |record: JsonlRecordRef<'_>| -> Result<()> {
+                let evidence = record.evidence();
+                let Some(events) = project_cursor_jsonl_record(
+                    record.bytes(),
+                    evidence.physical_ordinal(),
+                    evidence.physical_ordinal(),
+                    evidence.byte_start(),
+                    evidence.byte_end_exclusive(),
+                )?
+                else {
+                    return Ok(());
+                };
+                let in_certified_prefix =
+                    certified_prefix_end.is_some_and(|end| evidence.byte_end_exclusive() <= end);
+                for event in events {
+                    if let CursorEventBody::ToolOutput {
+                        call_id,
+                        ambiguous_linkage,
+                        ..
+                    } = event.body
+                    {
+                        if ambiguous_linkage {
+                            authority.observe_ambiguous_terminal();
+                            continue;
+                        }
+                        let Some(call_id) = call_id else {
+                            continue;
+                        };
+                        authority.observe(
+                            RESULT_TERMINAL_CALL_ID_DOMAIN,
+                            &call_id,
+                            if in_certified_prefix {
+                                JsonlTerminalObservationRegion::CertifiedPrefix
+                            } else {
+                                JsonlTerminalObservationRegion::AppendedSuffix
+                            },
+                            MAX_CURSOR_TOOL_CONTEXTS,
+                        );
+                    }
+                }
+                Ok(())
+            })?
+            .is_some()
+        {}
+        self.result_terminal_authority = authority;
+        Ok(certified_prefix_end.is_some()
+            && self.result_terminal_authority.append_requires_replacement())
+    }
+
+    fn retry_replacement(&mut self) {
+        self.tool_contexts.clear();
+        self.linkage_capacity_exceeded = false;
+        self.event_identities = CursorEventIdentityState::default();
+    }
+
     fn project(
         &mut self,
         record: JsonlRecordRef<'_>,
@@ -639,7 +567,7 @@ impl CursorProjector {
                     self.result_terminal_authority
                         .is_unique(RESULT_TERMINAL_CALL_ID_DOMAIN, call_id)
                 });
-                let context = if *ambiguous_linkage {
+                let context = if *ambiguous_linkage || !unique_terminal {
                     None
                 } else {
                     call_id
@@ -650,10 +578,8 @@ impl CursorProjector {
                             CursorToolContextState::Ambiguous => None,
                         })
                 };
-                discovery_contribution = cursor_result_contribution(
-                    *discovery_evidence,
-                    context.as_ref().filter(|_| unique_terminal),
-                );
+                discovery_contribution =
+                    cursor_result_contribution(*discovery_evidence, context.as_ref());
                 if let Some(context) = context {
                     apply_cursor_context(&mut input, &context);
                     append_cursor_input_path_abstentions(
@@ -1059,32 +985,24 @@ fn cursor_normalized_body(event: &CursorNativeEvent) -> Result<Option<String>> {
 }
 
 fn source_key(native_session_id: &str) -> Result<SourceKey> {
-    let anchor = SourceAnchor::provider_native(
-        SOURCE_ANCHOR_NAMESPACE,
-        TypedKey::utf8(native_session_id).map_err(contract)?,
-    )
-    .map_err(contract)?;
-    SourceKey::derive(
+    SourceKey::derive_provider_native(
         CaptureProvider::Cursor.as_str(),
         CURSOR_AGENT_TRANSCRIPT_SOURCE_FORMAT,
         SOURCE_SCHEMA_VARIANT,
         1,
-        anchor,
+        SOURCE_ANCHOR_NAMESPACE,
+        TypedKey::utf8(native_session_id).map_err(contract)?,
     )
     .map_err(contract)
 }
 
 fn session_id(source: &SourceKey, native_session_id: &str) -> Result<StableEntityId> {
-    let native_session_key = NativeSessionKey::native_id(
+    derive_native_session_id(
+        source,
+        LOGICAL_SESSION_KIND,
         NATIVE_SESSION_NAMESPACE,
         TypedKey::utf8(native_session_id).map_err(contract)?,
     )
-    .map_err(contract)?;
-    derive_session_id(SessionIdentityInput {
-        source,
-        logical_session_kind: LOGICAL_SESSION_KIND,
-        native_session_key: &native_session_key,
-    })
     .map_err(contract)
 }
 

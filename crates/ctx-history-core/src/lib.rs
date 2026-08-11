@@ -163,12 +163,12 @@ pub use paths::{
     config_path, default_data_root, device_path, history_dir, logs_dir, managed_data_root,
 };
 pub use projection::{
-    derive_event_id, derive_session_id, CertifiedSource, CertifiedSourceAppend,
-    CertifiedSourceDeletion, CertifiedSourceInventory, EventIdentityInput, NativeItemKey,
-    NativeSessionKey, PositionStability, ProjectionContractError, ScannedSourceCounts,
-    SessionIdentityInput, SourceAnchor, SourceFrontier, SourceInventoryObservation, SourceKey,
-    SourceObservation, StableEntityId, StableEntityKind, SubrecordSelector, TypedKey,
-    IDENTITY_VERSION,
+    derive_event_id, derive_native_session_id, derive_session_id, CertifiedSource,
+    CertifiedSourceAppend, CertifiedSourceDeletion, CertifiedSourceInventory, EventIdentityInput,
+    NativeItemKey, NativeSessionKey, PositionStability, ProjectionContractError,
+    ScannedSourceCounts, SessionIdentityInput, SourceAnchor, SourceFrontier,
+    SourceInventoryObservation, SourceKey, SourceObservation, StableEntityId, StableEntityKind,
+    SubrecordSelector, TypedKey, IDENTITY_VERSION,
 };
 pub use provider::{
     provider_support_matrix_schema_version, ProviderArtifactDescriptor, ProviderCursorCheckpoint,
