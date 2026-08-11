@@ -8,7 +8,9 @@ mod repository_candidate;
 use mcp::project_mcp_tool_call_attribution;
 pub(super) use mcp::{mcp_terminal_candidate_evidence, CodexMcpTerminalAuthority};
 use mcp_exchange::{project_mcp_exchange, selected_content_fits};
-pub(super) use repository_candidate::CodexRepositoryCandidateAuthority;
+pub(super) use repository_candidate::{
+    CodexRepositoryCandidateAuthority, CodexRepositoryOccurrenceCache,
+};
 
 impl CodexNativeScanner {
     pub(super) fn process_record(
@@ -317,17 +319,17 @@ impl CodexNativeScanner {
 
         // Repository-capable invocations use a separate bounded authority so
         // unrelated display terminals cannot erase exact source-local proof.
-        // Every positive outcome still requires exactly one qualifying call
-        // and one result for the origin, current result, and each continuation.
+        // Every admitted result requires exactly one qualifying call and one
+        // result for the origin, current result, and each continuation.
         let repository_result = call_id
             .zip(context.as_ref())
+            .filter(|(_, context)| {
+                crate::provider::codex::repository::repository_result_candidate(context)
+            })
             .and_then(|(call_id, context)| {
-                let candidate =
-                    crate::provider::codex::repository::repository_result_candidate(context);
-                if candidate
-                    && !self
-                        .repository_candidate_authority
-                        .proves_exact_outcome(context, call_id)
+                if !self
+                    .repository_candidate_authority
+                    .proves_exact_outcome(context, call_id)
                 {
                     return None;
                 }

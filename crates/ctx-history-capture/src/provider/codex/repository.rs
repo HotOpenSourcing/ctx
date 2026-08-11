@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use super::events::{codex_tool_name, CodexToolCallContext};
 use crate::{
     repository_attribution::{
-        bounded_outcome_evidence_relevant, bounded_pull_request_association_query,
+        bounded_outcome_evidence_can_be_positive, bounded_pull_request_association_query,
         lexical_absolute, UnscopedFileObservation, UnscopedRepositoryFileInvocationEvidence,
         MAX_COMMAND_BYTES, MAX_REPOSITORY_CANDIDATES,
     },
@@ -55,12 +55,12 @@ pub(crate) fn repository_result_evidence(
 
 pub(crate) fn repository_result_candidate(context: &CodexToolCallContext) -> bool {
     if context.command_too_large {
-        return true;
+        return false;
     }
     let Some(command) = context.exact_command.as_deref() else {
         return false;
     };
-    if bounded_outcome_evidence_relevant(command) {
+    if bounded_outcome_evidence_can_be_positive(command) {
         return true;
     }
     context

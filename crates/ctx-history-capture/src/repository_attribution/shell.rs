@@ -8,8 +8,9 @@ use std::path::{Component, Path, PathBuf};
 #[cfg(test)]
 use outcome_plan::bounded_outcome_operation;
 pub(crate) use outcome_plan::{
-    bounded_outcome_evidence_relevant, bounded_outcome_plan, BoundedCommitProducer,
-    BoundedOutcomeOperation, BoundedOutcomePlan, BoundedOutcomePlanDisposition,
+    bounded_outcome_evidence_can_be_positive, bounded_outcome_evidence_relevant,
+    bounded_outcome_plan, BoundedCommitProducer, BoundedOutcomeOperation, BoundedOutcomePlan,
+    BoundedOutcomePlanDisposition,
 };
 pub(crate) use pull_request::bounded_pull_request_association_query;
 
