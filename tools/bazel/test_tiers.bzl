@@ -205,6 +205,8 @@ CI_TESTS = [
     ":buildkite_pipeline_check",
     ":cargo_diagnostic_tests",
     ":check_force_rerun_tests",
+    "//tools/bazel:ci_entrypoint_contract",
+    "//tools/bazel:ci_entrypoint_contract_mutation_tests",
     ":cli_build_cfg_parity_check",
     ":cli_ux_capture_cleanup_tests",
     ":cli_ux_observer_tests",

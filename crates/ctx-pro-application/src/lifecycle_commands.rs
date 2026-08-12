@@ -256,11 +256,10 @@ impl<'a, H: ProApplicationHost + ?Sized> ProApplication<'a, H> {
             let smoke = self
                 .host
                 .smoke_setup_artifact(admission.data_root, &artifact)
-                .map_err(|error| {
+                .inspect_err(|error| {
                     facts.helper_connection = HelperConnectionFact::Failed {
-                        error_code: stable_error_code(&error).map(str::to_owned),
+                        error_code: stable_error_code(error).map(str::to_owned),
                     };
-                    error
                 })?;
             facts.helper_connection = HelperConnectionFact::Connected;
             validate_staged_helper(&smoke)?;

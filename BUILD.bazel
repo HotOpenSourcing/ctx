@@ -29,6 +29,8 @@ load(
     "RUST_FORMAT_TARGETS",
 )
 
+exports_files([".bazelrc", "scripts/check.sh"])
+
 filegroup(
     name = "cloud_removed_build_inputs",
     srcs = [
@@ -1595,18 +1597,18 @@ sh_test(
 )
 
 test_suite(
-    name = "ci",
+    name = "ci_tests",
     tests = CI_TESTS,
 )
 
 test_suite(
-    name = "nightly",
+    name = "nightly_tests",
     tests = [
-        ":ci",
+        ":ci_tests",
     ] + NIGHTLY_TESTS,
 )
 
 test_suite(
-    name = "release",
-    tests = [":nightly"],
+    name = "release_tests",
+    tests = [":nightly_tests"],
 )
