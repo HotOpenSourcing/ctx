@@ -50,7 +50,8 @@ use super::{
     restore_daemon_background_refresh_cadence, restore_daemon_consumer_retries,
     run_pending_core_pro_catch_up, run_pending_core_pro_catch_up_with, run_pending_core_refresh,
     run_pro_catch_up_with_retry, write_daemon_job_status, DaemonBackgroundRefreshCadence,
-    DaemonRetryBackoff, DaemonRuntime, SourceBackedProCatchUpRun, SourceBackedProCoreAuthority,
+    DaemonRetryBackoff, DaemonRuntime, DaemonSchedulerCycleContext, DaemonSchedulerPorts,
+    DaemonSemanticJobPorts, SourceBackedProCatchUpRun, SourceBackedProCoreAuthority,
     DAEMON_BACKGROUND_REFRESH_MAX_REST, DAEMON_BACKGROUND_REFRESH_MIN_REST,
 };
 
@@ -82,13 +83,19 @@ fn run_daemon_scheduler_cycle_with_activity(
         args,
         data_root,
         runtime,
-        deadline,
-        semantic_enabled,
-        query_activity,
-        source_refresh,
-        &crate::test_support::PRO,
-        &crate::test_support::ARTIFACT,
-        &crate::test_support::CONFIG,
+        DaemonSchedulerCycleContext {
+            deadline,
+            semantic_enabled,
+            query_activity,
+            source_refresh,
+        },
+        DaemonSchedulerPorts {
+            pro: &crate::test_support::PRO,
+            semantic: DaemonSemanticJobPorts {
+                artifact_fetcher: &crate::test_support::ARTIFACT,
+                config: &crate::test_support::CONFIG,
+            },
+        },
     )
 }
 
