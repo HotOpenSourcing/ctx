@@ -135,7 +135,7 @@ struct CursorJsonlAdapter;
 type CursorResultTerminalAuthority = JsonlTerminalAuthority;
 
 pub(crate) fn cursor_jsonl_adapter() -> Arc<dyn JsonlFamilyAdapter> {
-    Arc::new(CursorJsonlAdapter::default())
+    Arc::new(CursorJsonlAdapter)
 }
 
 impl JsonlFamilyAdapter for CursorJsonlAdapter {
