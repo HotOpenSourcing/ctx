@@ -718,6 +718,7 @@ py_binary(
 py_test(
     name = "release_advisory_input_tests",
     srcs = [
+        "scripts/update-release-advisory-db.py",
         "scripts/release/run-with-release-advisory-inputs.py",
         "scripts/tests/run-with-release-advisory-inputs-test.py",
     ],
