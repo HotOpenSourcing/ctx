@@ -41,7 +41,7 @@ pub(super) fn setup(
         referral_codename,
     )?;
     Ok(ProSetupPlan {
-        artifact: Some(SetupArtifactBundle::Release(setup.artifact)),
+        artifact: Some(SetupArtifactBundle::release(setup.artifact)),
         account_state: setup.account_state.to_owned(),
     })
 }

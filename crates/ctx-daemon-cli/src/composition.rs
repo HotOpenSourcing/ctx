@@ -172,7 +172,7 @@ pub(crate) fn host() -> &'static dyn DaemonCliHost {
     }
     #[cfg(test)]
     {
-        return &TEST_HOST;
+        &TEST_HOST
     }
     #[cfg(not(test))]
     panic!("ctx daemon CLI host must be installed before adapter use")

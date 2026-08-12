@@ -401,7 +401,7 @@ impl ProLifecycleService for CommercialLifecycleService {
                     &mut interaction,
                 )?;
                 Ok(ProSetupPlan {
-                    artifact: Some(SetupArtifactBundle::Release(outcome.artifact)),
+                    artifact: Some(SetupArtifactBundle::release(outcome.artifact)),
                     account_state: outcome.account_state,
                 })
             }
