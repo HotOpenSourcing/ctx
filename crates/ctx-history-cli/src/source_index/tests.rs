@@ -1624,7 +1624,6 @@ fn calls_and_outputs_make_hybrid_lexical_with_truthful_json_metadata() {
 
 #[test]
 fn semantic_only_rejects_lexical_only_scopes_before_search() {
-    let temp = tempdir().unwrap();
     let config = history_config(true, true);
 
     for content_scope in [SearchContentScope::Calls, SearchContentScope::Outputs] {
