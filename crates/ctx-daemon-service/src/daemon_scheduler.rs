@@ -24,6 +24,24 @@ pub(super) struct DaemonConsumerRetryDeferral {
     pub(super) retry_at: Option<Instant>,
 }
 
+pub(super) struct DaemonSchedulerCycleContext<'a> {
+    pub(super) deadline: Option<Instant>,
+    pub(super) semantic_enabled: bool,
+    pub(super) query_activity: Option<&'a DaemonQueryActivity>,
+    pub(super) source_refresh: Option<&'a CoreRefreshEngine>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct DaemonSemanticJobPorts<'a> {
+    pub(super) artifact_fetcher: &'a dyn ctx_semantic_model::ArtifactFetcher,
+    pub(super) config: &'a dyn crate::DaemonConfigPort,
+}
+
+pub(super) struct DaemonSchedulerPorts<'a, P: ?Sized> {
+    pub(super) pro: &'a P,
+    pub(super) semantic: DaemonSemanticJobPorts<'a>,
+}
+
 impl DaemonConsumerRetryDeferral {
     fn defer_for_foreground_query(&mut self, now: Instant) -> bool {
         let retry_at = self
@@ -55,14 +73,16 @@ pub(super) fn run_daemon_scheduler_cycle_with_activity<P: crate::ProCatchUpPort 
     args: &DaemonRunArgs,
     data_root: &Path,
     runtime: &mut DaemonRuntime,
-    deadline: Option<Instant>,
-    semantic_enabled: bool,
-    query_activity: Option<&DaemonQueryActivity>,
-    source_refresh: Option<&CoreRefreshEngine>,
-    pro: &P,
-    artifact_fetcher: &dyn ctx_semantic_model::ArtifactFetcher,
-    config: &dyn crate::DaemonConfigPort,
+    cycle: DaemonSchedulerCycleContext<'_>,
+    ports: DaemonSchedulerPorts<'_, P>,
 ) -> Result<DaemonIteration> {
+    let DaemonSchedulerCycleContext {
+        deadline,
+        semantic_enabled,
+        query_activity,
+        source_refresh,
+    } = cycle;
+    let DaemonSchedulerPorts { pro, semantic } = ports;
     let source_refresh_requested =
         source_refresh.is_some_and(CoreRefreshEngine::has_pending_request);
     if runtime.config.daemon.mode.runs_only_source_refresh() {
@@ -149,8 +169,7 @@ pub(super) fn run_daemon_scheduler_cycle_with_activity<P: crate::ProCatchUpPort 
         runtime,
         deadline,
         semantic_enabled,
-        artifact_fetcher,
-        config,
+        semantic,
     )? {
         return Ok(iteration);
     }
@@ -189,8 +208,7 @@ fn run_pending_core_semantic_catch_up(
     runtime: &mut DaemonRuntime,
     deadline: Option<Instant>,
     semantic_enabled: bool,
-    artifact_fetcher: &dyn ctx_semantic_model::ArtifactFetcher,
-    config: &dyn crate::DaemonConfigPort,
+    semantic_ports: DaemonSemanticJobPorts<'_>,
 ) -> Result<Option<DaemonIteration>> {
     if !semantic_enabled
         || !daemon_mode_runs_core_semantic_projection(runtime.config.daemon.mode)
@@ -232,8 +250,7 @@ fn run_pending_core_semantic_catch_up(
         deadline,
         true,
         Some(generation_id),
-        artifact_fetcher,
-        config,
+        semantic_ports,
     );
     let did_work = daemon_semantic_job_did_work(&job);
     write_daemon_job_status_unless_deadline_skip(&daemon_semantic_job_path(data_root), &job)?;
@@ -858,8 +875,7 @@ fn run_daemon_semantic_job_with_retry(
     deadline: Option<Instant>,
     semantic_enabled: bool,
     core_generation_id: Option<&str>,
-    artifact_fetcher: &dyn ctx_semantic_model::ArtifactFetcher,
-    config: &dyn crate::DaemonConfigPort,
+    ports: DaemonSemanticJobPorts<'_>,
 ) -> Value {
     if let Some(job) = runtime.semantic_blocked_job.as_ref() {
         return job.clone();
@@ -874,8 +890,8 @@ fn run_daemon_semantic_job_with_retry(
         runtime,
         deadline,
         semantic_enabled,
-        artifact_fetcher,
-        config,
+        ports.artifact_fetcher,
+        ports.config,
     )
     .unwrap_or_else(|error| daemon_semantic_failed_job(data_root, error));
     let job = bind_semantic_generation(job, core_generation_id);
