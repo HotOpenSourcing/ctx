@@ -521,7 +521,7 @@
           "REPO_MAPPING:rules_rust+,bazel_skylib bazel_skylib+",
           "REPO_MAPPING:rules_rust+,bazel_tools bazel_tools",
           "REPO_MAPPING:rules_rust+,rules_cc rules_cc+",
-          "FILE:@@//Cargo.lock 361bd7be14b51863dba5b4c99e5a7612b7ce9ef1fa7b05f9cac132fad76ecd4f",
+          "FILE:@@//Cargo.lock 007e77ad14c49f343f43089327b78fce27beb410b6c61255aac4048a5126ad55",
           "FILE:@@//Cargo.toml c842fe6b5108d1d5ec19296b970aeed9ca3d75d630fbe7aea5d6575b138eeafc",
           "FILE:@@//crates/ctx-agent-application/Cargo.toml 21a1179e2e056122716a46fd5c5039c94c03a8ee847cf00a1e04e8f3acec3eef",
           "FILE:@@//crates/ctx-agent-integrations/Cargo.toml 38aa1b0cedbf0bec64400a2d1b72511e067984b9b2f9f5bbfdf1cbbb90e9bc2b",
