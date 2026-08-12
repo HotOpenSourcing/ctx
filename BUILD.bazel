@@ -566,6 +566,7 @@ sh_test(
         "scripts/check-public-cli-build-info.py",
         "scripts/macos-release-signing-evidence.py",
         "scripts/macos-release-publisher-policy.sh",
+        "scripts/native-execution-proof.py",
         "scripts/release/release_bundle.py",
         "scripts/release-sbom.py",
         "scripts/release_sbom/__init__.py",
@@ -573,6 +574,16 @@ sh_test(
         "scripts/stage-github-release-assets.sh",
         "scripts/verify-macos-release-attestation.sh",
     ],
+    tags = ["release-gate"],
+)
+
+py_test(
+    name = "native_execution_proof_tests",
+    srcs = [
+        "scripts/native-execution-proof.py",
+        "scripts/tests/native-execution-proof-test.py",
+    ],
+    main = "scripts/tests/native-execution-proof-test.py",
     tags = ["release-gate"],
 )
 
@@ -596,6 +607,7 @@ sh_test(
     srcs = ["scripts/tests/smoke-daemon-semantic-release-test.sh"],
     data = [
         "contracts/release-targets-v1.json",
+        "contracts/release-factory-inputs-v1.json",
         "scripts/check-public-cli-build-info.py",
         "scripts/dev-install-from-metadata.sh",
         "scripts/public-cli-host-runtime-evidence.sh",
@@ -683,6 +695,7 @@ py_test(
         "Cargo.lock",
         "Cargo.toml",
         "contracts/release-targets-v1.json",
+        "contracts/release-factory-inputs-v1.json",
         "scripts/release/build-public-candidate-on-linux.sh",
         "scripts/release/resolve-cargo-zigbuild.py",
     ],
