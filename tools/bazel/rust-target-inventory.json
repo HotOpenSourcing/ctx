@@ -174,6 +174,15 @@
       "targets": {"lib:ctx_history_jsonl": "//crates/ctx-history-jsonl:lib"},
       "native_unit": "//crates/ctx-history-jsonl:unit_tests"
     },
+    "ctx-history-native-jsonl-parsers": {
+      "manifest": "crates/ctx-history-native-jsonl-parsers/Cargo.toml",
+      "targets": {"lib:ctx_history_native_jsonl_parsers": "//crates/ctx-history-native-jsonl-parsers:lib"},
+      "native_unit": "//crates/ctx-history-native-jsonl-parsers:unit_tests"
+    },
+    "ctx-grok-build-qualification": {
+      "manifest": "crates/ctx-grok-build-qualification/Cargo.toml",
+      "targets": {"test:grok_build": "//crates/ctx-grok-build-qualification:grok_build_tests"}
+    },
     "ctx-history-read-application": {
       "manifest": "crates/ctx-history-read-application/Cargo.toml",
       "targets": {"lib:ctx_history_read_application": "//crates/ctx-history-read-application:lib"},

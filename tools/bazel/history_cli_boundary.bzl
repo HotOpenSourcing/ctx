@@ -20,6 +20,8 @@ _CARGO_WORKSPACE_BUILD_DATA = [
     "//crates/ctx-history-index:BUILD.bazel",
     "//crates/ctx-history-ingest-application:BUILD.bazel",
     "//crates/ctx-history-jsonl:BUILD.bazel",
+    "//crates/ctx-history-native-jsonl-parsers:BUILD.bazel",
+    "//crates/ctx-grok-build-qualification:BUILD.bazel",
     "//crates/ctx-history-read-application:BUILD.bazel",
     "//crates/ctx-history-refresh-execution:BUILD.bazel",
     "//crates/ctx-history-refresh:BUILD.bazel",
