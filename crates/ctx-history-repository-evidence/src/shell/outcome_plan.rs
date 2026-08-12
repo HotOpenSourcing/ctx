@@ -76,22 +76,6 @@ pub fn bounded_outcome_evidence_can_be_positive(command: &str) -> bool {
     )
 }
 
-#[cfg(test)]
-mod repository_candidate_tests {
-    use super::*;
-
-    #[test]
-    fn only_a_planned_outcome_enters_the_positive_candidate_domain() {
-        assert!(bounded_outcome_evidence_can_be_positive(
-            "git commit -m exact && git rev-parse HEAD"
-        ));
-        assert!(!bounded_outcome_evidence_can_be_positive("echo $HOME"));
-        assert!(!bounded_outcome_evidence_can_be_positive(
-            "git rev-parse HEAD"
-        ));
-    }
-}
-
 pub fn bounded_outcome_plan(command: &str, base: &Path) -> BoundedOutcomePlanDisposition {
     if command.is_empty() || command.len() > MAX_COMMAND_BYTES {
         return BoundedOutcomePlanDisposition::Unrecognized;
@@ -602,4 +586,20 @@ fn bounded_gh_operation(
         index += 1;
     }
     Some((operation, expected_repository, expected_pr_number))
+}
+
+#[cfg(test)]
+mod repository_candidate_tests {
+    use super::*;
+
+    #[test]
+    fn only_a_planned_outcome_enters_the_positive_candidate_domain() {
+        assert!(bounded_outcome_evidence_can_be_positive(
+            "git commit -m exact && git rev-parse HEAD"
+        ));
+        assert!(!bounded_outcome_evidence_can_be_positive("echo $HOME"));
+        assert!(!bounded_outcome_evidence_can_be_positive(
+            "git rev-parse HEAD"
+        ));
+    }
 }
