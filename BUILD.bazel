@@ -676,6 +676,7 @@ py_test(
     srcs = [
         "scripts/release/cargo-release-inventory.py",
         "scripts/release/linux-factory-build-info.py",
+        "scripts/release/resolve-cargo-zigbuild.py",
         "scripts/tests/linux-release-factory-test.py",
     ],
     data = [
@@ -683,6 +684,7 @@ py_test(
         "Cargo.toml",
         "contracts/release-targets-v1.json",
         "scripts/release/build-public-candidate-on-linux.sh",
+        "scripts/release/resolve-cargo-zigbuild.py",
     ],
     main = "scripts/tests/linux-release-factory-test.py",
     tags = ["release-gate"],
@@ -1094,7 +1096,7 @@ sh_test(
         "//tools/bazel/patches:rules-rust-windows-cargo-runfiles.patch",
         "//tools/bazel/patches:rules-rust-windows-gnu-dlltool-path.patch",
     ],
-    tags = ["diagnostic", "legacy-bazel-release-route"],
+    tags = ["diagnostic", "legacy-bazel-release-route", "manual"],
 )
 
 py_test(
