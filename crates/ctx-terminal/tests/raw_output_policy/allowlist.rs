@@ -399,7 +399,7 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
     ),
     allow!(
         LIST_EVENTS,
-        "execute#1@5f7779205b7edc27",
+        "execute#1@9e7b8ecbd7f07cb4",
         DirectWrite,
         MachineProtocol,
         JSON_PROTOCOL,
