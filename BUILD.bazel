@@ -807,6 +807,7 @@ configured_license_materials(
         "//crates/ctx-history-source-discovery:Cargo.toml",
         "//crates/ctx-history-source-io:Cargo.toml",
         "//crates/ctx-semantic-index:Cargo.toml",
+        "//crates/ctx-terminal:Cargo.toml",
         "//crates/ctx-pro-access:Cargo.toml",
         "//crates/ctx-pro-application:Cargo.toml",
         "//crates/ctx-pro-host:Cargo.toml",
