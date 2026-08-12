@@ -565,10 +565,12 @@ sh_test(
         "contracts/release-targets-v1.json",
         "scripts/apple-developer-id-g2-ca.pem",
         "scripts/build-onnxruntime-sidecar.sh",
+        "scripts/verify-macos-runtime-builder-output.sh",
         "scripts/check-macos-release-signing.sh",
         "scripts/check-public-cli-build-info.py",
         "scripts/macos-release-signing-evidence.py",
         "scripts/macos-release-publisher-policy.sh",
+        "scripts/native-execution-proof.py",
         "scripts/release/release_bundle.py",
         "scripts/release-sbom.py",
         "scripts/release_sbom/__init__.py",
@@ -576,6 +578,16 @@ sh_test(
         "scripts/stage-github-release-assets.sh",
         "scripts/verify-macos-release-attestation.sh",
     ],
+    tags = ["release-gate"],
+)
+
+py_test(
+    name = "native_execution_proof_tests",
+    srcs = [
+        "scripts/native-execution-proof.py",
+        "scripts/tests/native-execution-proof-test.py",
+    ],
+    main = "scripts/tests/native-execution-proof-test.py",
     tags = ["release-gate"],
 )
 
@@ -599,11 +611,13 @@ sh_test(
     srcs = ["scripts/tests/smoke-daemon-semantic-release-test.sh"],
     data = [
         "contracts/release-targets-v1.json",
+        "contracts/release-factory-inputs-v1.json",
         "scripts/check-public-cli-build-info.py",
         "scripts/dev-install-from-metadata.sh",
         "scripts/public-cli-host-runtime-evidence.sh",
         "scripts/public-cli-runtime-authority.sh",
         "scripts/release/release_bundle.py",
+        "scripts/release/build-public-candidate-on-linux.sh",
         "scripts/smoke-daemon-semantic-release.sh",
         "scripts/write-public-cli-build-info.py",
     ],
@@ -671,6 +685,27 @@ py_test(
     deps = ["@ctx_tomli//:lib"],
     main = "scripts/tests/release-sbom-test.py",
     tags = ["release-gate"],
+)
+
+py_test(
+    name = "linux_release_factory_tests",
+    srcs = [
+        "scripts/release/cargo-release-inventory.py",
+        "scripts/release/linux-factory-build-info.py",
+        "scripts/release/resolve-cargo-zigbuild.py",
+        "scripts/tests/linux-release-factory-test.py",
+    ],
+    data = [
+        "Cargo.lock",
+        "Cargo.toml",
+        "contracts/release-targets-v1.json",
+        "contracts/release-factory-inputs-v1.json",
+        "scripts/release/build-public-candidate-on-linux.sh",
+        "scripts/release/resolve-cargo-zigbuild.py",
+    ],
+    main = "scripts/tests/linux-release-factory-test.py",
+    tags = ["release-gate"],
+    target_compatible_with = ["@platforms//os:linux"],
 )
 
 py_binary(
@@ -958,7 +993,7 @@ sh_test(
         "//tools/bazel:pinned_rust_objcopy",
         "//tools/bazel:pinned_rustc",
     ],
-    tags = ["release-gate"],
+    tags = ["diagnostic", "legacy-bazel-release-route"],
     target_compatible_with = ["@platforms//os:linux"],
 )
 
@@ -1080,7 +1115,7 @@ sh_test(
         "//tools/bazel/patches:rules-rust-windows-cargo-runfiles.patch",
         "//tools/bazel/patches:rules-rust-windows-gnu-dlltool-path.patch",
     ],
-    tags = ["release-gate"],
+    tags = ["diagnostic", "legacy-bazel-release-route", "manual"],
 )
 
 py_test(
@@ -1109,6 +1144,7 @@ py_test(
         "scripts/onnxruntime-sidecar/stage_official.sh",
         "scripts/onnxruntime-sidecar/validate_runtime.py",
         "scripts/onnxruntime-sidecar/validate_sidecar.sh",
+        "scripts/verify-macos-runtime-builder-output.sh",
     ],
     main = "scripts/tests/onnxruntime-sidecar-tools-test.py",
     tags = [
