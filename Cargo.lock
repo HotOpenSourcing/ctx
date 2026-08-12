@@ -947,6 +947,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctx-grok-build-qualification"
+version = "0.0.0"
+dependencies = [
+ "assert_cmd",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "ctx-history-capture"
 version = "0.26.0"
 dependencies = [
@@ -956,6 +965,7 @@ dependencies = [
  "ctx-history-core",
  "ctx-history-index",
  "ctx-history-jsonl",
+ "ctx-history-native-jsonl-parsers",
  "ctx-history-repository-evidence",
  "ctx-history-source-discovery",
  "ctx-history-source-io",
@@ -1136,6 +1146,16 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "ctx-history-native-jsonl-parsers"
+version = "0.26.0"
+dependencies = [
+ "chrono",
+ "ctx-history-capture-model",
+ "ctx-history-core",
+ "serde_json",
 ]
 
 [[package]]

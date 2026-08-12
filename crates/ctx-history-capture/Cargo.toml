@@ -34,6 +34,7 @@ ctx-history-capture-model = { path = "../ctx-history-capture-model" }
 ctx-history-core = { path = "../ctx-history-core" }
 ctx-history-index = { path = "../ctx-history-index" }
 ctx-history-jsonl = { path = "../ctx-history-jsonl" }
+ctx-history-native-jsonl-parsers = { path = "../ctx-history-native-jsonl-parsers" }
 ctx-history-repository-evidence = { path = "../ctx-history-repository-evidence" }
 ctx-history-source-io = { path = "../ctx-history-source-io" }
 ctx-history-source-discovery = { path = "../ctx-history-source-discovery" }

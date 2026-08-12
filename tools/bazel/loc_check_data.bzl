@@ -21,6 +21,8 @@ LOC_CHECK_SOURCE_DATA = [
     "//crates/ctx-history-index-generation:loc_check_inputs",
     "//crates/ctx-history-index-query:loc_check_inputs",
     "//crates/ctx-history-jsonl:loc_check_inputs",
+    "//crates/ctx-history-native-jsonl-parsers:loc_check_inputs",
+    "//crates/ctx-grok-build-qualification:loc_check_inputs",
     "//crates/ctx-history-read-application:loc_check_inputs",
     "//crates/ctx-history-refresh:loc_check_inputs",
     "//crates/ctx-history-refresh-execution:loc_check_inputs",

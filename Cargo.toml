@@ -21,6 +21,8 @@ members = [
     "crates/ctx-history-index-generation",
     "crates/ctx-history-index-query",
     "crates/ctx-history-jsonl",
+    "crates/ctx-history-native-jsonl-parsers",
+    "crates/ctx-grok-build-qualification",
     "crates/ctx-history-read-application",
     "crates/ctx-history-refresh",
     "crates/ctx-history-refresh-execution",
