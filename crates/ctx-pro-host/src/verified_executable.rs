@@ -200,10 +200,10 @@ impl VerifiedHelperExecutable {
         self.verify_execution_identity()?;
         #[cfg(unix)]
         {
-            return Ok(PreparedHelperExecution {
+            Ok(PreparedHelperExecution {
                 program: self.execution.descriptor_path(),
                 descriptor: self.execution.file.as_raw_fd(),
-            });
+            })
         }
         #[cfg(windows)]
         Ok(PreparedHelperExecution {
