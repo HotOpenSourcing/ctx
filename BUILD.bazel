@@ -715,6 +715,19 @@ py_binary(
     ],
 )
 
+py_test(
+    name = "release_advisory_input_tests",
+    srcs = [
+        "scripts/release/run-with-release-advisory-inputs.py",
+        "scripts/tests/run-with-release-advisory-inputs-test.py",
+    ],
+    main = "scripts/tests/run-with-release-advisory-inputs-test.py",
+    tags = [
+        "release-gate",
+        "security",
+    ],
+)
+
 sh_binary(
     name = "ctx_release_packager",
     srcs = ["scripts/package-public-cli-bazel-release.sh"],
@@ -1021,6 +1034,7 @@ sh_test(
         "scripts/release/linux-bazel-release-controller.Dockerfile",
         "scripts/release/release_bundle.py",
         "scripts/release/run-linux-bazel-release-controller.sh",
+        "scripts/release/run-with-release-advisory-inputs.py",
         "scripts/release/write-linux-bazel-controller-receipt.py",
         "scripts/tests/linux-bazel-controller-receipt-test.py",
     ],
