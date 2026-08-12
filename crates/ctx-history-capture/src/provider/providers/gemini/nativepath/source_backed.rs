@@ -129,7 +129,7 @@ struct GeminiJsonlAdapter;
 type GeminiResultTerminalAuthority = JsonlTerminalAuthority;
 
 fn gemini_jsonl_adapter() -> Arc<dyn JsonlFamilyAdapter> {
-    Arc::new(GeminiJsonlAdapter::default())
+    Arc::new(GeminiJsonlAdapter)
 }
 
 impl JsonlFamilyAdapter for GeminiJsonlAdapter {

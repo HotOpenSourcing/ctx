@@ -15,10 +15,7 @@ impl CodexNativeScanner {
     pub(super) fn process_record(
         &mut self,
         record: &[u8],
-        raw_ordinal: u64,
-        start_byte: u64,
-        end_byte: u64,
-        record_digest: [u8; 32],
+        physical: CodexPhysicalRecordContext,
     ) -> Result<CodexRecordProjection> {
         let record = trim_jsonl_terminator(record);
         if record.iter().all(u8::is_ascii_whitespace) {
@@ -31,7 +28,7 @@ impl CodexNativeScanner {
         // an allocation, or a payload hash.
         if let CodexRecordAdmission::NoProjection(projection) = prefilter_codex_record(record) {
             self.counters.prefiltered_records = self.counters.prefiltered_records.saturating_add(1);
-            self.project_without_parse(projection, start_byte, end_byte);
+            self.project_without_parse(projection);
             return Ok(CodexRecordProjection::default());
         }
 
@@ -99,19 +96,23 @@ impl CodexNativeScanner {
                     self.reject(false);
                     return Ok(CodexRecordProjection::default());
                 };
-                let mut built =
-                    match build_source_backed_event_row(raw_ordinal, kind, &retained, record)? {
-                        Ok(built) => built,
-                        Err(CodexRetainedNonMaterialized::ValidUnmaterializable) => {
-                            self.counters.ignored_records =
-                                self.counters.ignored_records.saturating_add(1);
-                            return Ok(CodexRecordProjection::default());
-                        }
-                        Err(CodexRetainedNonMaterialized::Malformed) => {
-                            self.reject(false);
-                            return Ok(CodexRecordProjection::default());
-                        }
-                    };
+                let mut built = match build_source_backed_event_row(
+                    physical.raw_ordinal,
+                    kind,
+                    &retained,
+                    record,
+                )? {
+                    Ok(built) => built,
+                    Err(CodexRetainedNonMaterialized::ValidUnmaterializable) => {
+                        self.counters.ignored_records =
+                            self.counters.ignored_records.saturating_add(1);
+                        return Ok(CodexRecordProjection::default());
+                    }
+                    Err(CodexRetainedNonMaterialized::Malformed) => {
+                        self.reject(false);
+                        return Ok(CodexRecordProjection::default());
+                    }
+                };
                 built.row.session_cwd.clone_from(&owner.cwd);
                 let touch_outcome = visit_provider_file_touch_drafts_with_limit(
                     &retained.payload,
@@ -154,7 +155,7 @@ impl CodexNativeScanner {
                     context.invocation_origin =
                         codex_invocation_origin(owner, self.local_turn_started);
                     let authority = CodexPendingToolAuthority::new(
-                        raw_ordinal,
+                        physical.raw_ordinal,
                         context.invocation_origin.clone(),
                     );
                     (call_id, context, authority)
@@ -168,27 +169,16 @@ impl CodexNativeScanner {
                     }),
                 })
             }
-            CodexRecordClass::ExcludedResult(result_kind) => self.process_output(
-                record,
-                &probe,
-                result_kind,
-                raw_ordinal,
-                start_byte,
-                end_byte,
-                record_digest,
-            ),
+            CodexRecordClass::ExcludedResult(result_kind) => {
+                self.process_output(record, &probe, result_kind, physical)
+            }
         }
     }
 
     /// Applies the counter-only projection the prefilter proved sufficient.
     ///
     /// The arm mirrors the ignored-record counter in the parsed path exactly.
-    fn project_without_parse(
-        &mut self,
-        projection: CodexSkipProjection,
-        _start_byte: u64,
-        _end_byte: u64,
-    ) {
+    fn project_without_parse(&mut self, projection: CodexSkipProjection) {
         match projection {
             CodexSkipProjection::Ignored => {
                 self.counters.ignored_records = self.counters.ignored_records.saturating_add(1);
@@ -201,16 +191,13 @@ impl CodexNativeScanner {
         record: &[u8],
         probe: &CodexRecordProbe<'_>,
         result_kind: CodexResultKind,
-        raw_ordinal: u64,
-        start_byte: u64,
-        end_byte: u64,
-        record_digest: [u8; 32],
+        physical: CodexPhysicalRecordContext,
     ) -> Result<CodexRecordProjection> {
         self.counters.native_result_records = self.counters.native_result_records.saturating_add(1);
         self.counters.native_result_record_bytes = self
             .counters
             .native_result_record_bytes
-            .saturating_add(end_byte.saturating_sub(start_byte));
+            .saturating_add(physical.end_byte.saturating_sub(physical.start_byte));
 
         self.counters.structural_output_probes =
             self.counters.structural_output_probes.saturating_add(1);
@@ -230,7 +217,6 @@ impl CodexNativeScanner {
                     context_mutation: call_id.map(|call_id| {
                         CodexContextMutation::Remove(linked_call_ids(call_id, context.as_ref()))
                     }),
-                    ..CodexRecordProjection::default()
                 });
             }
             CodexSourceBackedDocumentEligibility::ParserRevisionGap => {
@@ -266,7 +252,6 @@ impl CodexNativeScanner {
                     context_mutation: call_id.map(|call_id| {
                         CodexContextMutation::Remove(linked_call_ids(call_id, context.as_ref()))
                     }),
-                    ..CodexRecordProjection::default()
                 });
             }
         };
@@ -298,7 +283,6 @@ impl CodexNativeScanner {
                             context_mutation: Some(CodexContextMutation::Remove(vec![
                                 call_id.to_owned()
                             ])),
-                            ..CodexRecordProjection::default()
                         });
                     }
                     return Ok(CodexRecordProjection {
@@ -306,7 +290,6 @@ impl CodexNativeScanner {
                             cell_id,
                             origin_call_id: call_id.to_owned(),
                         }),
-                        ..CodexRecordProjection::default()
                     });
                 }
             }
@@ -332,7 +315,7 @@ impl CodexNativeScanner {
                     &decoded.payload,
                     context,
                     call_id,
-                    record_digest,
+                    physical.digest,
                     occurred_at.timestamp_millis(),
                     &structural.outcome,
                 )
@@ -388,7 +371,7 @@ impl CodexNativeScanner {
         }
         let mcp_exchange = projected_mcp_exchange.map(|exchange| exchange.into_content());
         let core_row = build_source_backed_sparse_output_row(
-            raw_ordinal,
+            physical.raw_ordinal,
             provider_event_identity(&decoded.payload),
             occurred_at,
             result_kind,

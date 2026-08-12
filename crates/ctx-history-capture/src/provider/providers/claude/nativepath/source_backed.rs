@@ -78,7 +78,7 @@ struct ClaudeJsonlAdapter;
 type ClaudeResultTerminalAuthority = JsonlTerminalAuthority;
 
 fn claude_source_backed_adapter() -> Arc<dyn JsonlFamilyAdapter> {
-    Arc::new(ClaudeJsonlAdapter::default())
+    Arc::new(ClaudeJsonlAdapter)
 }
 
 impl JsonlFamilyAdapter for ClaudeJsonlAdapter {

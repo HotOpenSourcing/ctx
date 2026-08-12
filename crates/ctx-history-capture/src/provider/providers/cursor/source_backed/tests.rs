@@ -1889,7 +1889,7 @@ mod fidelity_identity_tests {
         write_transcript(&first, &rows);
 
         reset_cursor_signature_records();
-        let initial = CursorJsonlAdapter::default().discover(&root).unwrap();
+        let initial = CursorJsonlAdapter.discover(&root).unwrap();
         assert_eq!(initial.leaves().len(), 1);
         let initial_source = initial.leaves()[0].source().clone();
         assert_eq!(initial.leaves()[0].source_path(), first);
@@ -1897,7 +1897,7 @@ mod fidelity_identity_tests {
 
         write_transcript(&second, &rows);
         reset_cursor_signature_records();
-        let overlap = CursorJsonlAdapter::default().discover(&root).unwrap();
+        let overlap = CursorJsonlAdapter.discover(&root).unwrap();
         assert_eq!(overlap.leaves().len(), 1);
         assert_eq!(overlap.leaves()[0].source_path(), first);
         let overlap_binding = decode_binding(&overlap.leaves()[0]).unwrap();
@@ -1906,7 +1906,7 @@ mod fidelity_identity_tests {
 
         fs::remove_file(&first).unwrap();
         reset_cursor_signature_records();
-        let moved = CursorJsonlAdapter::default().discover(&root).unwrap();
+        let moved = CursorJsonlAdapter.discover(&root).unwrap();
         assert_eq!(moved.leaves().len(), 1);
         assert_eq!(moved.leaves()[0].source_path(), second);
         assert_eq!(cursor_signature_records(), 0);
@@ -1933,7 +1933,7 @@ mod fidelity_identity_tests {
             &[message("user", "2026-07-31T12:00:00Z", "conflict")],
         );
 
-        let error = CursorJsonlAdapter::default().discover(&root).unwrap_err();
+        let error = CursorJsonlAdapter.discover(&root).unwrap_err();
         assert!(error.to_string().contains("conflicting transcript copies"));
     }
 }

@@ -42,12 +42,8 @@ fn observe_result_terminal_call_id<'a>(
     let Ok(envelope) = serde_json::from_slice::<Value>(record) else {
         return None;
     };
-    let Some(record_type) = envelope.get("type").and_then(Value::as_str) else {
-        return None;
-    };
-    let Some(payload) = envelope.get("payload") else {
-        return None;
-    };
+    let record_type = envelope.get("type").and_then(Value::as_str)?;
+    let payload = envelope.get("payload")?;
     let item_type = payload.get("type").and_then(Value::as_str);
     if !matches!(
         codex_record_class(record_type, item_type),
@@ -200,10 +196,7 @@ fn replay_semantic_prefix_record(
     repository_candidate_authority: &CodexRepositoryCandidateAuthority,
     repository_occurrences: &CodexRepositoryOccurrenceCache,
     bytes: &[u8],
-    raw_ordinal: u64,
-    start_byte: u64,
-    end_byte: u64,
-    record_digest: [u8; 32],
+    physical: CodexPhysicalRecordContext,
 ) -> Result<()> {
     if !matches!(
         class,
@@ -228,8 +221,7 @@ fn replay_semantic_prefix_record(
     }
     let counters = scanner.counters;
     let replay = (|| {
-        let mut projection =
-            scanner.process_record(bytes, raw_ordinal, start_byte, end_byte, record_digest)?;
+        let mut projection = scanner.process_record(bytes, physical)?;
         if let Some(mutation) = projection.context_mutation.take() {
             scanner.apply_replayed_context_mutation(mutation)?;
         }
@@ -320,10 +312,12 @@ fn preflight_semantic_authority(
                 &repository_candidate_authority,
                 &repository_occurrences,
                 record_bytes,
-                record.physical_ordinal(),
-                record.byte_start(),
-                record.byte_end_exclusive(),
-                record.sha256(),
+                CodexPhysicalRecordContext {
+                    raw_ordinal: record.physical_ordinal(),
+                    start_byte: record.byte_start(),
+                    end_byte: record.byte_end_exclusive(),
+                    digest: record.sha256(),
+                },
             )?;
         }
     }
@@ -484,10 +478,12 @@ impl CodexNativeScanner {
             } else {
                 self.process_record(
                     input.record_bytes(record)?,
-                    record.physical_ordinal(),
-                    record.byte_start(),
-                    record.byte_end_exclusive(),
-                    record.sha256(),
+                    CodexPhysicalRecordContext {
+                        raw_ordinal: record.physical_ordinal(),
+                        start_byte: record.byte_start(),
+                        end_byte: record.byte_end_exclusive(),
+                        digest: record.sha256(),
+                    },
                 )?
             };
 
