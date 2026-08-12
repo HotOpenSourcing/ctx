@@ -137,8 +137,8 @@ class ReleaseSbomTest(unittest.TestCase):
                         {
                             "id": "linux-x64",
                             "public_rust_target": "x86_64-unknown-linux-gnu",
-                            "public_construction_authority": "bazel-release-route-v1",
-                            "public_construction_label": "//:ctx_release_linux_x64",
+                            "public_construction_authority": "linux-cross-cargo-zigbuild-v1",
+                            "public_construction_label": "scripts/release/build-public-candidate-on-linux.sh",
                         }
                     ],
                 },
@@ -707,8 +707,8 @@ repository = "https://example.invalid/{name}"
                         {
                             "id": "windows-x64",
                             "public_rust_target": "x86_64-pc-windows-gnu",
-                            "public_construction_authority": "bazel-release-route-v1",
-                            "public_construction_label": "//:ctx_release_windows_x64",
+                            "public_construction_authority": "linux-cross-cargo-zigbuild-v1",
+                            "public_construction_label": "scripts/release/build-public-candidate-on-linux.sh",
                         }
                     ],
                 },
@@ -987,8 +987,8 @@ repository = "https://example.invalid/{name}"
         self.assertEqual(
             candidate["construction"],
             {
-                "authority": "bazel-release-route-v1",
-                "label": "//:ctx_release_linux_x64",
+                "authority": "linux-cross-cargo-zigbuild-v1",
+                "label": "scripts/release/build-public-candidate-on-linux.sh",
             },
         )
         self.assertEqual(

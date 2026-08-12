@@ -12,16 +12,6 @@ load(
 )
 load("//tools/bazel:history_cli_boundary.bzl", "history_cli_boundary")
 load("//tools/bazel:loc_check_data.bzl", "LOC_CHECK_SOURCE_DATA")
-load(
-    "//tools/bazel:release_routes.bzl",
-    "public_cli_release_advisory_gates",
-    "public_cli_release_route",
-)
-load(
-    "//tools/bazel:release_inventory.bzl",
-    "configured_dependency_inventory",
-    "configured_license_materials",
-)
 load("//tools/bazel:release_surface_tests.bzl", "release_surface_tests")
 load(
     "//tools/bazel:test_tiers.bzl",
@@ -645,7 +635,6 @@ py_test(
     data = [
         ":release_advisory_policy",
         ":release_contracts",
-        "//tools/bazel:release_inventory.bzl",
     ],
     tags = ["release-gate"],
 )
@@ -769,178 +758,6 @@ py_test(
     ],
 )
 
-sh_binary(
-    name = "ctx_release_packager",
-    srcs = ["scripts/package-public-cli-bazel-release.sh"],
-    data = [
-        "Cargo.lock",
-        "MODULE.bazel",
-        "MODULE.bazel.lock",
-        "contracts/public-control-surface-v1.json",
-        "contracts/release-candidate-manifest-v1.schema.json",
-        "contracts/release-targets-v1.json",
-        "scripts/apple-developer-id-g2-ca.pem",
-        "scripts/check-macos-release-signing.sh",
-        "scripts/check-macos-signing-trusted-ref.sh",
-        "scripts/check-public-cli-artifact.sh",
-        "scripts/check-public-cli-build-info.py",
-        "scripts/check-release-binary-compat.sh",
-        "scripts/check-release-target-matrix.py",
-        "scripts/install-public-cli-candidate.py",
-        "scripts/macos-release-signing-evidence.py",
-        "scripts/macos-release-publisher-policy.sh",
-        "scripts/public-cli-host-runtime-evidence.sh",
-        "scripts/public-cli-release-targets.py",
-        "scripts/public-cli-runtime-authority.sh",
-        "scripts/release/linux-bazel-release.Dockerfile",
-        "scripts/release/macos_llvm_authority.py",
-        "scripts/release/detached-debug-symbols.py",
-        "scripts/release/public-cli-bazel-build-info.py",
-        "scripts/release-sbom.py",
-        "scripts/release_sbom/__init__.py",
-        "scripts/release_sbom/dependency_materials.py",
-        "scripts/run-macos-release-signing.sh",
-        "scripts/run-native-candidate-smoke.ps1",
-        "scripts/run-native-candidate-smoke.sh",
-        "scripts/sign-notarize-macos-release-artifact.sh",
-        "scripts/verify-macos-release-attestation.sh",
-        "scripts/verify-macos-signed-cli.sh",
-        "scripts/write-public-cli-build-info.py",
-        "tests/fixtures/custom-history-jsonl/basic.jsonl",
-        "security/release-advisory-exceptions-v1.json",
-        "security/release-advisory-policy-v1.json",
-        "sdks/typescript/package-lock.json",
-        "//crates/ctx-cli:Cargo.toml",
-        "//crates/ctx-daemon-cli:Cargo.toml",
-        "//crates/ctx-daemon-application:Cargo.toml",
-        "//crates/ctx-daemon-runtime:Cargo.toml",
-        "//crates/ctx-daemon-service:Cargo.toml",
-        "//crates/ctx-pro-host:Cargo.toml",
-        "//crates/ctx-pro-lifecycle:Cargo.toml",
-    ] + CARGO_WORKSPACE_PACKAGE_DATA,
-    tags = [
-        "manual",
-        "release-gate",
-        "release-tool",
-    ],
-)
-
-configured_dependency_inventory(
-    name = "ctx_release_dependency_inventory",
-    target = "//crates/ctx-cli:ctx",
-)
-
-configured_license_materials(
-    name = "ctx_release_license_materials",
-    target = "//crates/ctx-cli:ctx",
-    workspace_materials = [
-        "Cargo.toml",
-        "LICENSE",
-        "//crates/ctx-agent-application:Cargo.toml",
-        "//crates/ctx-agent-integrations:Cargo.toml",
-        "//crates/ctx-cli:Cargo.toml",
-        "//crates/ctx-client-observability:Cargo.toml",
-        "//crates/ctx-daemon-cli:Cargo.toml",
-        "//crates/ctx-daemon-application:Cargo.toml",
-        "//crates/ctx-daemon-runtime:Cargo.toml",
-        "//crates/ctx-daemon-service:Cargo.toml",
-        "//crates/ctx-history-capture:Cargo.toml",
-        "//crates/ctx-history-capture-model:Cargo.toml",
-        "//crates/ctx-history-cli:Cargo.toml",
-        "//crates/ctx-history-core:Cargo.toml",
-        "//crates/ctx-history-ingest-application:Cargo.toml",
-        "//crates/ctx-history-index-format:Cargo.toml",
-        "//crates/ctx-history-index:Cargo.toml",
-        "//crates/ctx-history-index-generation:Cargo.toml",
-        "//crates/ctx-history-index-query:Cargo.toml",
-        "//crates/ctx-history-jsonl:Cargo.toml",
-        "//crates/ctx-history-native-jsonl-parsers:Cargo.toml",
-        "//crates/ctx-grok-build-qualification:Cargo.toml",
-        "//crates/ctx-history-read-application:Cargo.toml",
-        "//crates/ctx-history-refresh:Cargo.toml",
-        "//crates/ctx-history-refresh-execution:Cargo.toml",
-        "//crates/ctx-history-repository-evidence:Cargo.toml",
-        "//crates/ctx-history-source-discovery:Cargo.toml",
-        "//crates/ctx-history-source-io:Cargo.toml",
-        "//crates/ctx-semantic-index:Cargo.toml",
-        "//crates/ctx-terminal:Cargo.toml",
-        "//crates/ctx-pro-access:Cargo.toml",
-        "//crates/ctx-pro-application:Cargo.toml",
-        "//crates/ctx-pro-host:Cargo.toml",
-        "//crates/ctx-pro-lifecycle:Cargo.toml",
-        "//crates/ctx-pro-host-protocol:Cargo.toml",
-        "//crates/ctx-protocol:Cargo.toml",
-        "//crates/ctx-semantic-model:Cargo.toml",
-        "//crates/ctx-upgrade-engine:Cargo.toml",
-        "//crates/ctx-sdk:Cargo.toml",
-    ],
-)
-
-public_cli_release_advisory_gates(
-    name_prefix = "ctx_release_advisory",
-    inventory = ":ctx_release_dependency_inventory",
-)
-
-public_cli_release_route(
-    name = "ctx_release_linux_x64",
-    advisory_gate = ":dependency_advisory_gate",
-    artifact = "//crates/ctx-cli:ctx",
-    license_materials = ":ctx_release_license_materials",
-    packager = ":ctx_release_packager",
-    rustc = "//tools/bazel:pinned_rustc",
-    rust_objcopy = "//tools/bazel:pinned_rust_objcopy",
-    sbom_inventory = ":ctx_release_dependency_inventory",
-    target_id = "linux-x64",
-)
-
-public_cli_release_route(
-    name = "ctx_release_linux_arm64",
-    advisory_gate = ":dependency_advisory_gate",
-    artifact = "//crates/ctx-cli:ctx",
-    license_materials = ":ctx_release_license_materials",
-    packager = ":ctx_release_packager",
-    rustc = "//tools/bazel:pinned_rustc",
-    rust_objcopy = "//tools/bazel:pinned_rust_objcopy",
-    sbom_inventory = ":ctx_release_dependency_inventory",
-    target_id = "linux-arm64",
-)
-
-public_cli_release_route(
-    name = "ctx_release_macos_arm64",
-    advisory_gate = ":dependency_advisory_gate",
-    artifact = "//crates/ctx-cli:ctx",
-    license_materials = ":ctx_release_license_materials",
-    packager = ":ctx_release_packager",
-    rustc = "//tools/bazel:pinned_rustc",
-    rust_objcopy = "//tools/bazel:pinned_rust_objcopy",
-    sbom_inventory = ":ctx_release_dependency_inventory",
-    target_id = "macos-arm64",
-)
-
-public_cli_release_route(
-    name = "ctx_release_macos_x64",
-    advisory_gate = ":dependency_advisory_gate",
-    artifact = "//crates/ctx-cli:ctx",
-    license_materials = ":ctx_release_license_materials",
-    packager = ":ctx_release_packager",
-    rustc = "//tools/bazel:pinned_rustc",
-    rust_objcopy = "//tools/bazel:pinned_rust_objcopy",
-    sbom_inventory = ":ctx_release_dependency_inventory",
-    target_id = "macos-x64",
-)
-
-public_cli_release_route(
-    name = "ctx_release_windows_x64",
-    advisory_gate = ":dependency_advisory_gate",
-    artifact = "//crates/ctx-cli:ctx",
-    license_materials = ":ctx_release_license_materials",
-    packager = ":ctx_release_packager",
-    rustc = "//tools/bazel:pinned_rustc",
-    rust_objcopy = "//tools/bazel:pinned_rust_objcopy",
-    sbom_inventory = ":ctx_release_dependency_inventory",
-    target_id = "windows-x64",
-)
-
 py_test(
     name = "public_cli_release_targets_tests",
     srcs = [
@@ -953,93 +770,8 @@ py_test(
     tags = ["release-gate"],
 )
 
-sh_test(
-    name = "public_cli_bazel_release_contract",
-    args = [
-        "$(rootpath //tools/bazel:pinned_rustc)",
-        "$(rootpath //tools/bazel:pinned_rust_objcopy)",
-    ],
-    srcs = ["scripts/tests/package-public-cli-bazel-release-test.sh"],
-    data = [
-        ".bazelversion",
-        "Cargo.lock",
-        "Cargo.toml",
-        "MODULE.bazel",
-        "MODULE.bazel.lock",
-        "contracts/release-candidate-manifest-v1.schema.json",
-        "contracts/release-targets-v1.json",
-        "scripts/check-public-cli-build-info.py",
-        "scripts/check-release-target-matrix.py",
-        ":dependency_advisory_gate",
-        ":release_sbom",
-        "scripts/install-public-cli-candidate.py",
-        "scripts/package-public-cli-bazel-release.sh",
-        "scripts/public-cli-release-targets.py",
-        "scripts/release/linux-bazel-release.Dockerfile",
-        "scripts/release/detached-debug-symbols.py",
-        "scripts/release/public-cli-bazel-build-info.py",
-        "scripts/release-sbom.py",
-        "scripts/release_sbom/__init__.py",
-        "scripts/release_sbom/dependency_materials.py",
-        "scripts/write-public-cli-build-info.py",
-        "tests/fixtures/custom-history-jsonl/basic.jsonl",
-        "//crates/ctx-cli:Cargo.toml",
-        "//crates/ctx-history-index:Cargo.toml",
-        "//crates/ctx-history-index-format:Cargo.toml",
-        "//crates/ctx-history-index-generation:Cargo.toml",
-        "//crates/ctx-history-index-query:Cargo.toml",
-        "//crates/ctx-history-cli:Cargo.toml",
-        "//crates/ctx-history-read-application:Cargo.toml",
-        "//tools/bazel:pinned_rust_objcopy",
-        "//tools/bazel:pinned_rustc",
-    ],
-    tags = ["diagnostic", "legacy-bazel-release-route"],
-    target_compatible_with = ["@platforms//os:linux"],
-)
-
 py_test(
-    name = "detached_debug_symbols_tests",
-    args = [
-        "$(rootpath //tools/bazel:pinned_rustc)",
-        "$(rootpath //tools/bazel:pinned_rust_objcopy)",
-    ],
-    srcs = ["scripts/tests/detached-debug-symbols-test.py"],
-    data = [
-        "BUILD.bazel",
-        "scripts/release/detached-debug-symbols.py",
-        "//tools/bazel:ctx_rust.bzl",
-        "//tools/bazel:pinned_rust_objcopy",
-        "//tools/bazel:pinned_rustc",
-    ],
-    main = "scripts/tests/detached-debug-symbols-test.py",
-    tags = [
-        "release-gate",
-        "security",
-    ],
-    target_compatible_with = ["@platforms//os:linux"],
-)
-
-py_test(
-    name = "public_cli_bazel_build_info_tests",
-    srcs = [
-        "scripts/release/public-cli-bazel-build-info.py",
-        "scripts/tests/public-cli-bazel-build-info-test.py",
-    ],
-    main = "scripts/tests/public-cli-bazel-build-info-test.py",
-    data = [
-        ".bazelversion",
-        "MODULE.bazel",
-        "MODULE.bazel.lock",
-        "contracts/release-targets-v1.json",
-        "scripts/public-cli-host-runtime-evidence.sh",
-        "scripts/public-cli-runtime-authority.sh",
-        "scripts/release/linux-bazel-release.Dockerfile",
-    ],
-    tags = ["release-gate"],
-)
-
-py_test(
-    name = "linux_bazel_release_publication_tests",
+    name = "release_bundle_tests",
     srcs = [
         "scripts/release/release_bundle.py",
         "scripts/tests/release-bundle-test.py",
@@ -1050,72 +782,6 @@ py_test(
         "security",
     ],
     target_compatible_with = ["@platforms//os:linux"],
-)
-
-py_test(
-    name = "linux_bazel_controller_receipt_tests",
-    srcs = [
-        "scripts/release/release_bundle.py",
-        "scripts/release/write-linux-bazel-controller-receipt.py",
-        "scripts/tests/linux-bazel-controller-receipt-test.py",
-    ],
-    data = ["scripts/release/linux-bazel-release-controller.Dockerfile"],
-    main = "scripts/tests/linux-bazel-controller-receipt-test.py",
-    tags = [
-        "release-gate",
-        "security",
-    ],
-    target_compatible_with = ["@platforms//os:linux"],
-)
-
-sh_test(
-    name = "linux_bazel_release_controller_tests",
-    srcs = ["scripts/tests/linux-bazel-release-controller-test.sh"],
-    data = [
-        "scripts/public-cli-host-runtime-evidence.sh",
-        "scripts/public-cli-runtime-authority.sh",
-        "scripts/release/linux-bazel-release-controller.Dockerfile",
-        "scripts/release/release_bundle.py",
-        "scripts/release/run-linux-bazel-release-controller.sh",
-        "scripts/release/run-with-release-advisory-inputs.py",
-        "scripts/release/write-linux-bazel-controller-receipt.py",
-        "scripts/tests/linux-bazel-controller-receipt-test.py",
-    ],
-    tags = [
-        "release-gate",
-        "security",
-    ],
-    target_compatible_with = ["@platforms//os:linux"],
-)
-
-sh_test(
-    name = "native_bazel_packaging_contract_tests",
-    srcs = ["scripts/tests/native-bazel-packaging-contract-test.sh"],
-    data = [
-        ".bazelrc",
-        ".bazelversion",
-        ".buildkite/pipeline.yml",
-        "MODULE.bazel",
-        "MODULE.bazel.lock",
-        "contracts/release-targets-v1.json",
-        "scripts/release/build-linux-bazel-release.sh",
-        "scripts/release/linux-bazel-release-controller.Dockerfile",
-        "scripts/release/linux-bazel-release.Dockerfile",
-        "scripts/release/release_bundle.py",
-        "scripts/release/run-linux-bazel-release-controller.sh",
-        "scripts/release/write-linux-bazel-controller-receipt.py",
-        "scripts/package-public-cli-bazel-release.sh",
-        "scripts/public-cli-runtime-authority.sh",
-        "scripts/stage-github-release-assets.sh",
-        "scripts/stage-semantic-release-handoff.sh",
-        "//tools/bazel:release_routes.bzl",
-        "//tools/bazel/mingw:cc_toolchain_config.bzl",
-        "//tools/bazel/mingw:repository.bzl",
-        "//tools/bazel/patches:rules-rust-freebsd-host.patch",
-        "//tools/bazel/patches:rules-rust-windows-cargo-runfiles.patch",
-        "//tools/bazel/patches:rules-rust-windows-gnu-dlltool-path.patch",
-    ],
-    tags = ["diagnostic", "legacy-bazel-release-route", "manual"],
 )
 
 py_test(
@@ -1550,7 +1216,6 @@ non_rust_gate(
         "//crates/ctx-pro-host-protocol:src/lib.rs",
     ],
 )
-non_rust_gate(name = "linux_release_construction_tests", mode = "linux_release_construction_tests", data = NON_RUST_GATE_DATA)
 non_rust_gate(name = "macos_release_signing_tests", mode = "macos_release_signing_tests", data = NON_RUST_GATE_DATA)
 non_rust_gate(
     name = "loc_check",
