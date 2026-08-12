@@ -537,7 +537,7 @@ fn startup_seeded_manual_all_successor_rescans_startup_routes() {
     )));
     coordinator.initialize_watch_route_authority(routes.clone());
     coordinator.schedule_startup_route_reconciliation(
-        startup_routes,
+        startup_routes.clone(),
         EventWatermark::new(1, 0),
         super::source_route_ledger_now_ms().saturating_sub(1_000),
     );
