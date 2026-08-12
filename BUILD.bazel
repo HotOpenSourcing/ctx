@@ -606,6 +606,19 @@ sh_test(
     target_compatible_with = ["@platforms//os:linux"],
 )
 
+sh_test(
+    name = "semantic_coreml_toolchain_tests",
+    srcs = ["scripts/tests/semantic-coreml-toolchain-test.sh"],
+    data = [
+        ".buildkite/pipeline.yml",
+        "scripts/semantic-model-bundle/requirements.lock",
+        "scripts/semantic-model-bundle/run-pinned-producer.sh",
+        "scripts/semantic-model-bundle/toolchain.lock.json",
+    ],
+    tags = ["release-gate"],
+    target_compatible_with = ["@platforms//os:linux"],
+)
+
 py_test(
     name = "release_target_matrix_check",
     srcs = ["scripts/check-release-target-matrix.py"],
