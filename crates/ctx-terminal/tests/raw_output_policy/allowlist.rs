@@ -55,6 +55,11 @@ const LIVE_OUTPUT: TestOwner = TestOwner::behavioral(
     &["crates/ctx-terminal/src/ui/writer.rs"],
     &["LiveOutput", "write_frame", "assert_eq"],
 );
+const PLAIN_REFRESH_PROGRESS: TestOwner = TestOwner::behavioral(
+    "crates/ctx-terminal/src/progress.rs::plain_refresh_progress_is_the_stable_live_document_without_internal_routes",
+    &["crates/ctx-terminal/src/progress.rs"],
+    &["ProgressMode", "Plain", "refresh_progress", "assert_eq"],
+);
 const APPEND_OUTPUT: TestOwner = TestOwner::behavioral(
     "crates/ctx-terminal/src/ui/writer.rs::append_controller_writes_documents_and_lines_exactly",
     &["crates/ctx-terminal/src/ui/writer.rs"],
@@ -237,6 +242,7 @@ const SKILL_SELECTION: &str = "src/skill/selection.rs";
 const UI_DOCUMENT: &str = "crates/ctx-terminal/src/ui/document.rs";
 const UI_MODULE: &str = "crates/ctx-terminal/src/ui/mod.rs";
 const UI_WRITER: &str = "crates/ctx-terminal/src/ui/writer.rs";
+const TERMINAL_PROGRESS: &str = "crates/ctx-terminal/src/progress.rs";
 const UPGRADE_HUMAN: &str = "src/upgrade/command/human.rs";
 const UPGRADE_STATUS: &str = "src/upgrade/command/status.rs";
 const HOSTED_TRANSACTION: &str =
@@ -1028,6 +1034,14 @@ pub(super) const ALLOWLIST: &[AllowEntry] = &[
         Infrastructure,
         UI_INFRASTRUCTURE,
         UNIT
+    ),
+    allow!(
+        TERMINAL_PROGRESS,
+        "write_progress#1@2ccc5c4ecdb1caa4",
+        DocumentRender,
+        JustifiedPlainHuman,
+        "explicit plain refresh progress writes the canonical ANSI-free semantic document",
+        PLAIN_REFRESH_PROGRESS
     ),
     allow!(
         UI_WRITER,
