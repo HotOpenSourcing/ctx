@@ -114,6 +114,7 @@ impl SinkHarness {
             applied_removals: &mut Vec::new(),
             record_progress: None,
             current_source_progress: None,
+            last_progress_session_id: None,
         };
         sink.run_parallel_leaf_scans(jobs, worker_count, scan)
     }
@@ -149,6 +150,7 @@ impl SinkHarness {
             applied_removals: &mut Vec::new(),
             record_progress: None,
             current_source_progress: None,
+            last_progress_session_id: None,
         };
         sink.run_parallel_leaf_scans_with_worker_states(jobs, worker_states, scan)
     }
@@ -182,6 +184,7 @@ impl SinkHarness {
             applied_removals: &mut Vec::new(),
             record_progress: None,
             current_source_progress: None,
+            last_progress_session_id: None,
         };
         sink.run_parallel_leaf_scans_with_source_outcomes(jobs, worker_count, scan)
     }
@@ -243,6 +246,7 @@ impl SinkHarness {
             applied_removals: &mut applied_removals,
             record_progress: Some(report_progress),
             current_source_progress: None,
+            last_progress_session_id: None,
         };
         sink.run_parallel_leaf_scans(jobs, worker_count, scan)
     }
@@ -263,6 +267,7 @@ impl SinkHarness {
             applied_removals: &mut applied_removals,
             record_progress: None,
             current_source_progress: None,
+            last_progress_session_id: None,
         };
         sink.record_rejections(rejections);
     }
@@ -1261,6 +1266,7 @@ fn worker_budget_coordinates_indexers_runtime_and_scanners() {
         applied_removals: &mut Vec::new(),
         record_progress: None,
         current_source_progress: None,
+        last_progress_session_id: None,
     };
     assert_eq!(sink.recommended_leaf_workers(0), 0);
     assert_eq!(sink.recommended_leaf_workers(2), 2);
@@ -1668,13 +1674,13 @@ fn batch_application_preserves_order_accounts_progress_and_releases_reservations
         )
         .unwrap();
     assert_eq!(results, [()]);
-    assert_eq!(
-        progress,
-        vec![SourceBackedRecordProgressDelta {
-            accepted_records: 3,
-            completed_bytes: 512,
-        }]
-    );
+    assert_eq!(progress.len(), 1);
+    assert_eq!(progress[0].accepted_records, 3);
+    assert_eq!(progress[0].completed_bytes, 512);
+    assert_eq!(progress[0].session_ids.len(), 1);
+    assert_eq!(progress[0].session_ids[0], records[0].session_id.digest());
+    assert_eq!(progress[0].messages, 3);
+    assert_eq!(progress[0].tool_calls, 0);
     assert_eq!(
         live_bytes_after_acceptance,
         [0],
