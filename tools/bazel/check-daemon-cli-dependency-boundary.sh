@@ -74,12 +74,18 @@ assert_labels 'qualification dependency set' \
 assert_labels 'production reverse dependency set' \
   'kind("rust_binary rule", rdeps(//crates/..., //crates/ctx-daemon-cli:lib)) union kind("rust_library rule", rdeps(//crates/..., //crates/ctx-daemon-cli:lib))' \
   '//crates/ctx-cli:ctx' \
-  '//crates/ctx-daemon-cli:lib'
+  '//crates/ctx-cli:ctx_auto_upgrade_acceptance_fixture' \
+  '//crates/ctx-cli:ctx_hosted_uninstall_test_host' \
+  '//crates/ctx-cli:ctx_pro_test_host' \
+  '//crates/ctx-cli:ctx_upgrade_test_harness' \
+  '//crates/ctx-daemon-cli:lib' \
+  '//crates/ctx-history-cli:lib'
 
 assert_labels 'test-support reverse dependency set' \
   'kind("rust_library rule", rdeps(//crates/..., //crates/ctx-daemon-cli:test_support_lib)) union kind("rust_test rule", rdeps(//crates/..., //crates/ctx-daemon-cli:test_support_lib))' \
   '//crates/ctx-cli:unit_tests' \
-  '//crates/ctx-daemon-cli:test_support_lib'
+  '//crates/ctx-daemon-cli:test_support_lib' \
+  '//crates/ctx-history-cli:test_support_lib'
 
 assert_labels 'qualification reverse dependency set' \
   'kind("rust_binary rule", rdeps(//crates/..., //crates/ctx-daemon-cli:qualification_lib)) union kind("rust_library rule", rdeps(//crates/..., //crates/ctx-daemon-cli:qualification_lib))' \
@@ -163,7 +169,7 @@ reverse = []
 for candidate in sorted((root / "crates").glob("*/Cargo.toml")):
     if candidate != manifest_path and "ctx-daemon-cli" in candidate.read_text(encoding="utf-8"):
         reverse.append(candidate.relative_to(root).as_posix())
-if reverse != ["crates/ctx-cli/Cargo.toml"]:
+if reverse != ["crates/ctx-cli/Cargo.toml", "crates/ctx-history-cli/Cargo.toml"]:
     raise SystemExit(f"unexpected reverse Cargo consumer of ctx-daemon-cli: {reverse}")
 
 try:
@@ -227,4 +233,4 @@ if grep -REn --include='*.rs' \
   exit 1
 fi
 
-printf 'ctx-daemon-cli dependency, locality, size, and single-consumer boundary ok\n'
+printf 'ctx-daemon-cli dependency, locality, size, and bounded-consumer boundary ok\n'
