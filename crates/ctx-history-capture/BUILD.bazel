@@ -182,6 +182,19 @@ ctx_rust_test(
 )
 
 ctx_rust_test(
+    name = "sqlite_progress_conversion_contract_tests",
+    srcs = ["tests/sqlite_progress_conversion_contract.rs"],
+    crate_name = "sqlite_progress_conversion_contract",
+    crate_root = "tests/sqlite_progress_conversion_contract.rs",
+    edition = crate_edition(),
+    deps = [
+        ":lib",
+        "//crates/ctx-history-source-io:lib",
+    ],
+    rustc_env = COMMON_RUSTC_ENV,
+)
+
+ctx_rust_test(
     name = "codex_direct_result_tests",
     srcs = ["tests/codex_direct_result.rs"],
     crate_name = "codex_direct_result",
