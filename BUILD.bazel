@@ -679,6 +679,7 @@ py_test(
 py_test(
     name = "linux_release_factory_tests",
     srcs = [
+        "scripts/check-public-cli-build-info.py",
         "scripts/release/cargo-release-inventory.py",
         "scripts/release/linux-factory-build-info.py",
         "scripts/release/resolve-cargo-zigbuild.py",
