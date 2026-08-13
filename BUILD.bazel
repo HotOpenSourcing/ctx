@@ -1140,6 +1140,8 @@ sh_test(
         "scripts/bazelw",
         "//crates/ctx-cli:BUILD.bazel",
         "//crates/ctx-cli:cargo_package_data",
+        "//crates/ctx-history-cli:BUILD.bazel",
+        "//crates/ctx-history-cli:cargo_package_data",
         "//crates/ctx-history-read-application:BUILD.bazel",
         "//crates/ctx-history-read-application:cargo_package_data",
     ],
