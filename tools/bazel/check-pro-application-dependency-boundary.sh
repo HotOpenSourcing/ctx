@@ -66,13 +66,19 @@ check_reverse_consumers() {
 check_reverse_consumers lib \
   'kind("rust_binary rule", rdeps(//crates/..., //crates/ctx-pro-application:lib)) union kind("rust_library rule", rdeps(//crates/..., //crates/ctx-pro-application:lib))' \
   '//crates/ctx-cli:ctx' \
+  '//crates/ctx-cli:ctx_auto_upgrade_acceptance_fixture' \
+  '//crates/ctx-cli:ctx_hosted_uninstall_test_host' \
+  '//crates/ctx-cli:ctx_pro_test_host' \
+  '//crates/ctx-cli:ctx_upgrade_test_harness' \
   '//crates/ctx-daemon-cli:lib' \
+  '//crates/ctx-history-cli:lib' \
   '//crates/ctx-pro-application:lib'
 check_reverse_consumers test_support_lib \
   'kind("rust_library rule", rdeps(//crates/..., //crates/ctx-pro-application:test_support_lib)) union kind("rust_test rule", rdeps(//crates/..., //crates/ctx-pro-application:test_support_lib))' \
   '//crates/ctx-cli:unit_tests' \
   '//crates/ctx-daemon-cli:test_support_lib' \
   '//crates/ctx-daemon-cli:unit_tests' \
+  '//crates/ctx-history-cli:test_support_lib' \
   '//crates/ctx-pro-application:test_support_lib'
 check_reverse_consumers qualification_lib \
   'kind("rust_binary rule", rdeps(//crates/..., //crates/ctx-pro-application:qualification_lib)) union kind("rust_library rule", rdeps(//crates/..., //crates/ctx-pro-application:qualification_lib))' \
