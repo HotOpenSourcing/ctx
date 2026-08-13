@@ -1,6 +1,6 @@
 [package]
 name = "ctx-agent-integrations"
-version = "0.26.0"
+version.workspace = true
 description = "Headless coding-agent integration protocols and installers for ctx"
 edition.workspace = true
 license.workspace = true
