@@ -160,6 +160,7 @@ _CI_RUST_TESTS = [
     "//crates/ctx-daemon-runtime:unit_tests",
     "//crates/ctx-daemon-service:unit_tests",
     "//crates/ctx-history-capture:codex_direct_result_tests",
+    "//crates/ctx-history-capture:sqlite_progress_conversion_contract_tests",
     "//crates/ctx-history-capture-model:unit_tests",
     "//crates/ctx-history-cli:unit_tests",
     "//crates/ctx-history-cli:request_parity_tests",
