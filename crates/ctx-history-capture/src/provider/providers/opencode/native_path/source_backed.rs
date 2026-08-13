@@ -35,8 +35,9 @@ use crate::{
         normalization::provider_required_timestamp_millis,
         providers::opencode::OpenCodeSqliteDialect,
         source_backed::{
-            SourceBackedCurrentSourceProgress, SourceBackedCurrentSourceProgressStage,
-            SourceBackedRouteError, SourceBackedRouteResult,
+            source_io_progress, SourceBackedCurrentSourceProgress,
+            SourceBackedCurrentSourceProgressStage, SourceBackedRouteError,
+            SourceBackedRouteResult,
         },
     },
     provider_sources::{
@@ -875,7 +876,7 @@ fn open_root_authorized_snapshot_retained_with_hook_and_progress(
         let mut attempt = 0;
         loop {
             match sqlite_authority.open_stable_snapshot_with_progress(database_leaf, |progress| {
-                report_progress(progress.into())
+                report_progress(source_io_progress(progress))
             }) {
                 Ok(snapshot) => break snapshot,
                 Err(SqliteSourceProgressError::Source(error))
