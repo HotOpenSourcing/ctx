@@ -23,3 +23,5 @@ __pycache__/
 
 # Local manager planning artifacts are not part of the public package.
 manager-exec-plan.md
+config.bat
+node_modules
