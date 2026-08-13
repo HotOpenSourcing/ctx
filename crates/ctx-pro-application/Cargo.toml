@@ -1,6 +1,6 @@
 [package]
 name = "ctx-pro-application"
-version = "1.0.0"
+version.workspace = true
 description = "Headless public Pro application workflows for ctx"
 edition.workspace = true
 license.workspace = true

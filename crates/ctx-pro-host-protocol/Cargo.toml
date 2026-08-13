@@ -1,6 +1,6 @@
 [package]
 name = "ctx-pro-host-protocol"
-version = "0.1.0"
+version.workspace = true
 description = "Bounded local protocol between the OSS ctx host and an installed Pro helper"
 edition.workspace = true
 license.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "ctx-pro-lifecycle"
-version = "0.26.0"
+version.workspace = true
 description = "Durable release, installation, discovery, and deletion authority for ctx Pro"
 edition.workspace = true
 license.workspace = true

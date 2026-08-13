@@ -10,8 +10,10 @@ def release_surface_tests():
         args = [
             "$(rootpath //crates/ctx-cli:ctx)",
             "$(rootpath //crates/ctx-cli:Cargo.toml)",
+            "$(rootpath //:Cargo.toml)",
         ],
         data = [
+            "//:Cargo.toml",
             "//crates/ctx-cli:Cargo.toml",
             "//crates/ctx-cli:ctx",
         ],

@@ -1,6 +1,6 @@
 [package]
 name = "ctx-history-repository-evidence"
-version = "0.26.0"
+version.workspace = true
 description = "Provider-neutral repository discovery, certification, and capture evidence for ctx"
 edition.workspace = true
 license.workspace = true

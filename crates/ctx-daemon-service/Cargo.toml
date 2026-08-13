@@ -1,6 +1,6 @@
 [package]
 name = "ctx-daemon-service"
-version = "1.0.0"
+version.workspace = true
 description = "Product daemon service orchestration for ctx"
 edition.workspace = true
 license.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "ctx-pro-access"
-version = "0.26.0"
+version.workspace = true
 description = "Headless commercial access, entitlement, and credential custody for ctx Pro"
 edition.workspace = true
 license.workspace = true

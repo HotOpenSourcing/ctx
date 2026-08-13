@@ -1,6 +1,6 @@
 [package]
 name = "ctx-daemon-cli"
-version = "1.0.0"
+version.workspace = true
 description = "Final-binary daemon and semantic adapters for ctx"
 edition.workspace = true
 license.workspace = true
