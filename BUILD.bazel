@@ -700,6 +700,19 @@ py_test(
     target_compatible_with = ["@platforms//os:linux"],
 )
 
+sh_test(
+    name = "validate_public_cli_factory_artifact_tests",
+    srcs = ["scripts/tests/validate-public-cli-factory-artifact-test.sh"],
+    data = [
+        "Cargo.lock",
+        "contracts/release-factory-inputs-v1.json",
+        "contracts/release-targets-v1.json",
+        "scripts/check-public-cli-build-info.py",
+        "scripts/validate-public-cli-factory-artifact.sh",
+    ],
+    tags = ["release-gate"],
+)
+
 py_binary(
     name = "release_sbom",
     srcs = [
