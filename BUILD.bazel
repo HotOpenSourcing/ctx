@@ -682,6 +682,8 @@ py_test(
         "scripts/release/cargo-release-inventory.py",
         "scripts/release/linux-factory-build-info.py",
         "scripts/release/resolve-cargo-zigbuild.py",
+        "scripts/release/release_bundle.py",
+        "scripts/release/seal-linux-factory-candidate.py",
         "scripts/tests/linux-release-factory-test.py",
     ],
     data = [
