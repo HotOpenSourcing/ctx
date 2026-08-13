@@ -261,6 +261,7 @@ CI_TESTS = [
     ":terminal_dependency_boundary_check",
     ":upgrade_engine_build_cfg_parity_check",
     ":upgrade_engine_dependency_boundary_check",
+    ":validate_public_cli_factory_artifact_tests",
     ":semantic_release_smoke_tests",
     ":sdk_contract_checks",
     ":sdk_no_publish_policy_tests",
