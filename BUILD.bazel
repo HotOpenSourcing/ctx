@@ -472,7 +472,10 @@ py_test(
         "scripts/tests/performance_sanity_support.py",
     ],
     args = ["$(rootpath //crates/ctx-cli:ctx)"],
-    data = ["//crates/ctx-cli:ctx"],
+    data = [
+        ":provider_support_matrix",
+        "//crates/ctx-cli:ctx",
+    ],
     imports = ["scripts/tests"],
     main = "scripts/tests/performance_sanity_test.py",
     tags = ["release-gate"],
